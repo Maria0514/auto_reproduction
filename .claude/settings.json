@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(nvidia-smi)",
+      "Bash(lspci)",
+      "Bash(mount)",
+      "Bash(showmount -e localhost)",
+      "Bash(lsblk)"
+    ]
+  }
+}

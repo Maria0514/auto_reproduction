@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(gh issue *)",
+      "Bash(mv /home/yujingm/myproj/auto_reproduction/.claude/agents/product-manager.agent.md /home/yujingm/myproj/auto_reproduction/.claude/agents/product-manager.md)",
+      "Bash(mv /home/yujingm/myproj/auto_reproduction/.claude/agents/architect.agent.md /home/yujingm/myproj/auto_reproduction/.claude/agents/architect.md)",
+      "Bash(grep -E \"\\\\.\\(md|txt|json|yaml|yml\\)$\")",
+      "Bash(curl -s https://code.claude.com/docs/en/sub-agents)",
+      "Bash(claude --version)"
+    ]
+  }
+}
