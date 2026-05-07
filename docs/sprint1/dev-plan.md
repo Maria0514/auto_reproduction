@@ -144,7 +144,7 @@ requirements.txt (S1-10)    <-- 无依赖，可在任意阶段完成
 | `PaperMeta` | `TypedDict` | 字段: `arxiv_id`, `title`, `authors`, `abstract`, `categories`, `tldr`, `keywords`, `citation_count`, `github_url`, `publish_date`, `pdf_url` |
 | `PaperAnalysis` | `TypedDict` | 字段: `method_summary`, `key_formulas`, `datasets`, `metrics`, `hyperparams`, `hardware_requirements`, `framework`, `baseline_results`, `sections_read`, `analysis_notes` |
 | `RepoInfo` | `TypedDict` | 字段: `url`, `source`, `is_official`, `stars`, `forks`, `last_commit_date`, `commit_count_recent`, `has_readme`, `has_requirements`, `dir_structure`, `quality_score` |
-| `ResourceInfo` | `TypedDict` | 字段: `repos`, `selected_repo`, `pretrained_models`, `datasets_found`, `resource_strategy` |
+| `ResourceInfo` | `TypedDict` | 字段: `repos`, `selected_repo`, `external_resources`, `resource_strategy` |
 | `ReproductionPlan` | `TypedDict` | 字段: `plan_summary`, `environment`, `data_preparation`, `code_strategy`, `execution_steps`, `expected_results`, `estimated_time`, `deliverables`, `user_feedback`, `approved` |
 | `ExecutionResult` | `TypedDict` | 字段: `success`, `metrics`, `logs`, `errors`, `artifacts`, `runtime_seconds`, `environment_info` |
 | `NodeError` | `TypedDict` | 字段: `node_name`, `error_type`, `error_message`, `error_detail`, `timestamp`, `retry_count`, `resolved` |

@@ -215,8 +215,7 @@ class ResourceInfo(TypedDict):
     """步骤 3 输出：资源搜集与评估结果。"""
     repos: List[RepoInfo]
     selected_repo: Optional[RepoInfo]
-    pretrained_models: List[Dict[str, str]]
-    datasets_found: List[Dict[str, str]]
+    external_resources: List[Dict[str, str]]  # 通用外部资源，用 type 字段区分类别
     resource_strategy: str              # "use_repo" | "from_scratch" | "hybrid"
 
 

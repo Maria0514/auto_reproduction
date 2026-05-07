@@ -243,8 +243,7 @@ class ResourceInfo(TypedDict):
     """步骤3输出：资源搜集与评估结果"""
     repos: List[RepoInfo]               # 候选仓库列表（按 quality_score 降序排列），planning 审核时展示给用户
     selected_repo: Optional[RepoInfo]   # resource_scout 自动推荐的仓库，用户可在 planning 审核时更换
-    pretrained_models: List[Dict[str, str]]
-    datasets_found: List[Dict[str, str]]
+    external_resources: List[Dict[str, str]]  # 通用外部资源列表，用 type 字段区分类别（dataset/pretrained_model/benchmark 等）
     resource_strategy: str              # "use_repo" | "from_scratch" | "hybrid"
 
 

@@ -1,0 +1,14 @@
+# Auto-Reproduction -- 论文自动复现系统
+# Sprint 1 依赖声明
+# Python >= 3.10 required
+
+# ---- 核心依赖 ----
+langgraph>=0.2.0
+langchain-openai>=0.1.0
+langchain-core>=0.2.0
+# deepxiv-sdk>=0.2.5  -- 从本地安装: pip install -e ./deepxiv_sdk
+requests>=2.31.0
+pydantic>=2.0.0
+
+# ---- 可选依赖 ----
+tiktoken>=0.5.0
