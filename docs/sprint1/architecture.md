@@ -38,9 +38,15 @@ Sprint 1 模块层次图
                           v
 +-------------------------------------------------------------------+
 |                 Agent 节点层                                         |
-|   core/nodes/paper_intake.py ... 论文输入与解析（实现）                |
-|   core/nodes/paper_analysis.py . 深度论文分析（实现）                  |
+|   core/nodes/paper_intake.py ... 论文输入与解析（ReAct agent 实现）    |
+|   core/nodes/paper_analysis.py . 深度论文分析（ReAct agent 实现）      |
 |   core/nodes/{其余5个}.py ...... 占位 pass-through                   |
++-------------------------------------------------------------------+
+                          |
+                          v
++-------------------------------------------------------------------+
+|                 ReAct 基础设施层                                      |
+|   core/react_base.py .......... 通用 ReAct 子图构建器                 |
 +-------------------------------------------------------------------+
                           |
                           v
@@ -54,6 +60,7 @@ Sprint 1 模块层次图
   config.py .................... 配置管理
   core/state.py ................ 全局状态定义
   core/errors.py ............... 统一异常体系
+  core/react_base.py ........... 通用 ReAct 子图基础设施
   requirements.txt ............. 依赖声明
 ```
 
@@ -74,15 +81,21 @@ core/errors.py                <-- 无前置依赖（最底层）
    +------+----------+-------------------+
    |      |          |                   |
    v      v          v                   v
-core/    core/       core/tools/        core/nodes/
-llm_     check-      deepxiv_           paper_intake.py
-client.  pointer.    tools.py           paper_analysis.py
-py       py             |                   |
-   |      |          |  |                   |
-   |      |          +--+-------------------+
-   |      |                    |
-   v      v                    v
-   +------+--------------------+
+core/    core/       core/tools/        core/
+llm_     check-      deepxiv_           react_base.py
+client.  pointer.    tools.py              |
+py       py             |                  |  <-- 依赖 llm_client.py
+   |      |          |  |                  |
+   |      |          |  |        +---------+----------+
+   |      |          |  |        |                    |
+   |      |          |  |        v                    v
+   |      |          |  |     core/nodes/          core/nodes/
+   |      |          |  |     paper_intake.py      paper_analysis.py
+   |      |          |  |        |                    |
+   |      |          +--+--------+--------------------+
+   |      |                      |
+   v      v                      v
+   +------+----------------------+
                 |
                 v
           core/graph.py
@@ -94,17 +107,19 @@ py       py             |                   |
 2. `core/state.py` + `core/errors.py` -- 纯定义模块，import 即完成
 3. `core/checkpointer.py` -- 创建/打开 SQLite 数据库
 4. `core/llm_client.py` + `core/tools/deepxiv_tools.py` -- 工具实例化
-5. `core/nodes/*.py` -- 节点函数注册
-6. `core/graph.py` -- 构建并编译主图
+5. `core/react_base.py` -- ReAct 子图基础设施（依赖 llm_client.py）
+6. `core/nodes/*.py` -- 节点函数注册（通过 react_base.py 构建 ReAct wrapper）
+7. `core/graph.py` -- 构建并编译主图
 
 ### 1.3 与全局架构的映射关系
 
 | 全局架构文档章节 | Sprint 1 对应模块 | 实现深度 |
 |----------------|-----------------|---------|
 | 2 系统架构概览 -- 编排层 | `core/graph.py` | 骨架：7 节点 + 顺序边，无条件路由 |
-| 2 系统架构概览 -- 节点层 | `core/nodes/*.py` | paper_intake 和 paper_analysis 完整实现，其余 5 个占位 |
+| 2 系统架构概览 -- 节点层 | `core/nodes/*.py` | paper_intake 和 paper_analysis 以 ReAct agent 实现，其余 5 个占位 |
 | 2 系统架构概览 -- 工具层 | `core/tools/deepxiv_tools.py`, `core/llm_client.py` | deepxiv_tools 完整实现，llm_client 完整实现 |
 | 3 Agent 编排设计 | `core/graph.py` | 顺序编排 + interrupt 占位，无条件路由/修复循环 |
+| 3.2.1 ReAct Agent 架构 | `core/react_base.py` | 完整实现 ReActState、create_react_subgraph、_make_react_wrapper |
 | 4 全局状态定义 | `core/state.py` | 完整实现全部 TypedDict 和 Enum |
 | 6 deepxiv-sdk 集成 | `core/tools/deepxiv_tools.py` | 封装 Sprint 1 使用的 6 个方法 |
 | 8 中断恢复方案 | `core/checkpointer.py` | SqliteSaver 初始化 + WAL 模式 |
@@ -618,20 +633,151 @@ def make_node_error(
 
 ---
 
-### 2.3 `core/graph.py` -- LangGraph 主图
+### 2.3 `core/react_base.py` -- 通用 ReAct 子图基础设施
+
+**文件路径**：`core/react_base.py`
+**依赖**：`langgraph` (StateGraph, END), `langchain_core` (BaseMessage, BaseTool, tool), `core/llm_client.py`
+**全局架构参考**：技术架构文档 3.2.1
+
+#### 2.3.1 ReActState 类型定义
+
+```python
+class ReActState(TypedDict):
+    """ReAct 子图内部状态，与 GlobalState 完全隔离。"""
+    messages: Annotated[List[BaseMessage], operator.add]  # 对话历史（自动追加）
+    round: int               # 当前已完成的 LLM 调用轮次
+    max_rounds: int           # 最大轮次上限
+    status: str               # "reasoning" | "tool_call" | "done" | "budget_exhausted"
+    result: Optional[Dict[str, Any]]  # 最终结构化输出（由 finalize 解析）
+    context: Dict[str, Any]   # 从 GlobalState 注入的只读上下文
+```
+
+**设计要点**：
+
+- `messages` 使用 `Annotated[..., operator.add]` 实现自动追加语义，避免节点手动拷贝列表。
+- `context` 是从 GlobalState 注入的只读上下文信息（如 arxiv_id、paper_meta 等），子图内部不修改 GlobalState。
+- `status` 驱动子图路由决策，每轮 reasoning 后由 router 根据 LLM 输出更新。
+
+#### 2.3.2 子图拓扑
+
+```
+[reasoning_node] ──router──> [tool_executor_node] → [budget_check_node] → [reasoning_node]
+                    |                                         |
+                    ├→ "done" → [finalize_node] → END         |
+                    |                                         |
+                    └→ [budget_check_node] ─"budget_exhausted"─→ [force_finish_node] → [finalize_node] → END
+```
+
+**拓扑说明**：
+
+- `reasoning_node` 是子图入口，每轮调用 LLM（已 bind_tools）生成推理和行动。
+- `router` 是条件边函数，根据 `status` 字段路由到不同分支。
+- 正常路径：reasoning → tool_executor → budget_check → reasoning（循环），直到 LLM 输出 `<result>` 标签。
+- 完成路径：reasoning → finalize → END。
+- 超预算路径：budget_check 检测到接近上限 → force_finish 强制请求最终输出 → finalize → END。
+
+#### 2.3.3 create_react_subgraph() 工厂函数
+
+```python
+def create_react_subgraph(
+    node_name: str,
+    system_prompt: str,
+    tools: Sequence[BaseTool],
+    max_rounds: int,
+    result_schema: Optional[Dict[str, Any]] = None,
+) -> "CompiledGraph":
+    """构建通用 ReAct 子图。所有 ReAct 节点复用此函数。
+
+    Args:
+        node_name: 节点名称，用于日志标识。
+        system_prompt: 系统级提示词，定义 agent 的角色和任务。
+        tools: 可用工具列表（BaseTool 实例）。
+        max_rounds: 最大 LLM 调用轮次。
+        result_schema: 期望的结构化输出 JSON Schema，用于 finalize 解析校验。
+
+    Returns:
+        编译后的 ReAct 子图 CompiledGraph 实例。
+    """
+```
+
+**构建流程**：
+
+1. 创建 `StateGraph(ReActState)`。
+2. 注册 `reasoning_node`、`tool_executor_node`、`budget_check_node`、`force_finish_node`、`finalize_node`。
+3. 设置 `reasoning_node` 为入口节点。
+4. 添加条件边：`reasoning_node` → `router` 路由。
+5. 添加固定边：`tool_executor_node` → `budget_check_node` → `reasoning_node`；`budget_exhausted` → `force_finish_node` → `finalize_node` → END。
+6. 编译并返回。
+
+#### 2.3.4 通用节点函数
+
+| 节点函数 | 职责 |
+|---------|------|
+| `reasoning_node` | 调用 LLM（已 bind_tools），将响应追加到 messages。检测 tool_calls 或 `<result>` 标签，更新 status 和 round。 |
+| `tool_executor_node` | 执行 LLM 请求的工具调用，将工具结果作为 ToolMessage 追加到 messages。结果截断到 8000 字符防止上下文溢出，异常捕获为字符串返回（不中断子图）。 |
+| `budget_check_node` | 检查当前 round 是否接近 max_rounds 上限。若 `round >= max_rounds - 1`，将 status 设为 `"budget_exhausted"`。 |
+| `force_finish_node` | 预算耗尽时，向 messages 注入强制终止提示（要求 LLM 立即输出 `<result>` 标签），再调用一次 LLM 获取最终输出。 |
+| `finalize_node` | 从最后一条 AIMessage 中解析 `<result>{JSON}</result>` 标签，提取结构化结果写入 `result` 字段。解析失败时记录警告并设 result 为空字典。 |
+| `router` | 条件路由函数，根据 status 返回下一个节点名：`"tool_call"` → tool_executor，`"done"` → finalize，`"budget_exhausted"` → force_finish，其他 → budget_check。 |
+
+#### 2.3.5 _make_react_wrapper() 主图适配函数
+
+```python
+def _make_react_wrapper(
+    node_name: str,
+    build_context: Callable[[GlobalState], Dict],
+    build_system_prompt: Callable[[Dict], str],
+    get_tools: Callable[[GlobalState], List[BaseTool]],
+    map_result: Callable[[Dict, GlobalState], dict],
+    max_rounds: int,
+    result_schema: Optional[Dict] = None,
+) -> Callable[[GlobalState], dict]:
+    """生成主图节点的 wrapper 函数。
+
+    自动处理：GlobalState→ReActState 映射 → 运行子图 → 结果映射回 GlobalState → 预算扣减。
+
+    Args:
+        node_name: 节点名称。
+        build_context: 从 GlobalState 提取子图所需上下文的函数。
+        build_system_prompt: 根据上下文生成 system prompt 的函数。
+        get_tools: 根据 GlobalState 获取可用工具列表的函数。
+        map_result: 将子图结果映射回 GlobalState 更新字典的函数。
+        max_rounds: 最大 LLM 调用轮次。
+        result_schema: 期望输出的 JSON Schema。
+
+    Returns:
+        可直接注册到主图的节点函数 (GlobalState) -> dict。
+    """
+```
+
+**执行流程**：
+
+1. 调用 `build_context(state)` 提取上下文。
+2. 调用 `build_system_prompt(context)` 生成 system prompt。
+3. 调用 `get_tools(state)` 获取工具列表。
+4. 调用 `create_react_subgraph()` 构建子图。
+5. 构造初始 `ReActState`（system prompt 作为第一条 SystemMessage）。
+6. 运行子图，获取最终 ReActState。
+7. 调用 `map_result(react_state["result"], state)` 将结果映射回 GlobalState 更新字典。
+8. 扣减 `retry_budget_remaining`（按实际 round 数扣减）。
+9. 返回 GlobalState 更新字典。
+
+---
+
+### 2.4 `core/graph.py` -- LangGraph 主图
 
 **文件路径**：`core/graph.py`
 **依赖**：`langgraph`, `core/state.py`, `core/checkpointer.py`, `core/nodes/*.py`
 **全局架构参考**：技术架构文档 3
 
-#### 2.3.1 图构建代码结构
+#### 2.4.1 图构建代码结构
 
 ```python
 """LangGraph 主图构建。
 
 注册全部 7 个节点，建立顺序边连接。
-Sprint 1 中仅 paper_intake 和 paper_analysis 有实际业务逻辑，
-其余 5 个节点为 pass-through 占位。
+Sprint 1 中 paper_intake 和 paper_analysis 以 ReAct wrapper 函数注册（通过
+_make_react_wrapper 生成），其余 5 个节点为 pass-through 占位。
 """
 
 import logging
@@ -640,6 +786,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from core.state import GlobalState
+# paper_intake 和 paper_analysis 导出的是 _make_react_wrapper 生成的 wrapper 函数
 from core.nodes.paper_intake import paper_intake
 from core.nodes.paper_analysis import paper_analysis
 
@@ -715,9 +862,9 @@ def build_graph(checkpointer: Optional[SqliteSaver] = None) -> "CompiledGraph":
     # 创建 StateGraph
     graph = StateGraph(GlobalState)
 
-    # 注册节点
-    graph.add_node("paper_intake", paper_intake)
-    graph.add_node("paper_analysis", paper_analysis)
+    # 注册节点（paper_intake 和 paper_analysis 为 ReAct wrapper 函数）
+    graph.add_node("paper_intake", paper_intake)       # ReAct wrapper
+    graph.add_node("paper_analysis", paper_analysis)   # ReAct wrapper
     graph.add_node("resource_scout", resource_scout)
     graph.add_node("planning", planning)
     graph.add_node("coding", coding)
@@ -745,7 +892,7 @@ def build_graph(checkpointer: Optional[SqliteSaver] = None) -> "CompiledGraph":
     return compiled
 ```
 
-#### 2.3.2 占位节点的实现方式
+#### 2.4.2 占位节点的实现方式
 
 占位节点返回空字典 `{}`，LangGraph 的 merge 语义下，空字典不会改变任何状态字段。这确保了：
 
@@ -753,7 +900,7 @@ def build_graph(checkpointer: Optional[SqliteSaver] = None) -> "CompiledGraph":
 2. 后续 Sprint 替换占位实现时只需修改函数体，不需要改变图结构。
 3. 端到端执行时，流程可以完整走通 7 个节点到 END。
 
-#### 2.3.3 interrupt 占位方案
+#### 2.4.3 interrupt 占位方案
 
 Sprint 1 的 `planning` 占位节点中，`interrupt()` 调用被注释掉。这意味着：
 
@@ -774,7 +921,7 @@ def planning(state: GlobalState) -> dict:
 
 但推荐做法是 Sprint 1 不启用 interrupt，保持验收路径简单。
 
-#### 2.3.4 编译选项
+#### 2.4.4 编译选项
 
 ```python
 compiled = graph.compile(checkpointer=checkpointer)
@@ -784,13 +931,13 @@ Sprint 1 仅传入 `checkpointer`，不使用 `interrupt_before` / `interrupt_af
 
 ---
 
-### 2.4 `core/checkpointer.py` -- Checkpoint 管理
+### 2.5 `core/checkpointer.py` -- Checkpoint 管理
 
 **文件路径**：`core/checkpointer.py`
 **依赖**：`langgraph`, `sqlite3`, `config.py`
 **全局架构参考**：技术架构文档 8
 
-#### 2.4.1 实现细节
+#### 2.5.1 实现细节
 
 ```python
 """Checkpoint 持久化管理。
@@ -848,7 +995,7 @@ def get_checkpointer(db_path: Optional[str] = None) -> SqliteSaver:
     return checkpointer
 ```
 
-#### 2.4.2 WAL 模式说明
+#### 2.5.2 WAL 模式说明
 
 启用 WAL (Write-Ahead Logging) 模式的两个关键理由：
 
@@ -857,7 +1004,7 @@ def get_checkpointer(db_path: Optional[str] = None) -> SqliteSaver:
 
 `PRAGMA synchronous=NORMAL` 在 WAL 模式下提供足够的持久性保证，同时比 `FULL` 模式性能更好。
 
-#### 2.4.3 api_key 安全性处理方案
+#### 2.5.3 api_key 安全性处理方案
 
 **当前状况**：LangGraph SqliteSaver 序列化整个 GlobalState 为 JSON 并写入 SQLite。`LLMConfig.api_key` 会作为 GlobalState 的一部分被写入磁盘。
 
@@ -874,13 +1021,13 @@ def get_checkpointer(db_path: Optional[str] = None) -> SqliteSaver:
 
 ---
 
-### 2.5 `core/llm_client.py` -- LLM 客户端
+### 2.6 `core/llm_client.py` -- LLM 客户端
 
 **文件路径**：`core/llm_client.py`
 **依赖**：`langchain-openai`, `core/state.py`, `core/errors.py`
 **全局架构参考**：技术架构文档 10.4, 12.4, 12.5
 
-#### 2.5.1 `create_llm()` 实现
+#### 2.6.1 `create_llm()` 实现
 
 ```python
 """LLM 客户端封装。
@@ -931,7 +1078,7 @@ def create_llm(config: LLMConfig) -> ChatOpenAI:
     )
 ```
 
-#### 2.5.2 指数退避重试
+#### 2.6.2 指数退避重试
 
 **方案选择**：手写循环（而非 tenacity 装饰器）。
 
@@ -1050,7 +1197,7 @@ def _extract_retry_after(error: Exception) -> Optional[float]:
     return None
 ```
 
-#### 2.5.3 `call_with_structured_output()` 实现方案
+#### 2.6.3 `call_with_structured_output()` 实现方案
 
 **方案选择**：优先尝试 LangChain 原生 `with_structured_output()`，回退到手动 JSON 解析。
 
@@ -1175,7 +1322,7 @@ def _get_parse_error(text: str) -> str:
         return f"JSON 解析失败: {e}"
 ```
 
-#### 2.5.4 Token 估算
+#### 2.6.4 Token 估算
 
 ```python
 def estimate_tokens(text: str) -> int:
@@ -1221,7 +1368,7 @@ def check_context_limit(text: str, max_tokens: int) -> bool:
     return is_safe
 ```
 
-#### 2.5.5 异常映射规则
+#### 2.6.5 异常映射规则
 
 | 原始异常/HTTP 状态码 | 系统内部异常 | 是否重试 |
 |-------------------|------------|---------|
@@ -1233,13 +1380,13 @@ def check_context_limit(text: str, max_tokens: int) -> bool:
 
 ---
 
-### 2.6 `core/tools/deepxiv_tools.py` -- deepxiv 封装
+### 2.7 `core/tools/deepxiv_tools.py` -- deepxiv 封装
 
 **文件路径**：`core/tools/deepxiv_tools.py`
 **依赖**：`deepxiv-sdk>=0.2.5`, `core/errors.py`
 **全局架构参考**：技术架构文档 6
 
-#### 2.6.1 DeepxivTools 类设计
+#### 2.7.1 DeepxivTools 类设计
 
 ```python
 """deepxiv Reader 薄封装。
@@ -1335,7 +1482,7 @@ class DeepxivTools:
             ) from e
 ```
 
-#### 2.6.2 各方法实现
+#### 2.7.2 各方法实现
 
 ```python
     def search_papers(self, query: str, size: int = 10) -> List[Dict]:
@@ -1517,7 +1664,7 @@ class DeepxivTools:
             self._handle_sdk_error(e, f"web_search(query={query!r})")
 ```
 
-#### 2.6.3 SDK 异常映射表（汇总）
+#### 2.7.3 SDK 异常映射表（汇总）
 
 | SDK 异常 | 系统异常 | 重试 | 说明 |
 |---------|---------|------|------|
@@ -1529,7 +1676,7 @@ class DeepxivTools:
 | `APIError` (其他) | `TransientError` | SDK 已重试 | 连接超时等 |
 | `ValueError` | `PermanentError` | 否 | 空 ID、章节不存在等 |
 
-#### 2.6.4 SDK 实际 API 对应关系
+#### 2.7.4 SDK 实际 API 对应关系
 
 | DeepxivTools 方法 | SDK Reader 方法 | 返回值说明 |
 |-------------------|----------------|-----------|
@@ -1543,15 +1690,50 @@ class DeepxivTools:
 
 **重要实现细节**：SDK 的 `section()` 方法内部会先调用 `head()` 获取章节列表进行模糊匹配，然后请求对应章节内容。这意味着每次 `read_section()` 调用会产生 2 次 HTTP 请求。如果需要连续读取多个章节，应先调用 `get_paper_structure()` 获取实际章节名列表，再用匹配后的精确章节名调用 `read_section()`，但由于 SDK 内部仍会重复调用 head()，这种优化效果有限。Sprint 1 接受这个开销。
 
+#### 2.7.5 ReAct 工具工厂函数
+
+为支持 ReAct agent 架构，`deepxiv_tools.py` 额外提供一组工厂函数，将 `DeepxivTools` 类的方法包装为符合 LangChain `BaseTool` 接口的工具实例。ReAct 子图通过这些工具函数与 deepxiv API 交互。
+
+```python
+# ReAct agent 工具工厂函数
+# 在内部使用 DeepxivTools 类，外部通过 @tool 装饰器暴露为 BaseTool
+def get_paper_brief_tool(token=None) -> BaseTool: ...
+def get_paper_head_tool(token=None) -> BaseTool: ...
+def get_paper_structure_tool(token=None) -> BaseTool: ...
+def read_section_tool(token=None) -> BaseTool: ...
+def get_full_paper_tool(token=None) -> BaseTool: ...
+def search_papers_tool(token=None) -> BaseTool: ...
+def web_search_tool(token=None) -> BaseTool: ...
+```
+
+**设计要点**：
+
+- 每个工厂函数接受可选的 `token` 参数，内部创建或复用 `DeepxivTools` 实例。
+- 使用 `@tool` 装饰器将普通函数包装为 `BaseTool`，提供 name、description 供 LLM 的 tool_calls 使用。
+- 工具函数内部捕获异常并返回错误描述字符串（而非抛出异常），使 ReAct 子图中的 `tool_executor_node` 能稳定运行。
+
+**工具-节点映射表**：
+
+| 工具函数 | 使用节点 | 说明 |
+|---------|---------|------|
+| `get_paper_brief_tool` | paper_intake | 获取论文快速摘要 |
+| `get_paper_head_tool` | paper_intake | 获取论文元数据与章节结构 |
+| `search_papers_tool` | paper_intake | 按关键词搜索论文（ID 清洗失败时的备用方案） |
+| `get_paper_structure_tool` | paper_analysis | 获取论文章节结构，制定阅读策略 |
+| `read_section_tool` | paper_analysis | 按章节名读取论文内容 |
+| `get_full_paper_tool` | paper_analysis | 获取论文全文（降级兜底） |
+| `search_papers_tool` | paper_analysis | 补充搜索相关论文信息 |
+| `web_search_tool` | （Sprint 2 预留） | Web 搜索 |
+
 ---
 
-### 2.7 `core/nodes/paper_intake.py` -- paper_intake 节点
+### 2.8 `core/nodes/paper_intake.py` -- paper_intake 节点
 
 **文件路径**：`core/nodes/paper_intake.py`
 **依赖**：`core/state.py`, `core/tools/deepxiv_tools.py`, `core/errors.py`
 **全局架构参考**：技术架构文档 3.1（节点1）, 12.5（节点函数模板）
 
-#### 2.7.1 完整流程（伪代码）
+#### 2.8.1 完整流程（伪代码）
 
 ```python
 """paper_intake 节点：论文输入与解析。
@@ -1651,7 +1833,7 @@ def paper_intake(state: GlobalState) -> dict:
         }
 ```
 
-#### 2.7.2 brief() + head() 互补获取策略
+#### 2.8.2 brief() + head() 互补获取策略
 
 ```python
 def _map_to_paper_meta(
@@ -1693,7 +1875,7 @@ def _map_to_paper_meta(
     )
 ```
 
-#### 2.7.3 学科范围校验
+#### 2.8.3 学科范围校验
 
 ```python
 def _check_cs_category(paper_meta: PaperMeta) -> None:
@@ -1718,15 +1900,58 @@ def _check_cs_category(paper_meta: PaperMeta) -> None:
         )
 ```
 
+#### 2.8.4 ReAct Agent 实现设计
+
+**为什么 paper_intake 需要 ReAct**：
+
+paper_intake 看似是简单的数据获取节点，但实际存在多种需要自主决策的场景：
+
+1. **ID 格式清洗**：用户输入可能是完整 URL（`https://arxiv.org/abs/2409.05591`）、带版本号的 ID（`2409.05591v2`）、或旧格式 ID（`cs/0601001`），agent 需要自主判断并清洗。
+2. **brief 失败需自主决策**：当 `get_paper_brief` 因论文不存在失败时，agent 可以自主尝试用 `search_papers` 搜索相近标题，或尝试去除版本号重试。
+3. **head 补充策略**：brief 返回数据不完整时，agent 自主决定是否调用 head 补充，以及如何合并字段。
+
+**可用工具**：
+
+- `get_paper_brief`：获取论文快速摘要
+- `get_paper_head`：获取论文元数据与章节结构
+- `search_papers`：按关键词搜索论文
+
+**配置参数**：
+
+- `max_rounds = 5`
+- `result_schema`：与 `PaperMeta` TypedDict 对齐的 JSON Schema
+
+**system prompt 要点**：
+
+- 角色：论文元数据获取专家
+- 任务：从用户输入中提取 arXiv ID，获取完整的论文元数据
+- 策略指导：先尝试 brief，失败则 head，ID 格式异常时尝试清洗或搜索
+- 输出格式：在 `<result>{...}</result>` 标签中输出符合 PaperMeta Schema 的 JSON
+
+**主图节点注册**：
+
+```python
+# 使用 _make_react_wrapper 生成主图节点函数
+paper_intake = _make_react_wrapper(
+    node_name="paper_intake",
+    build_context=lambda state: {"user_input": state["user_input"], "input_type": state.get("input_type", "arxiv_id")},
+    build_system_prompt=_build_intake_system_prompt,
+    get_tools=lambda state: [get_paper_brief_tool(), get_paper_head_tool(), search_papers_tool()],
+    map_result=_map_intake_result,
+    max_rounds=5,
+    result_schema=PAPER_META_SCHEMA,
+)
+```
+
 ---
 
-### 2.8 `core/nodes/paper_analysis.py` -- paper_analysis 节点
+### 2.9 `core/nodes/paper_analysis.py` -- paper_analysis 节点
 
 **文件路径**：`core/nodes/paper_analysis.py`
 **依赖**：`core/state.py`, `core/tools/deepxiv_tools.py`, `core/llm_client.py`, `core/errors.py`
 **全局架构参考**：技术架构文档 3.1（节点2）, 12.5（降级链）
 
-#### 2.8.1 完整流程（伪代码）
+#### 2.9.1 完整流程（伪代码）
 
 ```python
 """paper_analysis 节点：深度论文分析。
@@ -1930,7 +2155,7 @@ def paper_analysis(state: GlobalState) -> dict:
         }
 ```
 
-#### 2.8.2 渐进式阅读策略
+#### 2.9.2 渐进式阅读策略
 
 ```python
 # 章节优先级定义
@@ -2001,7 +2226,7 @@ SECTION_PRIORITY = [
 ]
 ```
 
-#### 2.8.3 降级链实现
+#### 2.9.3 降级链实现
 
 ```python
 def _read_section_with_fallback(
@@ -2090,7 +2315,7 @@ def _get_structure_safe(
         return None
 ```
 
-#### 2.8.4 LLM Prompt 设计
+#### 2.9.4 LLM Prompt 设计
 
 ```python
 def _build_analysis_prompt(
@@ -2148,7 +2373,7 @@ def _build_analysis_prompt(
     return f"{base}{instruction}\n\n---\n\n{content}"
 ```
 
-#### 2.8.5 结果组装
+#### 2.9.5 结果组装
 
 ```python
 def _assemble_paper_analysis(
@@ -2193,16 +2418,80 @@ def _assemble_paper_analysis(
     )
 ```
 
-#### 2.8.6 预算控制逻辑
+#### 2.9.6 预算控制逻辑
 
 - **单节点 LLM 调用上限**：`MAX_NODE_LLM_CALLS = 10`（来自 config.py）。
 - 包含 `call_with_structured_output` 内部的重试次数。每次 `call_with_structured_output` 最多消耗 `1 + max_retries = 4` 次 LLM 调用（1 次 structured output + 3 次手动重试），但对外计为 1 次。
 - 当 `llm_call_count >= MAX_NODE_LLM_CALLS` 时，停止分析更多章节，以当前最佳结果写入状态。
 - 全局预算 `retry_budget_remaining` 的扣减**由节点层负责**（但 Sprint 1 暂不实现全局扣减，仅做单节点计数）。
 
+#### 2.9.7 ReAct Agent 实现设计
+
+**ReAct 核心价值**：
+
+paper_analysis 是 ReAct 收益最大的节点。固定流程函数的降级链（2.9.3 所述）面临以下局限：
+
+1. **非标准章节名识别**：论文的章节命名高度多样化（如 "Our Framework" 代替 "Method"，"Ablation Study" 代替 "Results"），硬编码别名列表无法覆盖所有变体。ReAct agent 可以先获取章节结构，理解每个章节的实际内容主题，自主决定阅读哪些章节。
+2. **自主制定阅读策略**：不同类型的论文（理论型、系统型、实验型）的关键信息分布不同。agent 可以根据论文摘要和章节结构动态调整阅读顺序和重点。
+3. **降级决策智能化**：从"硬编码降级链"变为"agent 自主决策 + prompt 指导策略"。当某个章节读取失败时，agent 可以自主判断是尝试别名、读取全文、还是跳过该章节。
+
+**可用工具**：
+
+- `get_paper_structure`：获取论文章节结构，制定阅读策略
+- `read_section`：按章节名读取论文内容
+- `get_full_paper`：获取论文全文（降级兜底）
+- `search_papers`：补充搜索相关论文信息
+
+**配置参数**：
+
+- `max_rounds = 12`（需要多轮工具调用来完成渐进式阅读和分析）
+- `result_schema`：与 `PaperAnalysis` TypedDict 对齐的 JSON Schema
+
+**system prompt 要点**：
+
+- 角色：深度论文分析专家，专注于提取复现所需的关键技术信息
+- 任务：渐进式阅读论文关键章节，提取方法、实验设置、结果等结构化信息
+- 策略指导：
+  - 先调用 `get_paper_structure` 了解章节结构
+  - 按 Method → Experiments → Results → Introduction 优先级阅读
+  - 遇到非标准章节名时根据章节结构自主匹配
+  - 单个章节读取失败时尝试替代方案，而非直接跳过
+  - 全部章节读取失败时调用 `get_full_paper` 兜底
+- 输出格式：在 `<result>{...}</result>` 标签中输出符合 PaperAnalysis Schema 的 JSON
+
+**主图节点注册**：
+
+```python
+paper_analysis = _make_react_wrapper(
+    node_name="paper_analysis",
+    build_context=lambda state: {
+        "arxiv_id": state["paper_meta"]["arxiv_id"],
+        "paper_meta": state["paper_meta"],
+    },
+    build_system_prompt=_build_analysis_system_prompt,
+    get_tools=lambda state: [
+        get_paper_structure_tool(), read_section_tool(),
+        get_full_paper_tool(), search_papers_tool(),
+    ],
+    map_result=_map_analysis_result,
+    max_rounds=12,
+    result_schema=PAPER_ANALYSIS_SCHEMA,
+)
+```
+
+**降级处理的变化**：
+
+| 方面 | 旧方案（固定流程函数） | 新方案（ReAct agent） |
+|------|---------------------|---------------------|
+| 章节名匹配 | 硬编码别名列表 | agent 根据章节结构自主判断 |
+| 读取失败处理 | 固定降级链：别名→全文→标记缺失 | agent 自主决策下一步行动 |
+| 阅读优先级 | 固定顺序 | agent 根据论文类型动态调整 |
+| 分析粒度 | 每章节独立 LLM 调用 | agent 在上下文中综合多章节信息 |
+| 预算控制 | 手动计数 `llm_call_count` | `budget_check_node` 自动管理 |
+
 ---
 
-### 2.9 `config.py` -- 配置管理
+### 2.10 `config.py` -- 配置管理
 
 **文件路径**：`config.py`（项目根目录）
 **依赖**：仅 Python 标准库 (`pathlib`, `os`)
@@ -2304,7 +2593,7 @@ def ensure_directories() -> None:
 
 ---
 
-### 2.10 `requirements.txt` -- 依赖声明
+### 2.11 `requirements.txt` -- 依赖声明
 
 ```
 # Auto-Reproduction -- 论文自动复现系统
@@ -2503,6 +2792,19 @@ paper_analysis 节点
 
 **决策**：方案 A。tiktoken 作为可选依赖列入 requirements.txt，估算函数内部做 try-import 回退。
 
+### 4.6 节点实现方式选择 ReAct agent
+
+**决策**：所有节点内部采用 ReAct 循环子图实现（通过 `core/react_base.py` 工厂函数构建）。
+
+**理由**：
+
+1. 固定流程函数无法处理论文的长尾变异（非标准章节名、API 部分失败等），需要 agent 自主决策工具调用顺序和降级策略。
+2. ReAct 让 agent 在 reasoning 阶段分析当前信息，自主决定下一步调用哪个工具、传什么参数，而非依赖硬编码的分支逻辑。
+3. 通过 `max_rounds` 和 `budget_check_node` 保持可控性，防止 agent 无限循环或过度消耗 LLM 调用预算。
+4. deepxiv_sdk 中已有 ReAct 参考实现（`deepxiv_sdk/react_reader.py`），验证了该模式在论文处理场景中的可行性。
+
+**影响**：Sprint 1 新增 `core/react_base.py` 模块（约 4-6 小时工时），后续 Sprint 所有节点（resource_scout、planning、coding、execution、reporting）可直接复用此基础设施，无需重复实现子图构建逻辑。
+
 ---
 
 ## 5. 测试策略
@@ -2513,10 +2815,11 @@ paper_analysis 节点
 |------|---------|----------|
 | `core/state.py` | TypedDict 可正常实例化、Enum 值正确、create_initial_state() 默认值 | 无需 mock |
 | `core/errors.py` | 继承关系正确（isinstance 检查）、make_node_error() 返回值格式 | 无需 mock |
+| `core/react_base.py` | ReActState 可正常实例化；create_react_subgraph() 构建的子图拓扑正确（节点数、边连接）；budget_check_node 在 round >= max_rounds-1 时设 status 为 budget_exhausted；正常终止路径（LLM 输出 `<result>` 标签后 finalize 正确解析）；超预算终止路径（force_finish 注入提示后 finalize 完成）；_make_react_wrapper 正确映射 GlobalState <-> ReActState | Mock LLM（返回预设的 AIMessage 序列） |
 | `core/llm_client.py` | create_llm() 参数传递、_call_llm_with_retry() 重试逻辑（模拟超时/限流/认证失败）、call_with_structured_output() JSON 解析（正常/markdown 包裹/非法 JSON）、estimate_tokens() 精度 | Mock `ChatOpenAI.invoke()` |
-| `core/tools/deepxiv_tools.py` | 异常映射（每种 SDK 异常 -> 系统异常）、空返回值处理、get_paper_brief/read_section 正常路径 | Mock `Reader` 实例 |
-| `core/nodes/paper_intake.py` | 字段映射完整性、brief+head 互补逻辑、学科校验（CS/非CS）、error 路径 | Mock `DeepxivTools` |
-| `core/nodes/paper_analysis.py` | 降级链每一步（章节成功/别名成功/全文成功/全部失败）、LLM 预算耗尽、所有章节缺失的兜底 | Mock `DeepxivTools` + Mock `ChatOpenAI` |
+| `core/tools/deepxiv_tools.py` | 异常映射（每种 SDK 异常 -> 系统异常）、空返回值处理、get_paper_brief/read_section 正常路径；ReAct 工具工厂函数返回 BaseTool 实例、工具调用异常时返回错误字符串而非抛异常 | Mock `Reader` 实例 |
+| `core/nodes/paper_intake.py` | ReAct wrapper 正确映射 user_input 到 context；agent 可通过工具调用获取 PaperMeta；ID 格式清洗场景；brief 失败后的搜索回退；error 路径 | Mock LLM + Mock DeepxivTools（通过 mock 工具） |
+| `core/nodes/paper_analysis.py` | ReAct wrapper 正确映射 paper_meta 到 context；agent 自主制定阅读策略；非标准章节名识别；降级处理（agent 自主决策）；LLM 预算耗尽的优雅终止 | Mock LLM + Mock DeepxivTools（通过 mock 工具） |
 | `core/checkpointer.py` | WAL 模式验证、路径不存在时自动创建、路径不可写时报错 | 使用临时文件 |
 | `core/graph.py` | 图编译成功、节点数量和边连接正确、占位节点不修改状态 | Mock checkpointer |
 | `config.py` | 环境变量覆盖、默认值正确、路径类型为 Path | 使用 os.environ 临时设置 |
@@ -2575,7 +2878,15 @@ def test_e2e_checkpoint_persistence():
     pass
 ```
 
-### 5.3 Mock 策略
+### 5.3 ReAct 子图集成测试
+
+| 测试场景 | 测试目标 | Mock 策略 |
+|---------|---------|----------|
+| paper_intake ReAct 集成 | 验证 paper_intake ReAct wrapper 端到端流程：从 user_input 到 PaperMeta 输出，包含工具调用和结构化结果解析 | Mock LLM 返回预设的 tool_calls 和 `<result>` 响应；Mock deepxiv 工具返回 fixture 数据 |
+| paper_analysis ReAct 集成 | 验证 paper_analysis ReAct wrapper 端到端流程：从 paper_meta 到 PaperAnalysis 输出，包含多轮工具调用（get_structure → read_section x N）和结构化结果解析 | Mock LLM 返回预设的多轮 tool_calls 序列；Mock deepxiv 工具返回 fixture 数据 |
+| ReAct 预算耗尽路径 | 验证 max_rounds 耗尽时 force_finish + finalize 的完整路径 | Mock LLM 持续返回 tool_calls（不输出 `<result>`），验证到达 max_rounds 后强制终止并产出结果 |
+
+### 5.4 Mock 策略
 
 **分层 Mock 原则**：
 
@@ -2610,6 +2921,8 @@ def test_e2e_checkpoint_persistence():
 | R5 | LLM 上下文窗口溢出 | 中 | 中 -- 论文内容过长无法分析 | 调用前 token 估算 + 主动截断；降级为 brief + 关键章节摘要模式 | 用长篇论文测试截断逻辑 |
 | R6 | SDK section() 每次调用内部重复请求 head() | 低 | 低 -- 性能损耗但不影响功能 | Sprint 1 接受开销；后续可考虑在 DeepxivTools 层缓存 head() 结果 | 观察 API 调用次数是否在合理范围 |
 | R7 | LangGraph 版本更新导致 API 变化 | 低 | 中 -- 需要修改图构建代码 | requirements.txt 设定最低版本 >=0.2.0；checkpointer 和 graph 封装隔离直接 API | 首次集成时锁定测试通过的版本 |
+| R8 | ReAct agent 工具选择不准确导致信息缺失 | 中 | 中 -- paper_analysis 输出质量下降 | system prompt 中提供明确的工具使用策略指导（优先级、降级路径）；max_rounds 留足余量允许 agent 纠错重试；finalize 阶段校验结果完整性，缺失关键字段时记录到 analysis_notes | 用多种类型论文（标准/非标准章节名）测试 agent 的工具调用决策质量 |
+| R9 | ReAct 基础设施引入额外开发复杂度 | 中 | 低 -- 增加 Sprint 1 开发工时但不影响功能 | react_base.py 设计为通用基础设施，一次投入后续 Sprint 全部复用；子图与主图状态完全隔离，降低调试难度；提供充分的单元测试覆盖 | 完成 react_base.py 后立即用 paper_intake 验证集成，尽早发现设计缺陷 |
 
 ### 6.2 假设清单
 
@@ -2626,3 +2939,5 @@ def test_e2e_checkpoint_persistence():
 **文档结束**
 
 *本文档为 Sprint 1 核心架构设计文档正式版。所有模块的数据结构定义以技术架构文档第 4 章为权威来源，异常层次以第 12.2 节为权威来源。开发者读完本文档后可直接开始编码，无需回头查阅全局架构文档。*
+
+*2026-05-07 更新：架构升级为 ReAct agent 模式——新增 core/react_base.py 通用 ReAct 子图基础设施，paper_intake 和 paper_analysis 从固定流程函数改为 ReAct agent 实现。新增关键设计决策 KD-4.6。*
