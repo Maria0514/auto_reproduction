@@ -14,6 +14,7 @@
 - [x] [2026-05-07] @全栈开发代理 实现 `config.py`——全局配置（路径、默认值、环境变量）
 - [x] [2026-05-08] @全栈开发代理 补齐 `config.py` ReAct 配置常量（REACT_MAX_ROUNDS_PAPER_INTAKE, REACT_MAX_ROUNDS_PAPER_ANALYSIS, REACT_LLM_TEMPERATURE, REACT_RESULT_TAG_OPEN, REACT_RESULT_TAG_CLOSE, TOOL_RESULT_MAX_LENGTH）——同步 dev-plan v1.1 要求
 - [x] [2026-05-07] @全栈开发代理 实现 `core/state.py`——GlobalState 及所有 TypedDict 定义（含 NodeError、degraded_nodes、retry_budget_remaining 错误追踪字段）
+- [x] [2026-05-10] @全栈开发代理 A3 自测通过：11 个 TypedDict/Enum 导入正常 + ExecutionMode 枚举值正确 + create_initial_state 返回完整 GlobalState + 默认值全部正确（retry_budget_remaining=50, fix_loop_count=0, execution_mode=FULL）
 - [ ] [2026-05-06] 实现 `core/graph.py`——LangGraph 主图骨架（7 节点注册、顺序边、interrupt 占位）
 - [ ] [2026-05-06] 实现 `core/checkpointer.py`——SqliteSaver 初始化与 checkpoint 管理
 - [ ] [2026-05-06] 实现 `core/errors.py`——统一异常层次定义（AutoReproError / TransientError / PermanentError / LLMError / SandboxError 等）

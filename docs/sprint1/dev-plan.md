@@ -171,10 +171,10 @@ requirements.txt (S1-10)    <-- 无依赖，可在任意阶段完成
 | `create_initial_state` | `(user_input: str, llm_config: LLMConfig, workspace_dir: Optional[str] = None) -> GlobalState` | 创建带完整默认值的初始 GlobalState |
 
 **自测检查点**：
-- [ ] 所有 TypedDict 和 Enum 可正常 `from core.state import ...`
-- [ ] `ExecutionMode.FULL.value == "full"`
-- [ ] `create_initial_state("2409.05591", llm_config)` 返回完整 GlobalState
-- [ ] 默认值正确：`retry_budget_remaining=50`, `fix_loop_count=0`, `execution_mode=ExecutionMode.FULL`
+- [x] 所有 TypedDict 和 Enum 可正常 `from core.state import ...`
+- [x] `ExecutionMode.FULL.value == "full"`
+- [x] `create_initial_state("2409.05591", llm_config)` 返回完整 GlobalState
+- [x] 默认值正确：`retry_budget_remaining=50`, `fix_loop_count=0`, `execution_mode=ExecutionMode.FULL`
 
 ---
 
