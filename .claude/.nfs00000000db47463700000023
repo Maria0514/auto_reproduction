@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(gh issue *)",
+      "Bash(mv /home/yujingm/myproj/auto_reproduction/.claude/agents/product-manager.agent.md /home/yujingm/myproj/auto_reproduction/.claude/agents/product-manager.md)",
+      "Bash(mv /home/yujingm/myproj/auto_reproduction/.claude/agents/architect.agent.md /home/yujingm/myproj/auto_reproduction/.claude/agents/architect.md)",
+      "Bash(grep -E \"\\\\.\\(md|txt|json|yaml|yml\\)$\")",
+      "Bash(curl -s https://code.claude.com/docs/en/sub-agents)",
+      "Bash(claude --version)",
+      "Bash(/usr/bin/python3.11 *)",
+      "Bash(/home/yujingm/myproj/auto_reproduction/.venv/bin/python *)",
+      "Bash(/home/yujingm/myproj/auto_reproduction/.venv/bin/pip install *)",
+      "Bash(/home/yujingm/myproj/auto_reproduction/.venv/bin/pip check *)",
+      "Bash(python3 *)",
+      "Bash(pip check *)",
+      "Bash(pip3 --version)",
+      "Read(//usr/bin/**)",
+      "Bash(conda info *)",
+      "Read(//home/yujingm/**)"
+    ]
+  }
+}

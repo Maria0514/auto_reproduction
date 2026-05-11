@@ -214,12 +214,12 @@ AutoReproError (系统根异常)
 | `make_node_error` | `(node_name, error_type, error_message, error_detail=None, retry_count=0, resolved=False) -> NodeError` | 创建 NodeError TypedDict 的工厂函数 |
 
 **自测检查点**：
-- [ ] 所有异常类可正常导入
-- [ ] `isinstance(LLMRateLimitError("test"), TransientError)` 为 `True`
-- [ ] `isinstance(LLMAuthError("test"), PermanentError)` 为 `True`
-- [ ] `isinstance(DegradedResultError("test"), TransientError)` 为 `False`
-- [ ] `isinstance(DegradedResultError("test"), PermanentError)` 为 `False`
-- [ ] `make_node_error("paper_intake", "permanent", "test")` 返回正确的 NodeError 字典
+- [x] 所有异常类可正常导入
+- [x] `isinstance(LLMRateLimitError("test"), TransientError)` 为 `True`
+- [x] `isinstance(LLMAuthError("test"), PermanentError)` 为 `True`
+- [x] `isinstance(DegradedResultError("test"), TransientError)` 为 `False`
+- [x] `isinstance(DegradedResultError("test"), PermanentError)` 为 `False`
+- [x] `make_node_error("paper_intake", "permanent", "test")` 返回正确的 NodeError 字典
 
 ---
 
