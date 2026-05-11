@@ -12,6 +12,7 @@
 - [x] [2026-05-07] @全栈开发代理 编写 `requirements.txt`，声明所有 Python 依赖
 - [x] [2026-05-07] @全栈开发代理 A1 自测通过：pip install 无冲突 + pip check 无问题 + 全部 7 个包 import 成功
 - [x] [2026-05-07] @全栈开发代理 实现 `config.py`——全局配置（路径、默认值、环境变量）
+- [x] [2026-05-08] @全栈开发代理 补齐 `config.py` ReAct 配置常量（REACT_MAX_ROUNDS_PAPER_INTAKE, REACT_MAX_ROUNDS_PAPER_ANALYSIS, REACT_LLM_TEMPERATURE, REACT_RESULT_TAG_OPEN, REACT_RESULT_TAG_CLOSE, TOOL_RESULT_MAX_LENGTH）——同步 dev-plan v1.1 要求
 - [x] [2026-05-07] @全栈开发代理 实现 `core/state.py`——GlobalState 及所有 TypedDict 定义（含 NodeError、degraded_nodes、retry_budget_remaining 错误追踪字段）
 - [ ] [2026-05-06] 实现 `core/graph.py`——LangGraph 主图骨架（7 节点注册、顺序边、interrupt 占位）
 - [ ] [2026-05-06] 实现 `core/checkpointer.py`——SqliteSaver 初始化与 checkpoint 管理

@@ -33,6 +33,16 @@ LLM_MAX_RETRIES: int = 3
 LLM_INITIAL_RETRY_DELAY: float = 2.0
 
 
+# ========== ReAct 配置 ==========
+
+REACT_MAX_ROUNDS_PAPER_INTAKE: int = 5
+REACT_MAX_ROUNDS_PAPER_ANALYSIS: int = 12
+REACT_LLM_TEMPERATURE: float = 0.3
+REACT_RESULT_TAG_OPEN: str = "<result>"
+REACT_RESULT_TAG_CLOSE: str = "</result>"
+TOOL_RESULT_MAX_LENGTH: int = 8000
+
+
 # ========== 环境变量读取 ==========
 
 def get_deepxiv_token() -> Optional[str]:
