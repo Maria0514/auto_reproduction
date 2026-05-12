@@ -300,13 +300,13 @@ AutoReproError (系统根异常)
 - **高风险**：异常分类逻辑依赖字符串匹配，不同 LLM API 的错误消息格式可能不同
 
 **自测检查点**：
-- [ ] `create_llm(config)` 返回 ChatOpenAI 实例（不发起网络请求）
-- [ ] `estimate_tokens("hello world")` 返回正整数
-- [ ] `check_context_limit("short text", 4096)` 返回 `True`
-- [ ] `_try_parse_json('```json\n{"key": "value"}\n```')` 返回 `{"key": "value"}`
-- [ ] `_try_parse_json('some text {"key": "value"} more text')` 返回 `{"key": "value"}`
-- [ ] Mock 测试：认证失败时抛出 `LLMAuthError`
-- [ ] Mock 测试：限流时指数退避后抛出 `LLMRateLimitError`
+- [x] `create_llm(config)` 返回 ChatOpenAI 实例（不发起网络请求）
+- [x] `estimate_tokens("hello world")` 返回正整数
+- [x] `check_context_limit("short text", 4096)` 返回 `True`
+- [x] `_try_parse_json('```json\n{"key": "value"}\n```')` 返回 `{"key": "value"}`
+- [x] `_try_parse_json('some text {"key": "value"} more text')` 返回 `{"key": "value"}`
+- [x] Mock 测试：认证失败时抛出 `LLMAuthError`
+- [x] Mock 测试：限流时指数退避后抛出 `LLMRateLimitError`
 
 ---
 
