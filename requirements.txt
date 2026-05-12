@@ -4,6 +4,7 @@
 
 # ---- 核心依赖 ----
 langgraph>=0.2.0
+langgraph-checkpoint-sqlite>=3.0.0
 langchain-openai>=0.1.0
 langchain-core>=0.2.0
 # deepxiv-sdk>=0.2.5  -- 从本地安装: pip install -e ./deepxiv_sdk

@@ -252,10 +252,10 @@ AutoReproError (系统根异常)
 - 将 connection 传入 `SqliteSaver(conn)`
 
 **自测检查点**：
-- [ ] `get_checkpointer("/tmp/test_checkpoint.db")` 返回 SqliteSaver 实例
-- [ ] 生成的数据库文件使用 WAL 模式
-- [ ] 数据库文件不存在时自动创建
-- [ ] 路径为目录时抛出 PermanentError
+- [x] `get_checkpointer("/tmp/test_checkpoint.db")` 返回 SqliteSaver 实例
+- [x] 生成的数据库文件使用 WAL 模式
+- [x] 数据库文件不存在时自动创建
+- [x] 路径为目录时抛出 PermanentError
 
 ---
 

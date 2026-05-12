@@ -16,7 +16,7 @@
 - [x] [2026-05-07] @全栈开发代理 实现 `core/state.py`——GlobalState 及所有 TypedDict 定义（含 NodeError、degraded_nodes、retry_budget_remaining 错误追踪字段）
 - [x] [2026-05-10] @全栈开发代理 A3 自测通过：11 个 TypedDict/Enum 导入正常 + ExecutionMode 枚举值正确 + create_initial_state 返回完整 GlobalState + 默认值全部正确（retry_budget_remaining=50, fix_loop_count=0, execution_mode=FULL）
 - [ ] [2026-05-06] 实现 `core/graph.py`——LangGraph 主图骨架（7 节点注册、顺序边、interrupt 占位）
-- [ ] [2026-05-06] 实现 `core/checkpointer.py`——SqliteSaver 初始化与 checkpoint 管理
+- [x] [2026-05-11] @全栈开发代理 实现 `core/checkpointer.py`——SqliteSaver 初始化与 checkpoint 管理（WAL 模式，4 项自测全部通过）
 - [x] [2026-05-11] @全栈开发代理 实现 `core/errors.py`——统一异常层次定义（AutoReproError / TransientError / PermanentError / LLMError / SandboxError 等 + make_node_error 工厂函数），A4 自测全部通过
 - [ ] [2026-05-06] 实现 `core/llm_client.py`——OpenAI 兼容 LLM 客户端封装（含指数退避重试、structured output 调用、token 估算）
 - [ ] [2026-05-06] 实现 `core/tools/deepxiv_tools.py`——deepxiv Reader 薄封装
