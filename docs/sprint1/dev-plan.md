@@ -441,14 +441,14 @@ AutoReproError (系统根异常)
 - **中风险**：`<result>` 标签解析逻辑需要处理 LLM 输出的多种不规范格式
 
 **自测检查点**：
-- [ ] `ReActState` 可正常实例化，messages 字段支持 `operator.add` 追加语义
-- [ ] `create_react_subgraph()` 返回 CompiledGraph 实例，包含正确的节点数和边连接
-- [ ] 正常终止路径：Mock LLM 输出 `<result>{JSON}</result>` 后 finalize 正确解析
-- [ ] 超预算终止路径：Mock LLM 持续返回 tool_calls，达到 max_rounds 后 force_finish 触发并产出结果
-- [ ] tool_executor_node：工具执行异常时返回错误字符串追加到 messages，不中断子图
-- [ ] tool_executor_node：工具返回结果超过 TOOL_RESULT_MAX_LENGTH 时正确截断
-- [ ] `_make_react_wrapper` 生成的 wrapper 函数签名为 `(GlobalState) -> dict`
-- [ ] `_make_react_wrapper` 正确映射 GlobalState <-> ReActState 并扣减 retry_budget_remaining
+- [x] `ReActState` 可正常实例化，messages 字段支持 `operator.add` 追加语义
+- [x] `create_react_subgraph()` 返回 CompiledGraph 实例，包含正确的节点数和边连接
+- [x] 正常终止路径：Mock LLM 输出 `<result>{JSON}</result>` 后 finalize 正确解析
+- [x] 超预算终止路径：Mock LLM 持续返回 tool_calls，达到 max_rounds 后 force_finish 触发并产出结果
+- [x] tool_executor_node：工具执行异常时返回错误字符串追加到 messages，不中断子图
+- [x] tool_executor_node：工具返回结果超过 TOOL_RESULT_MAX_LENGTH 时正确截断
+- [x] `_make_react_wrapper` 生成的 wrapper 函数签名为 `(GlobalState) -> dict`
+- [x] `_make_react_wrapper` 正确映射 GlobalState <-> ReActState 并扣减 retry_budget_remaining
 
 ---
 
