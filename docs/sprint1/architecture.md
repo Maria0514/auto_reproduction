@@ -2801,7 +2801,7 @@ paper_analysis 节点
 1. 固定流程函数无法处理论文的长尾变异（非标准章节名、API 部分失败等），需要 agent 自主决策工具调用顺序和降级策略。
 2. ReAct 让 agent 在 reasoning 阶段分析当前信息，自主决定下一步调用哪个工具、传什么参数，而非依赖硬编码的分支逻辑。
 3. 通过 `max_rounds` 和 `budget_check_node` 保持可控性，防止 agent 无限循环或过度消耗 LLM 调用预算。
-4. deepxiv_sdk 中已有 ReAct 参考实现（`deepxiv_sdk/react_reader.py`），验证了该模式在论文处理场景中的可行性。
+4. deepxiv_sdk 中已有 ReAct 参考实现（`deepxiv_sdk_repo/react_reader.py`），验证了该模式在论文处理场景中的可行性。
 
 **影响**：Sprint 1 新增 `core/react_base.py` 模块（约 4-6 小时工时），后续 Sprint 所有节点（resource_scout、planning、coding、execution、reporting）可直接复用此基础设施，无需重复实现子图构建逻辑。
 

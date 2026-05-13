@@ -2,7 +2,7 @@
 
 # 项目架构速览
 - 流水线：paper_intake → paper_analysis → resource_scout → planning（人在回路）→ coding → execution（↔coding 修复循环）→ reporting
-- 编排：LangGraph + SqliteSaver | LLM：LangChain ChatOpenAI | 论文读取：deepxiv-sdk（`./deepxiv_sdk`）
+- 编排：LangGraph + SqliteSaver | LLM：LangChain ChatOpenAI | 论文读取：deepxiv-sdk（参考仓库 `./deepxiv_sdk_repo`，代码中通过 pip 包 `deepxiv_sdk` 导入）
 - 依赖关键路径：`config.py` + `state.py` + `errors.py` → `llm_client.py` + `deepxiv_tools.py` + `checkpointer.py` → `paper_intake.py` + `paper_analysis.py` → `graph.py`
 - 每个 Sprint 的文档在 `docs/sprint{N}/` 下（prd.md、architecture.md、dev-plan.md），进度跟踪在 `docs/TODO.md`
 

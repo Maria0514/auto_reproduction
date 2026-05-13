@@ -371,14 +371,14 @@ AutoReproError (系统根异常)
 - 每个工具函数包含完整的参数描述（docstring），供 LLM 理解参数含义
 
 **自测检查点**：
-- [ ] `DeepxivTools` 类可正常实例化
+- [x] `DeepxivTools` 类可正常实例化
 - [ ] Mock Reader 后各方法可正常调用并返回预期格式
 - [ ] SDK `NotFoundError` 正确映射为 `PermanentError`
 - [ ] SDK `RateLimitError` 正确映射为 `TransientError`
 - [ ] 空返回值抛出 `PermanentError`
-- [ ] 7 个工具工厂函数均返回 `BaseTool` 实例
+- [x] 7 个工具工厂函数均返回 `BaseTool` 实例
 - [ ] 工具函数调用异常时返回错误描述字符串（而非抛出异常）
-- [ ] 工具函数的 name、description 属性正确设置
+- [x] 工具函数的 name、description 属性正确设置
 
 ---
 
@@ -772,7 +772,7 @@ START -> paper_intake -> paper_analysis -> resource_scout -> planning -> coding 
 **说明**：修复 E2 自测中发现的所有问题。常见问题预判：
 - 循环导入（`core/errors.py` -> `core/state.py`）
 - LangGraph API 版本兼容性
-- deepxiv_sdk 导入路径
+- ~~deepxiv_sdk 导入路径~~ （已解决：本地参考仓库目录已从 `./deepxiv_sdk/` 重命名为 `./deepxiv_sdk_repo/`，消除与 pip 包名的 namespace package 冲突；代码统一通过 `from deepxiv_sdk import ...` 使用 pip 安装的包，无需 try/except fallback）
 - TypedDict Optional 字段的默认值处理
 
 ---
@@ -864,3 +864,5 @@ START -> paper_intake -> paper_analysis -> resource_scout -> planning -> coding 
 *本开发计划基于 Sprint 1 PRD (`docs/sprint1/prd.md`) 和架构设计文档 (`docs/sprint1/architecture.md`) 生成。所有模块的接口定义、数据结构和实现细节以架构文档为权威来源。*
 
 *2026-05-07 更新：同步 ReAct agent 架构升级——新增 S1-11 react_base.py 任务（阶段 B4），config.py 新增 ReAct 配置常量，deepxiv_tools.py 新增 7 个工具工厂函数，paper_intake 和 paper_analysis 从固定流程函数升级为 ReAct agent 实现，graph.py 使用 ReAct wrapper 函数注册节点，新增风险 R8/R9，更新时间估算。*
+
+*2026-05-12 更新：标注 E3 中 deepxiv_sdk 导入路径问题已解决——本地参考仓库目录已从 `./deepxiv_sdk/` 重命名为 `./deepxiv_sdk_repo/`，消除与 pip 包名的 namespace package 冲突，代码统一通过 pip 安装的包导入，无需 try/except fallback。*

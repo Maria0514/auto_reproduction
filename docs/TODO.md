@@ -19,7 +19,7 @@
 - [x] [2026-05-11] @全栈开发代理 实现 `core/checkpointer.py`——SqliteSaver 初始化与 checkpoint 管理（WAL 模式，4 项自测全部通过）
 - [x] [2026-05-11] @全栈开发代理 实现 `core/errors.py`——统一异常层次定义（AutoReproError / TransientError / PermanentError / LLMError / SandboxError 等 + make_node_error 工厂函数），A4 自测全部通过
 - [x] [2026-05-12] @全栈开发代理 实现 `core/llm_client.py`——OpenAI 兼容 LLM 客户端封装（含指数退避重试、structured output 调用、token 估算），B2 自测全部通过（9 项函数导入 + create_llm + estimate_tokens + check_context_limit + JSON 解析 + 错误分类）
-- [ ] [2026-05-06] 实现 `core/tools/deepxiv_tools.py`——deepxiv Reader 薄封装
+- [x] [2026-05-12] @全栈开发代理 实现 `core/tools/deepxiv_tools.py`——deepxiv Reader 薄封装 + ReAct 工具工厂函数（7 个 BaseTool），B3 自测全部通过
 - [ ] [2026-05-06] 实现 `core/nodes/paper_intake.py`——节点1：论文输入与解析
 - [ ] [2026-05-06] 实现 `core/nodes/paper_analysis.py`——节点2：深度论文分析
 - [ ] [2026-05-06] **阶段 1 验收**：能通过代码输入 arXiv ID，经 paper_intake 和 paper_analysis 输出结构化分析结果，状态可持久化到 SQLite
@@ -68,6 +68,9 @@
 - [x] [2026-05-06] @产品经理代理 完成产品设计说明书（docs/product-design-specification.md）
 - [x] [2026-05-06] @架构师代理 完成技术架构文档（docs/technical-architecture.md）
 - [x] [2026-05-06] deepxiv_sdk 已引入项目
+- [x] [2026-05-12] @Maria 重命名 `./deepxiv_sdk/` → `./deepxiv_sdk_repo/`，消除本地目录与 pip 包名的 namespace package 冲突。代码通过 `from deepxiv_sdk import ...` 使用 pip 安装的 SDK，本地仓库仅供参考
+- [x] [2026-05-12] @架构师代理 更新架构文档中涉及 `./deepxiv_sdk` 本地路径的引用为 `./deepxiv_sdk_repo`（参考仓库路径变更）——`docs/sprint1/architecture.md` 第 2804 行 `deepxiv_sdk/react_reader.py`→`deepxiv_sdk_repo/react_reader.py`；`docs/technical-architecture.md` 无需修改
+- [x] [2026-05-12] @全栈开发代理 更新 Sprint 1 开发计划中涉及 `deepxiv_sdk` 导入路径的说明（B3 任务已不再需要 try/except fallback）——E3 常见问题中 deepxiv_sdk 导入路径已标注为已解决
 - [x] [2026-05-06] @Maria 更新 PRD：resource_scout 仓库候选确认改为方案 B——resource_scout 全自动选择最优仓库，候选仓库列表（含评分）合并到 planning 审核页面展示，不在 resource_scout 后增加单独中断点（涉及 §3.2 步骤3、§4.2.2、§4.3.2、§5.2 页面3）
 - [x] [2026-05-06] @Maria 更新技术架构文档：明确 resource_scout 全自动运行不设 interrupt，候选仓库确认合并到 planning 的人在回路审核中（涉及 §3.1 节点定义、§3.2 编排方式、§3.3 人在回路机制、§4 ResourceInfo 数据结构注释）
 - [x] [2026-05-06] @Maria 更新技术架构文档：补全 GlobalState 中缺失字段并统一术语（§4 补充 NodeError/FixLoopRecord TypedDict 及错误追踪与修复循环追踪字段；§12.6 术语 retry_count→fix_loop_count；§12.3 添加引用说明；§12.6 补充预算耗尽边界处理；§3.2 编排图补充修复循环回退箭头；§12.7 预算表加注 fix_loop_count）
