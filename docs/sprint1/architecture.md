@@ -1378,6 +1378,40 @@ def check_context_limit(text: str, max_tokens: int) -> bool:
 | HTTP 5xx, 超时, 连接失败 | `TransientError`（重试后仍失败） | 重试 |
 | JSON 解析失败 | `LLMOutputError` | 重试（附加错误提示） |
 
+#### 2.6.6 Prompt Cache 友好约束（方案 A：最小改动 / 前缀治理）
+
+> 决策日期：2026-05-13｜决策来源：架构师 Prompt Cache 调研结论｜全局参考：技术架构文档 §10.5
+
+承接架构师调研结论：在不引入 provider 分支、不修改 `create_llm` 签名的前提下，仅通过前缀稳定化与命中率观测让自动型 Prompt Cache（OpenAI / DeepSeek / Qwen / vLLM 等）零改动受益；对 Claude 等显式型 cache 也为后续接入打底。
+
+**5 条落地点（按文件维度）**：
+
+1. `core/llm_client.py` -- 新增只读开关 `LLM_ENABLE_PROMPT_CACHE`（env 读取，默认 True，bool）；**不改 `create_llm` 签名**。在 `_call_llm_with_retry` 成功返回处增加只读探测逻辑：尝试从 `response.response_metadata` 与 `usage_metadata` 中读取 `cached_tokens` / `prompt_tokens_details.cached_tokens` 等字段，命中时以 INFO 日志输出，用于命中率观测。读取失败安静吞掉，绝不抛错。
+2. `core/react_base.py` -- `_make_react_wrapper()` 中约定 message 顺序：`SystemMessage(固定模板，不含动态变量) -> HumanMessage(动态上下文：user_input / paper_meta JSON / 当前轮工具结果)`。禁止把 arxiv_id、URL、时间戳等易变量插入 system prompt 内部。
+3. `core/nodes/paper_analysis.py` -- `_build_analysis_system_prompt()` 把 `arxiv_id / paper_meta` 抽到 system prompt 尾部独立段落或独立 HumanMessage，使 system prompt 主体在所有论文间字节级一致。
+4. 工具结果文本规范 -- `tool_executor_node` 截断到 `TOOL_RESULT_MAX_LENGTH=8000` 时，禁止注入"截断时间 / 临时路径 / 随机 id"等动态片段；工具结果必须幂等可复现，前缀稳定后才能在多轮 ReAct 中持续命中。
+5. `with_structured_output` 使用方式 -- 推荐 JSON mode（`method="json_mode"` 或等价路径）而非 function-calling tool 包裹，避免引入随调用变化的 tool schema 前缀。
+
+**优先级理由**：
+
+- `paper_analysis`（`max_rounds=12`，前缀最重、上下文反复扫描）ROI 最高，优先改造。
+- 其余 ReAct 节点（含 `paper_intake`，`max_rounds=8`）次之。
+- 总改动工时预估 0.5-1 天，无新依赖、无 provider 分支、无主图拓扑变化。
+
+**风险（4 条）**：
+
+- R-PC1：NVIDIA 网关是否透传/回报 Anthropic cache 指标未知，属阻塞性未知项。命中率基线实验若拿不到 cached_tokens 字段，需暂时改用"输入 token 总量月度同环比"作为间接指标。
+- R-PC2：未来 planning 引入动态 few-shot 时必须放尾部 HumanMessage，否则破坏前缀；需在 planning 节点接入时在代码 review 检查项中加入"前缀稳定"一栏。
+- R-PC3：工具结果文本若不慎含动态片段（如 brief() 返回中带请求时间戳），会让从该工具调用之后的所有前缀全部 miss；需在 deepxiv_tools 各方法上加注释提示，并在 tool_executor 出口做一次净化检查。
+- R-PC4：system prompt 频繁迭代等同于 cache 全部 miss；需把 prompt 文本视为有版本号的资产，避免"每次微调一个字"式的高频小改。
+
+**2 条验证实验（待 B 阶段编码完成后执行）**：
+
+1. **命中率基线实验**：固定 arxiv_id，在 5 分钟内连续跑 `paper_analysis` 3 次，抓取每次响应中 `cached_tokens / prompt_tokens` 比值；对照组在 system prompt 尾部追加 8 字节随机后缀，期望对照组比值显著下降，证明前缀稳定改造确实在生效。
+2. **跨 provider AB 实验**：切换 base_url 到 DeepSeek（明确支持自动缓存的 OpenAI 兼容端点），跑同一论文的 paper_analysis，验证前缀稳定改造在脱离 NVIDIA 网关后仍能命中缓存；用于排除"命中率假象由网关侧 LRU 贡献"的可能性。
+
+**与环境变量表的衔接**：`LLM_ENABLE_PROMPT_CACHE` 为系统级开关，写入 §2.10 `config.py` 的"环境变量清单"。
+
 ---
 
 ### 2.7 `core/tools/deepxiv_tools.py` -- deepxiv 封装
@@ -2590,6 +2624,7 @@ def ensure_directories() -> None:
 | `LLM_API_KEY` | LLM API 密钥 | `None` | 是（运行时必需） |
 | `LLM_BASE_URL` | LLM API 基础地址 | `https://api.openai.com/v1` | 否 |
 | `LLM_MODEL` | LLM 模型名称 | `gpt-4o` | 否 |
+| `LLM_ENABLE_PROMPT_CACHE` | 启用 Prompt Cache 友好约束与 cached_tokens 日志（方案 A，详见 §2.6.6） | `True` | 否 |
 
 ---
 

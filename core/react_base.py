@@ -20,6 +20,7 @@ from typing import Annotated, Any, Callable, Dict, List, Optional, Sequence, Typ
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
+    HumanMessage,
     SystemMessage,
     ToolMessage,
 )
@@ -56,10 +57,15 @@ class ReActState(TypedDict):
 
 
 def _truncate_tool_result(text: str, limit: int = TOOL_RESULT_MAX_LENGTH) -> str:
-    """工具返回内容超过 limit 时截断并附加省略提示，防止上下文溢出。"""
+    """工具返回内容超过 limit 时截断并附加固定省略提示，防止上下文溢出。
+
+    Prompt Cache 友好（方案 A，参见架构文档 §2.6.6）：
+    - 截断标记使用固定字符串（不含输入长度 / 时间戳 / 临时路径 / 随机 id 等动态片段）。
+    - 同一输入永远产出同一输出文本，保证 ToolMessage.content 在多轮 ReAct 中字节级幂等。
+    """
     if len(text) <= limit:
         return text
-    suffix = f"\n... [truncated, total {len(text)} chars]"
+    suffix = f"\n... [truncated at {limit} chars]"
     head_len = max(0, limit - len(suffix))
     return text[:head_len] + suffix
 
@@ -407,8 +413,28 @@ def _make_react_wrapper(
         injected_context = dict(context)
         injected_context["_llm"] = llm
 
+        # Prompt Cache 前缀稳定化（方案 A，参见架构文档 §2.6.6 / 技术架构文档 §10.5）：
+        # - 第一条 SystemMessage 仅包含 build_system_prompt 返回的固定模板，
+        #   不得插入 arxiv_id / URL / 时间戳 / user_input 等动态变量。
+        # - 第二条 HumanMessage 携带 build_context 返回的动态上下文，
+        #   序列化为稳定 JSON（sort_keys=True）以保证同一输入下字节级幂等。
+        # - 注入 LLM 实例的内部键 "_llm" 不写入 HumanMessage（不可 JSON 序列化也无意义）。
+        initial_messages: List[BaseMessage] = [SystemMessage(content=system_prompt)]
+        human_payload = {k: v for k, v in context.items() if not k.startswith("_")}
+        if human_payload:
+            try:
+                human_text = json.dumps(
+                    human_payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                )
+            except (TypeError, ValueError):
+                human_text = str(human_payload)
+            initial_messages.append(HumanMessage(content=human_text))
+
         initial: ReActState = {
-            "messages": [SystemMessage(content=system_prompt)],
+            "messages": initial_messages,
             "round": 0,
             "max_rounds": max_rounds,
             "status": "reasoning",

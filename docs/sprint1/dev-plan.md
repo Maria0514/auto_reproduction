@@ -284,6 +284,17 @@ AutoReproError (系统根异常)
 - 重试策略：手写 for 循环（非 tenacity），精细控制不同异常类型
 - 结构化输出：先尝试 LangChain `with_structured_output()`，失败回退手动 JSON 解析
 - Token 估算：`try: import tiktoken` 优先，`except ImportError` 回退字符数/3.5
+- **结构化输出方式约束**（Prompt Cache 友好，参见架构文档 §2.6.6）：使用 `with_structured_output()` 时优先选 JSON mode（`method="json_mode"` 或等价路径），不要用 function-calling tool 包裹，避免引入随调用变化的 tool schema 前缀
+
+**Prompt Cache 友好性子任务**（方案 A，最小改动 / 前缀治理，参见架构文档 §2.6.6、技术架构文档 §10.5）：
+
+- 从 env 读取 `LLM_ENABLE_PROMPT_CACHE`（默认 `True`，bool），并暴露为模块级常量（建议命名与 env 名一致）
+- **不修改 `create_llm` 签名**、不引入 provider 分支，保持调用方零感知
+- 在 `_call_llm_with_retry` 成功返回处新增只读探测函数（建议命名 `_log_cache_metrics(response)`）：
+  - 从 `response.response_metadata` / `usage_metadata` 中读取 `cached_tokens`、`prompt_tokens_details.cached_tokens` 等字段
+  - 命中时以 INFO 日志输出（可附 `prompt_tokens` 与命中比值）
+  - 整个探测过程使用 try/except 安静吞掉读取异常，绝不向上抛错，绝不阻塞主流程
+- 当 `LLM_ENABLE_PROMPT_CACHE=False` 时跳过 `_log_cache_metrics` 调用
 
 **异常映射规则**：
 
@@ -307,6 +318,11 @@ AutoReproError (系统根异常)
 - [x] `_try_parse_json('some text {"key": "value"} more text')` 返回 `{"key": "value"}`
 - [x] Mock 测试：认证失败时抛出 `LLMAuthError`
 - [x] Mock 测试：限流时指数退避后抛出 `LLMRateLimitError`
+- [x] Prompt Cache 子任务：`LLM_ENABLE_PROMPT_CACHE` 模块常量可从 env 覆盖（默认 True）
+- [x] Prompt Cache 子任务：Mock 一个 `response_metadata` 中含 `cached_tokens` 字段的响应，断言 `_log_cache_metrics` 触发 INFO 日志
+- [x] Prompt Cache 子任务：Mock 一个无 `cached_tokens` 字段的响应，断言不抛错且无日志副作用
+- [x] Prompt Cache 子任务：`LLM_ENABLE_PROMPT_CACHE=False` 时跳过 `_log_cache_metrics` 调用
+- [x] Prompt Cache 子任务：`create_llm` 签名未变更（向后兼容）
 
 ---
 
@@ -436,6 +452,13 @@ AutoReproError (系统根异常)
 8. 扣减 `retry_budget_remaining`（按实际 round 数扣减）
 9. 返回 GlobalState 更新字典
 
+**Prompt Cache 前缀稳定化子任务**（方案 A，参见架构文档 §2.6.6、技术架构文档 §10.5）：
+
+- `_make_react_wrapper()` 中构造初始 `ReActState` 时，必须保证 message 顺序为：`SystemMessage(固定模板，不含动态变量) -> HumanMessage(动态上下文：user_input / paper_meta JSON / 当前轮工具结果)`
+- **禁止**把 `arxiv_id`、URL、时间戳、`user_input` 等易变量插入 `SystemMessage` 内部；动态变量统一通过 `HumanMessage` 注入
+- `tool_executor_node` 在 `TOOL_RESULT_MAX_LENGTH=8000` 触发截断时，**禁止**注入"截断时间 / 临时路径 / 随机 id / 进程 id"等动态片段；截断后的工具结果文本必须幂等可复现（同样的输入产生同样的截断输出）
+- 该约定是所有 ReAct 节点（paper_intake、paper_analysis 及未来 resource_scout / coding 等）共同遵守的契约，定义在 `react_base.py` 层一次，下游节点零感知
+
 **风险标注**：
 - **高风险**：ReAct 子图是 Sprint 1 新增的核心基础设施，所有节点依赖它，设计缺陷将影响全局
 - **中风险**：`<result>` 标签解析逻辑需要处理 LLM 输出的多种不规范格式
@@ -449,6 +472,8 @@ AutoReproError (系统根异常)
 - [x] tool_executor_node：工具返回结果超过 TOOL_RESULT_MAX_LENGTH 时正确截断
 - [x] `_make_react_wrapper` 生成的 wrapper 函数签名为 `(GlobalState) -> dict`
 - [x] `_make_react_wrapper` 正确映射 GlobalState <-> ReActState 并扣减 retry_budget_remaining
+- [x] Prompt Cache 子任务：构造连续两轮调用（输入不同 user_input / arxiv_id），断言两次 wrapper 内构造的 `SystemMessage.content` 字节级一致
+- [x] Prompt Cache 子任务：`tool_executor_node` 在工具结果超长触发截断时，对同一份工具原始输出连续调用两次，断言截断后的 `ToolMessage.content` 字节级一致（无时间戳 / 临时路径等动态片段）
 
 ---
 
@@ -543,6 +568,13 @@ paper_intake = _make_react_wrapper(
 - **ID 格式清洗**：agent 可自主判断并清洗用户输入（完整 URL、带版本号 ID、旧格式 ID 等）
 - **brief 失败决策**：brief 因论文不存在失败时，agent 可自主用 `search_papers` 搜索相近标题
 - **head 补充策略**：agent 自主决定是否调用 head 补充，以及如何合并字段
+
+**Prompt Cache 改造（次优先，可选）**：
+
+- 同样遵循 B4 在 `react_base.py` 定义的前缀稳定约定（SystemMessage 固定 / HumanMessage 动态）
+- 优先级**低于** paper_analysis：`max_rounds=5` vs `max_rounds=12`，单次会话内 system prompt 复用次数更少，ROI 较低
+- 本 Sprint 可选改造；若 B4 的约定已在 `_make_react_wrapper` 层强制生效，则 C1 默认即合规，无需额外动作
+- 参见架构文档 §2.6.6 优先级说明
 
 **自测检查点**：
 - [ ] `paper_intake` 是 `_make_react_wrapper` 生成的 callable
@@ -647,6 +679,15 @@ paper_analysis = _make_react_wrapper(
 | 分析粒度 | 每章节独立 LLM 调用 | agent 在上下文中综合多章节信息 |
 | 预算控制 | 手动计数 `llm_call_count` | `budget_check_node` 自动管理 |
 
+**Prompt Cache system prompt 前缀治理子任务**（**本 Sprint 最高 ROI 改造**，方案 A，参见架构文档 §2.6.6、技术架构文档 §10.5）：
+
+- `_build_analysis_system_prompt(context)` 必须把 `arxiv_id` / `paper_meta`（title、abstract、authors、categories 等）**抽离**出 system prompt 主体，作为以下两种形式之一：
+  - 方案 1（推荐）：放在 system prompt 尾部一段**独立分段落**（如 `--- 当前论文上下文 ---` 之后），便于人类阅读但与主体明确分隔
+  - 方案 2：完全移出 system prompt，由 `_make_react_wrapper` 通过初始 `HumanMessage` 注入
+- 改造完成后，system prompt **主体**（角色定义、任务描述、策略指导、`<result>` 输出格式约束）在所有论文之间必须**字节级一致**
+- 与 B2 的 `with_structured_output` 约束保持一致：若使用结构化输出辅助校验，优先 JSON mode，不要 function-calling tool 包裹
+- max_rounds=12 在单次会话中复用同一前缀 6-10 次，是本 Sprint Prompt Cache ROI 最高的改造点
+
 **风险标注**：
 - **高风险**：system prompt 质量直接影响 agent 的阅读策略和分析结果质量
 - **高风险**：agent 工具选择准确率——可能遗漏关键章节或浪费轮次在不重要的章节上
@@ -663,6 +704,7 @@ paper_analysis = _make_react_wrapper(
 - [ ] 降级处理：所有章节读取失败时 agent 调用 get_full_paper 兜底
 - [ ] 预算耗尽：达到 max_rounds 后 force_finish 触发，产出部分结果
 - [ ] 结果不完整时正确填充默认值并标记 degraded_nodes
+- [ ] Prompt Cache 子任务：对两篇不同 `arxiv_id` 的论文分别调用 `_build_analysis_system_prompt(context)`，断言两次返回的 system prompt 主体（截去尾部独立段落 / 或排除被外移的论文上下文部分后）**完全相同**
 
 ---
 
@@ -835,6 +877,12 @@ START -> paper_intake -> paper_analysis -> resource_scout -> planning -> coding 
 | R7 | api_key 被序列化到 SQLite | B1(checkpointer) | 低 | Sprint 1 接受风险；文档告知用户 |
 | R8 | ReAct agent 工具选择不准确导致信息缺失 | B4(react_base), C1(paper_intake), C2(paper_analysis) | 中 | system prompt 中提供明确的工具使用策略指导；max_rounds 留足余量允许 agent 纠错重试；finalize 阶段校验结果完整性，缺失关键字段时记录到 analysis_notes；用多种类型论文测试 agent 工具调用决策质量 |
 | R9 | ReAct 基础设施引入额外开发复杂度 | B4(react_base) | 低 | react_base.py 设计为通用基础设施，一次投入后续 Sprint 全部复用；子图与主图状态完全隔离，降低调试难度；提供充分单元测试覆盖；完成后立即用 paper_intake 验证集成 |
+| R-PC1 | NVIDIA inference 网关是否透传 `cached_tokens` 指标未知，可能导致 INFO 日志长期为空但缓存实际生效 | B2(llm_client) | 低 | `_log_cache_metrics` 探测设计为只读、读不到字段不报错；通过 F 阶段实验 1（命中率基线）与实验 2（跨 provider AB）侧面验证缓存是否真实生效 |
+| R-PC2 | 后续若引入动态 few-shot 示例，错误地放在 system prompt 头部或中段会破坏前缀稳定性 | B4(react_base), C2(paper_analysis) | 中 | 在 `react_base.py` 文档字符串与 `_build_analysis_system_prompt` 注释中明确写入"动态内容只能追加在 SystemMessage 尾部独立段落或 HumanMessage 中"；代码评审需把这一项列为强制检查 |
+| R-PC3 | 工具结果文本若被注入动态片段（截断时间 / 临时路径 / 随机 id）会破坏轮间前缀稳定性 | B4(react_base) | 中 | `tool_executor_node` 实现时禁止拼接 `time.time()` / `tempfile` 路径 / `uuid` 等动态片段；B4 自测项明确要求"对同一工具原始输出连续两次截断结果字节级一致" |
+| R-PC4 | system prompt 频繁迭代等同 cache 全部 miss，无法享受复用收益 | C2(paper_analysis) | 中 | system prompt 主体进入"冻结期"后通过代码评审管控修改；非必要不动主体；动态变化的内容统一走 HumanMessage 通道；F 阶段实验 1 作为回归基线，prompt 主体变更后重跑验证命中率未退化 |
+
+参见架构文档 §2.6.6 与技术架构文档 §10.5 获取 R-PC1 ~ R-PC4 的完整背景与设计原则。
 
 ---
 
@@ -855,7 +903,34 @@ START -> paper_intake -> paper_analysis -> resource_scout -> planning -> coding 
 | D | D1: core/graph.py | 中 | 2h |
 | E | E1~E3: 自测与修复 | 中 | 3.5h |
 | F | F1~F2: 交付整理 | 低 | 1h |
-| | **总计** | | **~32h** |
+| B/C | Prompt Cache 方案 A 改造（B2 + B4 + C2 子任务，含自测） | 低 | 4-8h |
+| F | Prompt Cache 验证实验（实验 1 命中率基线 + 实验 2 跨 provider AB） | 低 | 2h |
+| | **总计** | | **~38-42h** |
+
+> Prompt Cache 工时按方案 A "最小改动 / 前缀治理" 估算（参见架构文档 §2.6.6 工时预估 0.5-1 天）。验证实验作为独立条目挂在 F 阶段，待 B/C 改造完成后执行。
+
+---
+
+## Prompt Cache 验证实验（方案 A，参见架构文档 §2.6.6）
+
+**前置条件**：B2 / B4 / C2 的 Prompt Cache 子任务全部完成并自测通过，主链路 paper_intake -> paper_analysis 可端到端跑通。
+
+**实验 1：命中率基线（NVIDIA 网关 / Claude 模型）**
+
+- 操作：固定 `arxiv_id`（例如 `2409.05591`），在 5 分钟窗口内连续触发 paper_analysis 节点 3 次
+- 观测：从 B2 新增的 `_log_cache_metrics` INFO 日志收集 `cached_tokens` 与 `prompt_tokens`，计算第 2、3 次的命中率比值
+- 对照：另起一次实验，在 system prompt 尾部追加一个随机后缀（破坏前缀稳定性），重复 3 次，对比命中率
+- 期望：稳定前缀场景下，第 2、3 次 `cached_tokens / prompt_tokens` 显著高于对照组；若 NVIDIA 网关不透传指标，记录现象并改用响应延迟 / 计费侧数据侧面验证
+
+**实验 2：跨 provider AB（验证方案通用性）**
+
+- 操作：保持代码不变，将 `LLM_BASE_URL` / `LLM_MODEL` 切换到 DeepSeek 等自动型 OpenAI 兼容端点，重跑实验 1 的稳定前缀场景 3 次
+- 观测：DeepSeek 等 provider 在 response 中明确返回 `prompt_tokens_details.cached_tokens`，命中率应在第 2 次起明显升高
+- 期望：验证前缀稳定改造在脱离 NVIDIA 网关后仍能命中缓存，确认方案 A 对厂商无关
+
+**实验交付物**：实验记录追加到 `docs/sprint1/` 下（实验报告文件名建议 `prompt-cache-experiment.md`，由测试工程师或 Maria 自行决定），含原始日志、命中率表、结论与是否需要后续优化的判断。
+
+---
 
 ---
 
@@ -866,3 +941,5 @@ START -> paper_intake -> paper_analysis -> resource_scout -> planning -> coding 
 *2026-05-07 更新：同步 ReAct agent 架构升级——新增 S1-11 react_base.py 任务（阶段 B4），config.py 新增 ReAct 配置常量，deepxiv_tools.py 新增 7 个工具工厂函数，paper_intake 和 paper_analysis 从固定流程函数升级为 ReAct agent 实现，graph.py 使用 ReAct wrapper 函数注册节点，新增风险 R8/R9，更新时间估算。*
 
 *2026-05-12 更新：标注 E3 中 deepxiv_sdk 导入路径问题已解决——本地参考仓库目录已从 `./deepxiv_sdk/` 重命名为 `./deepxiv_sdk_repo/`，消除与 pip 包名的 namespace package 冲突，代码统一通过 pip 安装的包导入，无需 try/except fallback。*
+
+*2026-05-13 更新：同步 Prompt Cache 方案 A（最小改动 / 前缀治理，参见架构文档 §2.6.6、技术架构文档 §10.5）。B2 任务卡新增"Prompt Cache 友好性"子任务（`LLM_ENABLE_PROMPT_CACHE` 开关 + `_log_cache_metrics` 只读探测 + `with_structured_output` JSON mode 约束）与 5 条自测；B4 任务卡新增"前缀稳定化"子任务（SystemMessage 固定 / HumanMessage 动态 + 工具结果幂等净化）与 2 条自测；C2 任务卡新增"system prompt 前缀治理"子任务（`arxiv_id` / `paper_meta` 抽离至尾部或 HumanMessage）与 1 条自测；C1 任务卡补充"次优先改造"说明；风险总结追加 R-PC1 ~ R-PC4 四条；时间估算追加 PC 改造 4-8h 与验证实验 2h，总计上调至 ~38-42h；文档新增 Prompt Cache 验证实验小节（实验 1 命中率基线 + 实验 2 跨 provider AB），待 B/C 编码完成后执行。*

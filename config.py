@@ -33,6 +33,21 @@ LLM_MAX_RETRIES: int = 3
 LLM_INITIAL_RETRY_DELAY: float = 2.0
 
 
+# ========== Prompt Cache 配置（方案 A：前缀治理） ==========
+# 决策来源：架构文档 §2.6.6 / 技术架构文档 §10.5
+# 仅作为只读开关使用，不影响 create_llm 签名，不引入 provider 分支。
+
+def _parse_bool_env(name: str, default: bool) -> bool:
+    """解析 env 中的 bool 值；"false"/"0"/"no"/"off" (大小写不敏感) 视为 False。"""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"false", "0", "no", "off", ""}
+
+
+LLM_ENABLE_PROMPT_CACHE: bool = _parse_bool_env("LLM_ENABLE_PROMPT_CACHE", True)
+
+
 # ========== ReAct 配置 ==========
 
 REACT_MAX_ROUNDS_PAPER_INTAKE: int = 5

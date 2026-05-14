@@ -60,6 +60,11 @@
 - [ ] [2026-05-06] 集成测试（端到端测试用例，覆盖主要场景）
 - [ ] [2026-05-06] 用户文档与开发者文档
 - [ ] [2026-05-06] 性能优化（API 请求缓存、减少不必要的 LLM 调用）
+- [x] [2026-05-13] @Maria 实施 Prompt Cache 方案 A：`core/llm_client.py` 增加 `LLM_ENABLE_PROMPT_CACHE` 开关（env，默认 True），并在 `_call_llm_with_retry` 后从 response metadata 读取 `cached_tokens` 以 INFO 日志输出（不改 `create_llm` 签名）
+- [x] [2026-05-13] @Maria 实施 Prompt Cache 方案 A（B4 部分）：`core/react_base.py` 前缀稳定化改造（SystemMessage 固定模板 + HumanMessage 动态上下文）+ tool_executor 工具结果幂等净化（固定截断标记）
+- [ ] [2026-05-13] @Maria 实施 Prompt Cache 方案 A（C2 部分）：`core/nodes/paper_analysis.py` `_build_analysis_system_prompt` 把 arxiv_id / paper_meta 抽到尾部独立段落或 HumanMessage（本 Sprint 最高 ROI）
+- [ ] [2026-05-13] @Maria 跑 Prompt Cache 命中率基线实验：固定 arxiv_id 在 5 分钟内连续跑 paper_analysis × 3 次，记录 `cached_tokens / prompt_tokens` 比值；对照组在 system prompt 尾部追加随机后缀
+- [ ] [2026-05-13] @Maria Prompt Cache 跨 provider AB 实验：切到 DeepSeek 等自动型 OpenAI 兼容端点，验证前缀稳定改造在脱离 NVIDIA 网关后仍能命中缓存
 - [ ] [2026-05-06] 代码审查与类型标注完善
 
 ---

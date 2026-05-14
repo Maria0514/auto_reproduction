@@ -163,10 +163,17 @@ class DeepxivTools:
 # ---------------------------------------------------------------------------
 
 def _truncate(text: str) -> str:
-    """将文本截断到 TOOL_RESULT_MAX_LENGTH 字符。"""
+    """将文本截断到 TOOL_RESULT_MAX_LENGTH 字符。
+
+    Prompt Cache 友好（方案 A，参见架构文档 §2.6.6 / 技术架构文档 §10.5）：
+    - 截断标记使用固定字符串，不含输入长度 / 时间戳 / 临时路径 / 随机 id 等动态片段。
+    - 同一输入永远产出同一输出文本，保证工具返回值在多轮 ReAct 中字节级幂等。
+    - 调用方注意：deepxiv 各方法的返回字段（brief/section/raw 等）禁止包含动态片段；
+      若 SDK 上游污染了这些字段，需在此层做净化，否则会破坏前缀稳定导致 Prompt Cache 失效。
+    """
     if len(text) <= TOOL_RESULT_MAX_LENGTH:
         return text
-    return text[:TOOL_RESULT_MAX_LENGTH] + f"\n... [truncated, total {len(text)} chars]"
+    return text[:TOOL_RESULT_MAX_LENGTH] + f"\n... [truncated at {TOOL_RESULT_MAX_LENGTH} chars]"
 
 
 def get_paper_brief_tool(token: Optional[str] = None) -> BaseTool:

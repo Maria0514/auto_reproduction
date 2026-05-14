@@ -6,7 +6,12 @@ from typing import Any, Dict, Optional
 
 from langchain_openai import ChatOpenAI
 
-from config import LLM_INITIAL_RETRY_DELAY, LLM_MAX_RETRIES, LLM_REQUEST_TIMEOUT
+from config import (
+    LLM_ENABLE_PROMPT_CACHE,
+    LLM_INITIAL_RETRY_DELAY,
+    LLM_MAX_RETRIES,
+    LLM_REQUEST_TIMEOUT,
+)
 from core.errors import (
     LLMAuthError,
     LLMContextOverflowError,
@@ -113,6 +118,82 @@ def _classify_error(error: Exception) -> Exception:
     return error
 
 
+def _log_cache_metrics(response: Any) -> None:
+    """只读探测 Prompt Cache 命中指标，命中时以 INFO 日志输出。
+
+    设计原则（参见架构文档 §2.6.6 / 技术架构文档 §10.5）：
+    - 仅在 LLM_ENABLE_PROMPT_CACHE 为 True 时运行。
+    - 兼容多种字段命名：
+        * OpenAI 风格：usage.prompt_tokens_details.cached_tokens
+        * Anthropic 风格：usage.cache_read_input_tokens / cache_creation_input_tokens
+        * LangChain 通用：usage_metadata.input_token_details.cache_read
+    - 整个函数包在 try/except 中，绝不抛错、不阻塞主流程。
+    - 读不到任何指标时静默返回，不打印日志。
+    """
+    if not LLM_ENABLE_PROMPT_CACHE:
+        return
+
+    try:
+        cached_tokens: Optional[int] = None
+        prompt_tokens: Optional[int] = None
+        cache_creation_tokens: Optional[int] = None
+
+        # 1) LangChain 通用 usage_metadata（推荐路径）
+        usage_meta = getattr(response, "usage_metadata", None)
+        if isinstance(usage_meta, dict):
+            prompt_tokens = usage_meta.get("input_tokens") or prompt_tokens
+            input_details = usage_meta.get("input_token_details") or {}
+            if isinstance(input_details, dict):
+                cached_tokens = (
+                    input_details.get("cache_read")
+                    or input_details.get("cache_read_input_tokens")
+                    or cached_tokens
+                )
+                cache_creation_tokens = (
+                    input_details.get("cache_creation")
+                    or input_details.get("cache_creation_input_tokens")
+                    or cache_creation_tokens
+                )
+
+        # 2) response_metadata 中的 OpenAI / Anthropic 原生字段
+        resp_meta = getattr(response, "response_metadata", None)
+        if isinstance(resp_meta, dict):
+            usage = resp_meta.get("usage") or resp_meta.get("token_usage") or {}
+            if isinstance(usage, dict):
+                if prompt_tokens is None:
+                    prompt_tokens = usage.get("prompt_tokens") or usage.get("input_tokens")
+                # OpenAI 风格
+                details = usage.get("prompt_tokens_details") or {}
+                if isinstance(details, dict) and cached_tokens is None:
+                    cached_tokens = details.get("cached_tokens")
+                # Anthropic 风格
+                if cached_tokens is None:
+                    cached_tokens = usage.get("cache_read_input_tokens")
+                if cache_creation_tokens is None:
+                    cache_creation_tokens = usage.get("cache_creation_input_tokens")
+
+        cached_tokens = int(cached_tokens) if cached_tokens else 0
+        prompt_tokens = int(prompt_tokens) if prompt_tokens else 0
+        cache_creation_tokens = int(cache_creation_tokens) if cache_creation_tokens else 0
+
+        if cached_tokens > 0:
+            if prompt_tokens > 0:
+                ratio = cached_tokens / prompt_tokens
+                logger.info(
+                    "Prompt cache hit: cached_tokens=%d / prompt_tokens=%d (%.1f%%)"
+                    + (", cache_creation=%d" if cache_creation_tokens else "%s"),
+                    cached_tokens, prompt_tokens, ratio * 100,
+                    cache_creation_tokens if cache_creation_tokens else "",
+                )
+            else:
+                logger.info(
+                    "Prompt cache hit: cached_tokens=%d (prompt_tokens unavailable)",
+                    cached_tokens,
+                )
+    except Exception:  # noqa: BLE001 探测函数绝不抛错
+        return
+
+
 def _call_llm_with_retry(
     llm: ChatOpenAI,
     prompt: str,
@@ -129,6 +210,10 @@ def _call_llm_with_retry(
             content = response.content
             if isinstance(content, list):
                 content = "".join(str(c) for c in content)
+            try:
+                _log_cache_metrics(response)
+            except Exception:  # noqa: BLE001 二次防御
+                pass
             return content
         except Exception as e:
             classified = _classify_error(e)

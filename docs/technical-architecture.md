@@ -831,6 +831,57 @@ def create_llm(config: LLMConfig) -> ChatOpenAI:
     )
 ```
 
+### 10.5 Prompt Cache（KV Cache）友好性约束
+
+> 决策日期：2026-05-13｜决策来源：架构师 Prompt Cache 调研（方案 A：最小改动 / 前缀治理）
+
+#### 10.5.1 背景与目标
+
+ReAct 节点（paper_intake、paper_analysis 等）会在多轮交互中反复发送高度相似的 system prompt 与工具结果上下文，输入 token 占总成本与延迟的主导部分。主流 OpenAI 兼容服务（OpenAI、DeepSeek、Qwen、vLLM 等）已普遍提供**自动型** Prompt Cache：只要请求的前缀字节级一致，服务端会自动命中 KV Cache 并按折扣计费；Anthropic Claude 则采用**显式型** `cache_control` 标记。
+
+本期目标：在不引入 provider 分支、不改变 `create_llm` 签名的前提下，通过"前缀稳定化 + 命中率可观测"两步让默认链路零改动受益于自动型 Prompt Cache；同时为后续接入显式型缓存打底。
+
+#### 10.5.2 设计原则
+
+1. **不在 LLM 客户端做 provider 分支**：兼容性矩阵（§10.2）保持不变，缓存能力由服务端按 base_url 自行决定。
+2. **前缀稳定优先**：所有可缓存的内容（system prompt、工具定义、固定 few-shot）放在 message 序列前部；易变量（arxiv_id、paper_meta、user_input、时间戳）放在尾部 HumanMessage 中。
+3. **工具结果幂等**：工具返回文本不得携带时间戳、随机 id、临时绝对路径等动态片段。
+4. **命中率可观测**：通过响应 metadata（`prompt_tokens_details.cached_tokens`、`cache_creation_input_tokens` 等字段）以 INFO 日志输出，无需新数据表。
+
+#### 10.5.3 厂商兼容性
+
+| 厂商 | 缓存类型 | 当前默认链路是否启用 | 备注 |
+|------|---------|------------------|------|
+| OpenAI（`gpt-4o` 等） | 自动型，前缀 ≥ 1024 tokens | 是 | 命中后输入按约 50% 折扣 |
+| DeepSeek | 自动型 | 是 | 官方文档明示 cache hit / miss 字段 |
+| Qwen / vLLM 自部署 | 自动型（vLLM Automatic Prefix Caching） | 是 | 需服务端开启 APC |
+| Anthropic Claude（经 NVIDIA 网关，默认 `aws/anthropic/claude-opus-4-6`） | 显式型 `cache_control` | 否（不在本期落地） | 是否经网关透传缓存指标存在不确定性，留待方案 B |
+
+默认链路通过 NVIDIA inference 网关访问 Claude，方案 A 假设网关本身不会改写前缀；前缀稳定改造对所有自动型 provider 立即生效，对 Claude 也为后续显式标记打底。
+
+#### 10.5.4 与 LangGraph Checkpointer 的解耦
+
+LangGraph SqliteSaver 缓存的是 **GlobalState 与 ReActState 快照**（业务状态层），与 LLM 服务端 Prompt Cache（推理层 KV）完全正交：
+
+- Checkpoint 用于中断恢复、人在回路；命中后整段节点跳过执行。
+- Prompt Cache 仅在节点真正调用 LLM 时由服务端命中，无 SDK 层介入。
+- 两者不互相替代，也不会相互失效。
+
+#### 10.5.5 落地范围
+
+本期落地（详见 Sprint 1 架构文档 §2.6.6 Prompt Cache 友好约束）：
+
+- `core/llm_client.py` 增加只读开关 `LLM_ENABLE_PROMPT_CACHE`（env，默认 True），不改 `create_llm` 签名；响应回包中尝试读取 `cached_tokens` 类字段并 INFO 日志输出。
+- `core/react_base.py` 与 `core/nodes/paper_analysis.py` 强制 `SystemMessage(固定) -> HumanMessage(动态)` 顺序，禁止把动态变量插入 system prompt 主体。
+- `tool_executor_node` 工具结果截断保持幂等，禁止注入时间戳/随机 id/临时路径。
+- `with_structured_output` 推荐使用 JSON mode 而非 function-calling tool 包裹，避免引入不稳定前缀。
+
+不在本期落地（留待方案 B）：
+
+- Anthropic 风格显式 `cache_control` 标记的多块缓存设计。
+- 按节点维度的缓存命中率仪表盘（仅日志，不上报指标系统）。
+- 跨节点共享 system prompt 模板的版本化注册中心。
+
 ---
 
 ## 11. 风险与缓解
