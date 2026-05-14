@@ -21,7 +21,7 @@
 - [x] [2026-05-12] @全栈开发代理 实现 `core/llm_client.py`——OpenAI 兼容 LLM 客户端封装（含指数退避重试、structured output 调用、token 估算），B2 自测全部通过（9 项函数导入 + create_llm + estimate_tokens + check_context_limit + JSON 解析 + 错误分类）
 - [x] [2026-05-12] @全栈开发代理 实现 `core/tools/deepxiv_tools.py`——deepxiv Reader 薄封装 + ReAct 工具工厂函数（7 个 BaseTool），B3 自测全部通过
 - [x] [2026-05-13] @全栈开发代理 实现 `core/react_base.py`——通用 ReAct 子图基础设施（ReActState、create_react_subgraph、_make_react_wrapper），B4 自测全部 8 项通过（ReActState 实例化与 operator.add 追加 / 子图节点编译完整 / <result> 正常解析 / 超预算 force_finish / 工具异常容错 / 工具结果截断 / wrapper 签名 / GlobalState 双向映射与预算扣减）
-- [ ] [2026-05-06] 实现 `core/nodes/paper_intake.py`——节点1：论文输入与解析
+- [x] [2026-05-14] @全栈开发代理 C1 实现 `core/nodes/paper_intake.py`——节点1：论文输入与解析（_make_react_wrapper 生成 callable + PAPER_META_SCHEMA + _build_intake_system_prompt 固定 prompt 模板 + _map_intake_result 字段兜底/类型补齐/非 CS 警告）；同时创建 `core/nodes/__init__.py`；自测 8/8 通过（callable / context→HumanMessage 映射 / 工具调用路径 / 全字段填充 / head 失败仅 brief / 非 CS 警告 / 论文不存在 error+node_errors / URL 清洗），B4 react_base 回归 4/4 通过
 - [ ] [2026-05-06] 实现 `core/nodes/paper_analysis.py`——节点2：深度论文分析
 - [ ] [2026-05-06] **阶段 1 验收**：能通过代码输入 arXiv ID，经 paper_intake 和 paper_analysis 输出结构化分析结果，状态可持久化到 SQLite
 
