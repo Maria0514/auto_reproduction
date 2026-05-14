@@ -15,8 +15,8 @@ LOG_DIR: Path = WORKSPACE_DIR / "logs"
 
 DEFAULT_LLM_TEMPERATURE: float = 0.3
 DEFAULT_LLM_MAX_TOKENS: int = 4096
-DEFAULT_LLM_BASE_URL: str = "https://inference-api.nvidia.com/v1"
-DEFAULT_LLM_MODEL: str = "aws/anthropic/claude-opus-4-6"
+DEFAULT_LLM_BASE_URL: str = "https://inference-api.nvidia.com/v1/responses"
+DEFAULT_LLM_MODEL: str = "azure/openai/gpt-5.4"
 LLM_REQUEST_TIMEOUT: int = 60
 
 
