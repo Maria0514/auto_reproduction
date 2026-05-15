@@ -862,6 +862,8 @@ START -> paper_intake -> paper_analysis -> resource_scout -> planning -> coding 
 - 已知限制和遗留问题
 - 验收标准与代码模块的对应关系
 
+**测试报告归档约定**：测试工程师执行测试后，需在 `docs/sprint1/test-reports/` 下生成 `YYYY-MM-DD_<scope>.md` 报告（含触发原因、执行命令、结果摘要、失败排查与后续动作），具体规范见 `.claude/agents/test-engineer.md` 中"测试报告归档规范"。
+
 ---
 
 ## 风险总结
@@ -928,7 +930,7 @@ START -> paper_intake -> paper_analysis -> resource_scout -> planning -> coding 
 - 观测：DeepSeek 等 provider 在 response 中明确返回 `prompt_tokens_details.cached_tokens`，命中率应在第 2 次起明显升高
 - 期望：验证前缀稳定改造在脱离 NVIDIA 网关后仍能命中缓存，确认方案 A 对厂商无关
 
-**实验交付物**：实验记录追加到 `docs/sprint1/` 下（实验报告文件名建议 `prompt-cache-experiment.md`，由测试工程师或 Maria 自行决定），含原始日志、命中率表、结论与是否需要后续优化的判断。
+**实验交付物**：实验记录归档到 `docs/sprint1/test-reports/` 下，命名遵循测试报告规范 `YYYY-MM-DD_prompt-cache-experiment.md`（同日多次执行追加 `-NN`），含原始日志、命中率表、结论与是否需要后续优化的判断；报告结构沿用 `.claude/agents/test-engineer.md` 的"测试报告归档规范"。
 
 ---
 

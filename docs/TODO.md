@@ -22,6 +22,9 @@
 - [x] [2026-05-12] @全栈开发代理 实现 `core/tools/deepxiv_tools.py`——deepxiv Reader 薄封装 + ReAct 工具工厂函数（7 个 BaseTool），B3 自测全部通过
 - [x] [2026-05-13] @全栈开发代理 实现 `core/react_base.py`——通用 ReAct 子图基础设施（ReActState、create_react_subgraph、_make_react_wrapper），B4 自测全部 8 项通过（ReActState 实例化与 operator.add 追加 / 子图节点编译完整 / <result> 正常解析 / 超预算 force_finish / 工具异常容错 / 工具结果截断 / wrapper 签名 / GlobalState 双向映射与预算扣减）
 - [x] [2026-05-14] @全栈开发代理 C1 实现 `core/nodes/paper_intake.py`——节点1：论文输入与解析（_make_react_wrapper 生成 callable + PAPER_META_SCHEMA + _build_intake_system_prompt 固定 prompt 模板 + _map_intake_result 字段兜底/类型补齐/非 CS 警告）；同时创建 `core/nodes/__init__.py`；自测 8/8 通过（callable / context→HumanMessage 映射 / 工具调用路径 / 全字段填充 / head 失败仅 brief / 非 CS 警告 / 论文不存在 error+node_errors / URL 清洗），B4 react_base 回归 4/4 通过
+- [x] [2026-05-14] @测试工程师代理 paper_intake e2e 首跑（commit 3d5a650）：4 用例 2 通过 2 失败；3 次复跑统计 url 0/3、versioned 1/3、plain_id_cs 1/1、node_errors_empty 1/1。详见 `docs/sprint1/test-reports/2026-05-14_paper-intake-e2e.md`
+- [x] [2026-05-14] @测试工程师代理 paper_intake e2e 第二次诊断（commit 3d5a650，Maria 触发）：4 用例 2 通过 2 失败（versioned + node_errors_empty）。**根因实锤升级**：不是 LLM 服从度问题，而是 `core/tools/deepxiv_tools.py` 7 个工具工厂用 `_truncate(str(result))` 写入 ToolMessage（Python repr，单引号），而 `core/react_base.py::extract_last_tool_result` 用 `json.loads` 解析永远失败，导致 `_backfill_paper_meta_from_tools` 兜底从未对 deepxiv 工具生效。HTML 报告：`docs/sprint1/test-reports/2026-05-14_paper_intake_e2e_failure_analysis.html`
+- [x] [2026-05-14] @全栈开发代理 [BUG-S1-02] **已修复并回归通过**。根因：deepxiv 工具序列化 bug——`core/tools/deepxiv_tools.py` 用 `str(dict)` 写 ToolMessage（Python repr 单引号），下游 `extract_last_tool_result` 用 `json.loads` 永远失败，backfill 静默失败。**修复内容**：（1）`core/tools/deepxiv_tools.py` 新增 `_serialize()` helper，5 个 dict/list 返回的工具工厂（brief/head/structure/search/web_search）改用 `_truncate(_serialize(result))`，固定 `ensure_ascii=False, sort_keys=True, default=str` 保持 Prompt Cache 字节级幂等；2 个 str 返回的工具（read_section / get_full_paper）保留原行为；（2）`core/react_base.py::extract_last_tool_result` 新增路径 4「截断 JSON 修复」`_repair_truncated_json_prefix()`，用迷你 JSON 状态机扫描安全截断点 + 按栈追加闭合符号，容忍 truncate 切掉尾部闭合符号的场景；（3）`core/nodes/paper_intake.py::_backfill_paper_meta_from_tools` 兜底失败时增加 WARNING 日志（仅当 ToolMessage 实际存在时），避免下次再被静默吞错。回归：3 次连跑 `pytest tests/test_paper_intake_e2e.py -m e2e -v` 全部 4/4 通过（耗时 43.67s / 46.19s / 41.10s）；全量套件 19/19 通过（61.09s）。
 - [ ] [2026-05-06] 实现 `core/nodes/paper_analysis.py`——节点2：深度论文分析
 - [ ] [2026-05-06] **阶段 1 验收**：能通过代码输入 arXiv ID，经 paper_intake 和 paper_analysis 输出结构化分析结果，状态可持久化到 SQLite
 
@@ -89,6 +92,7 @@
 - [x] [2026-05-07] @Maria 更新架构师代理：增加 Agent 工具，新增产品经理和全栈开发工程师为子代理
 - [x] [2026-05-07] @Maria 更新产品经理代理：新增全栈开发工程师为子代理
 - [x] [2026-05-07] @Maria 三个 agent（产品经理、架构师、全栈开发工程师）实现互通调用
+- [x] [2026-05-14] @Maria 创建测试工程师代理（.claude/agents/test-engineer.md）并把 test-engineer 加入其他三个 agent 的 `agents:` 字段，实现四方互通调用
 - [x] [2026-05-07] @全栈开发代理 完成 Sprint 1 开发计划（docs/sprint1/dev-plan.md）——含 6 阶段 12 项任务，覆盖 10 个模块的详细实现规格、依赖关系、自测检查点和风险标注
 - [x] [2026-05-06] Q1: 确定错误处理策略——采用三层防御式架构（详见技术架构文档 §13、产品设计说明书 §4.5.3）
 - [x] [2026-05-06] Q2: 确定报告格式——MVP 阶段仅支持 Markdown 格式

@@ -6,8 +6,9 @@ LangChain BaseTool 工厂函数供 ReAct agent 节点使用。
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from deepxiv_sdk import (
     Reader,
@@ -176,6 +177,24 @@ def _truncate(text: str) -> str:
     return text[:TOOL_RESULT_MAX_LENGTH] + f"\n... [truncated at {TOOL_RESULT_MAX_LENGTH} chars]"
 
 
+def _serialize(value: Any) -> str:
+    """稳定序列化工具返回值，便于下游 ``json.loads`` 解析（修复 BUG-S1-02）。
+
+    - dict / list 走 ``json.dumps(..., ensure_ascii=False, sort_keys=True, default=str)``：
+      sort_keys 保证 Prompt Cache 字节级幂等；default=str 容忍 datetime 等不可 JSON 化对象；
+      ensure_ascii=False 与 ``_stringify_tool_result``（core/react_base.py）保持一致。
+    - str / 其它类型保持原行为（str 直返，其它走 ``str()``），不改变现有契约。
+
+    调用规范：先 ``_serialize`` 后 ``_truncate``，截断尾部可能破坏 JSON 合法性，
+    由 ``extract_last_tool_result`` 在解析侧通过括号/引号修复路径容忍。
+    """
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
 def get_paper_brief_tool(token: Optional[str] = None) -> BaseTool:
     """工厂函数：返回 get_paper_brief BaseTool 实例。"""
     client = DeepxivTools(token=token)
@@ -190,7 +209,7 @@ def get_paper_brief_tool(token: Optional[str] = None) -> BaseTool:
         """
         try:
             result = client.get_paper_brief(arxiv_id)
-            return _truncate(str(result))
+            return _truncate(_serialize(result))
         except Exception as exc:
             return f"Error in get_paper_brief: {exc}"
 
@@ -211,7 +230,7 @@ def get_paper_head_tool(token: Optional[str] = None) -> BaseTool:
         """
         try:
             result = client.get_paper_head(arxiv_id)
-            return _truncate(str(result))
+            return _truncate(_serialize(result))
         except Exception as exc:
             return f"Error in get_paper_head: {exc}"
 
@@ -232,7 +251,7 @@ def get_paper_structure_tool(token: Optional[str] = None) -> BaseTool:
         """
         try:
             result = client.get_paper_structure(arxiv_id)
-            return _truncate(str(result))
+            return _truncate(_serialize(result))
         except Exception as exc:
             return f"Error in get_paper_structure: {exc}"
 
@@ -297,7 +316,7 @@ def search_papers_tool(token: Optional[str] = None) -> BaseTool:
         """
         try:
             results = client.search_papers(query, size=size)
-            return _truncate(str(results))
+            return _truncate(_serialize(results))
         except Exception as exc:
             return f"Error in search_papers: {exc}"
 
@@ -318,7 +337,7 @@ def web_search_tool(token: Optional[str] = None) -> BaseTool:
         """
         try:
             results = client.web_search(query)
-            return _truncate(str(results))
+            return _truncate(_serialize(results))
         except Exception as exc:
             return f"Error in web_search: {exc}"
 

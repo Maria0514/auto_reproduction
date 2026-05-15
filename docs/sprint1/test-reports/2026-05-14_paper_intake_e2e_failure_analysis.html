@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>paper_intake e2e 失败分析 - 2026-05-14</title>
+<style>
+  :root {
+    --bg: #fafafa;
+    --fg: #1f2328;
+    --muted: #57606a;
+    --border: #d0d7de;
+    --code-bg: #f6f8fa;
+    --kw: #cf222e;
+    --str: #0a3069;
+    --com: #6e7781;
+    --func: #8250df;
+    --num: #0550ae;
+    --ok: #1a7f37;
+    --warn: #9a6700;
+    --err: #cf222e;
+    --bug: #d1242f;
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.65;
+    max-width: 1100px;
+    margin: 24px auto;
+    padding: 0 24px 80px;
+    font-size: 15px;
+  }
+  h1 { font-size: 26px; border-bottom: 2px solid var(--border); padding-bottom: 12px; }
+  h2 { font-size: 22px; border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-top: 36px; }
+  h3 { font-size: 18px; margin-top: 28px; }
+  h4 { font-size: 16px; margin-top: 20px; color: var(--muted); }
+
+  a { color: #0969da; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: #eef1f4; font-weight: 600; }
+
+  code, kbd, samp {
+    font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, "Courier New", monospace;
+    font-size: 0.92em;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 16px;
+    overflow-x: auto;
+    font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  pre code { background: none; border: none; padding: 0; font-size: inherit; }
+
+  /* 极简语法高亮：用 span class 区分 */
+  .kw  { color: var(--kw); font-weight: 600; }
+  .str { color: var(--str); }
+  .com { color: var(--com); font-style: italic; }
+  .func{ color: var(--func); }
+  .num { color: var(--num); }
+
+  .badge {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    vertical-align: middle;
+  }
+  .badge-ok   { background: #dafbe1; color: var(--ok); border: 1px solid #4ac26b; }
+  .badge-fail { background: #ffebe9; color: var(--err); border: 1px solid #ff8182; }
+  .badge-warn { background: #fff8c5; color: var(--warn); border: 1px solid #d4a72c; }
+  .badge-bug  { background: #ffeef0; color: var(--bug); border: 1px solid var(--bug); }
+
+  .callout {
+    border-left: 4px solid #d1242f;
+    background: #fff5f5;
+    padding: 10px 14px;
+    margin: 14px 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .callout-ok {
+    border-left: 4px solid var(--ok);
+    background: #f3fbf6;
+    padding: 10px 14px;
+    margin: 14px 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .callout-info {
+    border-left: 4px solid #0969da;
+    background: #f1f6fb;
+    padding: 10px 14px;
+    margin: 14px 0;
+    border-radius: 0 6px 6px 0;
+  }
+
+  ul, ol { padding-left: 24px; }
+  li { margin: 4px 0; }
+
+  .meta-table th { width: 160px; background: #f6f8fa; }
+  .summary-table td { vertical-align: middle; }
+
+  hr { border: none; border-top: 1px dashed var(--border); margin: 24px 0; }
+
+  .footer {
+    margin-top: 48px;
+    color: var(--muted);
+    font-size: 13px;
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+  }
+</style>
+</head>
+<body>
+
+<h1>paper_intake e2e 失败分析报告</h1>
+
+<table class="meta-table">
+  <tr><th>报告日期</th><td>2026-05-14 19:47 PDT</td></tr>
+  <tr><th>执行人</th><td>@测试工程师代理</td></tr>
+  <tr><th>Sprint</th><td>sprint1</td></tr>
+  <tr><th>触发原因</th><td>Maria 反馈 <code>tests/test_paper_intake_e2e.py</code> 执行出错，需诊断失败根因</td></tr>
+  <tr><th>commit</th><td><code>3d5a650</code> (master)</td></tr>
+  <tr><th>报告路径</th><td><code>docs/sprint1/test-reports/2026-05-14_paper_intake_e2e_failure_analysis.html</code></td></tr>
+</table>
+
+<div class="callout">
+<strong>一句话结论</strong>：<code>core/tools/deepxiv_tools.py</code> 的工具工厂把 dict 用 <code>str(result)</code>（Python repr，单引号）写入 <code>ToolMessage.content</code>，
+但 <code>core/react_base.py::extract_last_tool_result</code> 用 <code>json.loads()</code> 解析——
+单引号不是合法 JSON，<strong>解析永远返回 None</strong>，导致 <code>_backfill_paper_meta_from_tools</code> 兜底从未对 deepxiv 工具生效；
+当 LLM 漏写 <code>categories</code> 时（schema-enforce regen 也救不回来），最终输出 <code>categories=[]</code>。
+这是<strong>生产代码 bug</strong>，不是测试用例问题。
+</div>
+
+
+<h2>1. 测试执行概览</h2>
+
+<table class="meta-table">
+  <tr><th>命令</th><td><code>.venv/bin/python -m pytest tests/test_paper_intake_e2e.py -m e2e -v</code></td></tr>
+  <tr><th>开始时间</th><td>2026-05-14 ~19:40 PDT</td></tr>
+  <tr><th>总耗时</th><td>67.40s（约 67 秒，4 个真实 LLM e2e 用例）</td></tr>
+  <tr><th>退出码</th><td><code>1</code>（pytest 失败）</td></tr>
+  <tr><th>Python</th><td>3.11.5</td></tr>
+  <tr><th>pytest</th><td>9.0.3</td></tr>
+  <tr><th>是否触外网</th><td>是 —— LLM 走 <code>inference-api.nvidia.com</code>、deepxiv 工具调用走 deepxiv 服务（凭证来自项目根 <code>.env</code> 中 <code>LLM_API_KEY</code> + <code>DEEPXIV_TOKEN</code>，由 <code>tests/conftest.py</code> 自动 <code>dotenv.load_dotenv</code> 加载）</td></tr>
+</table>
+
+<h3>结果摘要</h3>
+
+<table class="summary-table">
+  <thead>
+    <tr><th>用例</th><th>结果</th><th>说明</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>test_e2e_versioned_id_cleanup</code></td>
+      <td><span class="badge badge-fail">FAILED</span></td>
+      <td><code>categories=[]</code>（断言失败）</td>
+    </tr>
+    <tr>
+      <td><code>test_e2e_full_url_cleanup</code></td>
+      <td><span class="badge badge-ok">PASSED</span></td>
+      <td>本次抽到了 LLM 正确填 categories 的运气；历史报告里它 0/3</td>
+    </tr>
+    <tr>
+      <td><code>test_e2e_plain_id_cs_category</code></td>
+      <td><span class="badge badge-ok">PASSED</span></td>
+      <td>categories 含 <code>cs.*</code> 前缀</td>
+    </tr>
+    <tr>
+      <td><code>test_e2e_node_errors_empty_on_success</code></td>
+      <td><span class="badge badge-fail">FAILED</span></td>
+      <td><code>categories=[]</code>（断言失败）—— 与历史报告不同，纯 ID 输入这次也踩到了</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  <strong>统计</strong>：通过 2 / 失败 2 / 跳过 0 / 警告 1（<code>LangChainPendingDeprecationWarning: allowed_objects</code>，来自 <code>langgraph/cache/base/__init__.py</code>，第三方包内部告警，本仓库无法消除）。
+</p>
+
+<div class="callout-info">
+<strong>与历史报告 <code>2026-05-14_paper-intake-e2e.md</code> 对比</strong>：
+历史报告失败用例是 <code>versioned</code> + <code>url</code>，本次失败是 <code>versioned</code> + <code>node_errors_empty</code>（输入纯 ID）。
+这<strong>推翻了历史报告"只有清洗类输入才会触发 BUG-S1-02"的判定</strong>——纯 ID 输入也会偶发同样问题。
+原因是 categories 漏写本质上是 LLM 服从度抖动，<strong>所有输入路径都不安全</strong>，只是清洗类输入更高频。
+</div>
+
+
+<h2>2. 失败用例清单</h2>
+
+<table>
+  <thead>
+    <tr><th>用例</th><th>失败类型</th><th>错误摘要</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>test_e2e_versioned_id_cleanup</code><br><span class="badge badge-bug">BUG-S1-02</span></td>
+      <td>生产代码 bug<br>（LLM 服从度 + tool 序列化）</td>
+      <td><code>AssertionError: categories 为空: []</code>（<code>tests/test_paper_intake_e2e.py:88</code>），输入 <code>2405.14831v3</code></td>
+    </tr>
+    <tr>
+      <td><code>test_e2e_node_errors_empty_on_success</code><br><span class="badge badge-bug">BUG-S1-02</span></td>
+      <td>同上</td>
+      <td><code>AssertionError: categories 为空: []</code>（<code>tests/test_paper_intake_e2e.py:88</code>），输入 <code>2405.14831</code>（纯 ID）</td>
+    </tr>
+  </tbody>
+</table>
+
+
+<h2>3. 失败详细分析</h2>
+
+<h3>3.1 共同失败现象</h3>
+
+<p>两次失败的报错完全一致：</p>
+
+<pre><code><span class="kw">def</span> <span class="func">_assert_paper_meta_valid</span>(update: Dict[<span class="kw">str</span>, Any]) -> <span class="kw">None</span>:
+    ...
+    pm = update.get(<span class="str">"paper_meta"</span>)
+    ...
+&gt;   <span class="kw">assert</span> isinstance(pm[<span class="str">"categories"</span>], <span class="kw">list</span>) <span class="kw">and</span> len(pm[<span class="str">"categories"</span>]) &gt; <span class="num">0</span>, (
+        <span class="str">f"categories 为空: {pm['categories']}"</span>
+    )
+<span class="kw">E</span>   <span class="kw">AssertionError</span>: categories 为空: []</code></pre>
+
+<p>返回的 <code>update</code> 摘要：</p>
+
+<pre><code>{
+  <span class="str">'current_step'</span>: <span class="str">'paper_intake'</span>,
+  <span class="str">'node_errors'</span>: [],
+  <span class="str">'paper_meta'</span>: {
+    <span class="str">'arxiv_id'</span>: <span class="str">'2405.14831'</span>,
+    <span class="str">'title'</span>: <span class="str">'HippoRAG: Neurobiologically Inspired ...'</span>,
+    <span class="str">'authors'</span>: [<span class="str">'Bernal Jiménez Gutiérrez'</span>, <span class="str">'Yiheng Shu'</span>, <span class="str">'Yu Gu'</span>,
+                <span class="str">'Michihiro Yasunaga'</span>, <span class="str">'Yu Su'</span>],
+    <span class="str">'abstract'</span>: <span class="str">'In order to thrive in hostile and ever-changing ...'</span>,
+    <span class="str">'categories'</span>: [],          <span class="com"># &lt;-- 空，违反契约</span>
+    ...
+  },
+  <span class="str">'retry_budget_remaining'</span>: <span class="num">48</span>
+}</code></pre>
+
+<p>除 <code>categories</code> 外其它字段均正常填充，<code>arxiv_id</code> 已正确清洗为 <code>2405.14831</code>。</p>
+
+<h3>3.2 ReAct 子图日志（重新单跑 <code>test_e2e_node_errors_empty_on_success</code>，<code>--log-cli-level=INFO</code>）</h3>
+
+<pre><code>INFO core.tools.deepxiv_tools  DeepxivTools initialized (token=***)   <span class="com"># brief / head / search 三个工具各初始化一次</span>
+INFO core.tools.deepxiv_tools  DeepxivTools initialized (token=***)
+INFO core.tools.deepxiv_tools  DeepxivTools initialized (token=***)
+INFO httpx                     HTTP Request: POST nvidia.com/v1/chat/completions <span class="str">"200 OK"</span>   <span class="com"># LLM 第 1 轮 reasoning</span>
+INFO core.tools.deepxiv_tools  get_paper_brief: arxiv_id=2405.14831
+INFO core.tools.deepxiv_tools  get_paper_brief: success for 2405.14831
+INFO core.tools.deepxiv_tools  get_paper_head:  arxiv_id=2405.14831
+INFO core.tools.deepxiv_tools  get_paper_head:  success for 2405.14831    <span class="com"># head 工具已成功，含 categories</span>
+INFO httpx                     HTTP Request: POST nvidia.com/v1/chat/completions <span class="str">"200 OK"</span>   <span class="com"># LLM 第 2 轮 reasoning</span>
+INFO core.react_base           [paper_intake] finalize: schema-enforce regen
+                               (parsed=ok, missing=['categories'])         <span class="com"># &lt;-- 关键：检测到漏写 categories，触发重生成</span>
+INFO httpx                     HTTP Request: POST nvidia.com/v1/chat/completions <span class="str">"200 OK"</span>   <span class="com"># schema-enforce regen 实际调用</span>
+INFO core.nodes.paper_intake   [paper_intake] 完成: arxiv_id=2405.14831, title=HippoRAG: ...
+INFO core.react_base           [paper_intake] react wrapper done: rounds=2, remaining_budget=48</code></pre>
+
+<p>注意：日志中<strong>没有</strong>出现 <code>core.nodes.paper_intake</code> 的 backfill INFO 日志
+（<code>"[%s] backfill categories from get_paper_head tool result"</code>，
+对应 <code>core/nodes/paper_intake.py:205-208</code>），说明 backfill 兜底<strong>压根没触发</strong>。</p>
+
+<h3>3.3 流水线推演（按代码逐步走一遍）</h3>
+
+<ol>
+  <li>
+    <strong>第 1 轮 reasoning</strong>：LLM 决定先调 <code>get_paper_brief</code>，然后 <code>get_paper_head</code>。
+    工具均成功，head 返回字段含 <code>categories=['cs.CL', 'cs.AI']</code>（直接打 deepxiv 验证过）。
+  </li>
+  <li>
+    <strong>第 2 轮 reasoning</strong>：LLM 输出 <code>&lt;result&gt;{...}&lt;/result&gt;</code>，
+    但 <code>categories</code> 字段值是空数组 <code>[]</code>（LLM 服从度抽风，输入是否需要清洗都可能出现）。
+  </li>
+  <li>
+    <strong><code>finalize_node</code> 检测到必填字段缺失</strong>（<code>core/react_base.py:580</code>，
+    <code>_missing_required_fields</code> 把空 list 视为缺失）→ 调用
+    <code>_invoke_with_schema</code> 重生成（<code>core/react_base.py:591-596</code>）。
+    <br>日志：<code>finalize: schema-enforce regen (parsed=ok, missing=['categories'])</code>。
+  </li>
+  <li>
+    <strong>schema-enforce regen 也救不回 categories</strong>：因为重生成的 messages 上下文与第一次一样（head 工具结果以 Python repr 形式塞在 ToolMessage 里），且 schema 只要求字段类型为 array，不强制非空。
+    LLM 仍可能输出 <code>categories: []</code>。重生成结果通过 <code>merged.update(forced)</code> 覆盖了原解析（<code>core/react_base.py:602</code>），categories 依然空。
+  </li>
+  <li>
+    <strong>进入 <code>_map_intake_result</code></strong>（<code>core/nodes/paper_intake.py:230</code>）：
+    <ul>
+      <li>构造 <code>paper_meta</code>（<code>_build_paper_meta</code>）—— <code>categories=[]</code>。</li>
+      <li>调 <code>_backfill_paper_meta_from_tools</code>（<code>paper_intake.py:272</code>）尝试从 head 工具历史回填。</li>
+    </ul>
+  </li>
+  <li>
+    <strong><code>_backfill_paper_meta_from_tools</code> 静默失败</strong>（<code>paper_intake.py:198-199</code>）：
+    <pre><code>head_dict = extract_last_tool_result(react_messages, <span class="str">"get_paper_head"</span>)
+<span class="kw">if not</span> head_dict <span class="kw">or not</span> isinstance(head_dict, <span class="kw">dict</span>):
+    <span class="kw">return</span> paper_meta   <span class="com"># &lt;-- 命中这里，因为 head_dict 永远是 None</span></code></pre>
+    没有警告、没有日志、没有断言——静默吞掉。最终 <code>categories=[]</code> 落到 GlobalState。
+  </li>
+</ol>
+
+<h3>3.4 根因定位：<code>extract_last_tool_result</code> 永远无法解析 deepxiv 工具的 ToolMessage</h3>
+
+<p>关键证据 —— 在 ReAct 真实序列化路径上重放 head 工具：</p>
+
+<pre><code><span class="com"># 测试脚本：模拟 ReAct tool_executor_node 的序列化路径</span>
+<span class="kw">from</span> core.tools.deepxiv_tools <span class="kw">import</span> get_paper_head_tool
+<span class="kw">from</span> langchain_core.messages <span class="kw">import</span> ToolMessage
+<span class="kw">from</span> core.react_base <span class="kw">import</span> extract_last_tool_result, _stringify_tool_result, _truncate_tool_result
+
+head_tool = get_paper_head_tool()
+raw_str = head_tool.invoke({<span class="str">'arxiv_id'</span>: <span class="str">'2405.14831'</span>})
+<span class="func">print</span>(<span class="str">'TOOL invoke type:'</span>, <span class="kw">type</span>(raw_str))
+<span class="func">print</span>(<span class="str">'TOOL invoke first 200 chars:'</span>, raw_str[:<span class="num">200</span>])
+
+content = _truncate_tool_result(_stringify_tool_result(raw_str))
+tm = ToolMessage(content=content, tool_call_id=<span class="str">'x'</span>, name=<span class="str">'get_paper_head'</span>)
+parsed = extract_last_tool_result([tm], <span class="str">'get_paper_head'</span>)
+<span class="func">print</span>(<span class="str">'extract_last_tool_result returned:'</span>, <span class="kw">type</span>(parsed).__name__)</code></pre>
+
+<p>实际输出：</p>
+
+<pre><code>TOOL invoke type: &lt;<span class="kw">class</span> <span class="str">'str'</span>&gt;
+TOOL invoke first 200 chars: {<span class="str">'arxiv_id'</span>: <span class="str">'2405.14831'</span>, <span class="str">'src_url'</span>: <span class="str">'https://arxiv.org/pdf/2405.14831'</span>, ...
+After ReAct serialization first 200 chars: {<span class="str">'arxiv_id'</span>: <span class="str">'2405.14831'</span>, <span class="str">'src_url'</span>: <span class="str">'https://arxiv.org/pdf/2405.14831'</span>, ...
+extract_last_tool_result returned: NoneType            <span class="com"># &lt;-- 关键：解析失败</span>
+  parsed is None -&gt; backfill 会跳过！</code></pre>
+
+<p>问题出在 <code>core/tools/deepxiv_tools.py</code> 第 165–197 行附近（<code>get_paper_brief_tool</code> / <code>get_paper_head_tool</code> 等工厂函数）：</p>
+
+<pre><code><span class="kw">def</span> <span class="func">_truncate</span>(text: <span class="kw">str</span>) -&gt; <span class="kw">str</span>:
+    <span class="kw">if</span> len(text) &lt;= TOOL_RESULT_MAX_LENGTH:
+        <span class="kw">return</span> text
+    <span class="kw">return</span> text[:TOOL_RESULT_MAX_LENGTH] + <span class="str">f"\n... [truncated at {TOOL_RESULT_MAX_LENGTH} chars]"</span>
+
+<span class="kw">def</span> <span class="func">get_paper_head_tool</span>(token=<span class="kw">None</span>) -&gt; BaseTool:
+    client = DeepxivTools(token=token)
+
+    @tool
+    <span class="kw">def</span> <span class="func">get_paper_head</span>(arxiv_id: <span class="kw">str</span>) -&gt; <span class="kw">str</span>:
+        <span class="str">"""..."""</span>
+        <span class="kw">try</span>:
+            result = client.get_paper_head(arxiv_id)   <span class="com"># result 是 dict</span>
+            <span class="kw">return</span> _truncate(<span class="kw">str</span>(result))                <span class="com"># &lt;-- BUG: str(dict) 是 Python repr，不是 JSON</span>
+        <span class="kw">except</span> Exception <span class="kw">as</span> exc:
+            <span class="kw">return</span> <span class="str">f"Error in get_paper_head: {exc}"</span>
+
+    <span class="kw">return</span> get_paper_head</code></pre>
+
+<p>而 <code>core/react_base.py::extract_last_tool_result</code>（第 170-251 行）的解析路径：</p>
+
+<pre><code><span class="com"># 1) 直接尝试整段 JSON</span>
+<span class="kw">try</span>:
+    parsed = json.loads(text)
+    ...
+<span class="kw">except</span> (TypeError, ValueError):
+    <span class="kw">pass</span>
+
+<span class="com"># 2) 剥离截断后缀再试</span>
+trunc_marker_idx = text.rfind(<span class="str">"... [truncated at"</span>)
+<span class="kw">if</span> trunc_marker_idx &gt; <span class="num">0</span>:
+    candidate = text[:trunc_marker_idx].rstrip()
+    <span class="kw">try</span>:
+        parsed = json.loads(candidate)
+        ...
+
+<span class="com"># 3) 抓第一对平衡花括号</span>
+start = text.find(<span class="str">"{"</span>)
+...
+<span class="kw">try</span>:
+    parsed = json.loads(text[start : i + <span class="num">1</span>])
+    ...
+    <span class="kw">except</span> (TypeError, ValueError):
+        <span class="kw">return</span> <span class="kw">None</span>
+<span class="kw">return</span> <span class="kw">None</span>             <span class="com"># &lt;-- 所有路径都走 json.loads，遇 Python repr 全部失败</span></code></pre>
+
+<p>验证一次：</p>
+
+<pre><code>&gt;&gt;&gt; json.loads(<span class="str">"{'arxiv_id': '2405.14831', ...}"</span>)
+json.decoder.JSONDecodeError: Expecting property name enclosed <span class="kw">in</span> double quotes: line <span class="num">1</span> column <span class="num">2</span> (char <span class="num">1</span>)</code></pre>
+
+<p><strong>所有 7 个 deepxiv 工具工厂</strong>都有同样问题（<code>get_paper_brief_tool</code>、<code>get_paper_head_tool</code>、
+<code>get_paper_structure_tool</code>、<code>search_papers_tool</code>、<code>web_search_tool</code>、<code>read_section_tool</code>、<code>get_full_paper_tool</code>），
+凡是返回 dict 或 list 的工具都用 <code>str(...)</code> 序列化。</p>
+
+<h3>3.5 失败类型判定（按文件:行号 + 理由）</h3>
+
+<table>
+  <thead>
+    <tr><th>项</th><th>判定</th><th>理由</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>测试代码（<code>tests/test_paper_intake_e2e.py:88</code>）</td>
+      <td>不是问题</td>
+      <td><code>PaperMeta.categories: List[str]</code> 在 <code>core/state.py:32</code> 是必填；<code>architecture.md</code> 明确 head 优先；PRD 列入必返字段。断言完全符合契约。</td>
+    </tr>
+    <tr>
+      <td>conftest / pytest.ini</td>
+      <td>不是问题</td>
+      <td><code>.env</code> 加载、e2e 凭证检测都按预期工作；4 个用例都正确收集并触发。</td>
+    </tr>
+    <tr>
+      <td>外部依赖抖动（deepxiv）</td>
+      <td>不是问题</td>
+      <td>直接打 <code>DeepxivTools().get_paper_head("2405.14831")</code> 稳定返回 <code>categories=['cs.CL','cs.AI']</code>。</td>
+    </tr>
+    <tr>
+      <td>LLM 服从度抖动（NVIDIA 网关 / gpt-5.4）</td>
+      <td><strong>是表象</strong>，不是根因</td>
+      <td>LLM 漏写 categories 触发了链条，但 finalize 已经设计了 schema-enforce regen 兜底，<em>真正期望生效但失效的</em>兜底是 backfill。</td>
+    </tr>
+    <tr>
+      <td><code>core/tools/deepxiv_tools.py:189-193</code>（<code>_truncate(str(result))</code>）</td>
+      <td><strong>根因 #1</strong></td>
+      <td>用 Python repr 写入 ToolMessage，下游 <code>json.loads</code> 永远失败。这是 <strong>BUG</strong>。</td>
+    </tr>
+    <tr>
+      <td><code>core/react_base.py:170-251</code>（<code>extract_last_tool_result</code>）</td>
+      <td><strong>共因</strong>（防御性不足）</td>
+      <td>只走 <code>json.loads</code>，遇 Python repr 静默返回 None；可考虑加 <code>ast.literal_eval</code> 兜底，但首选还是上游修。</td>
+    </tr>
+    <tr>
+      <td><code>core/nodes/paper_intake.py:181-227</code>（<code>_backfill_paper_meta_from_tools</code>）</td>
+      <td>静默失败，可观测性差</td>
+      <td>当 <code>extract_last_tool_result</code> 返回 None 时直接 return，无 warning 日志，掩盖了上游 bug。</td>
+    </tr>
+  </tbody>
+</table>
+
+
+<h2>4. 修复建议</h2>
+
+<p>本次任务只做诊断，不修代码。下列修复方向按 ROI 排序，建议交给 <code>@全栈开发代理</code>。</p>
+
+<h3>4.1 必须修：工具序列化用 JSON（根因 #1）</h3>
+
+<p>修改 <code>core/tools/deepxiv_tools.py</code> 的 7 个工具工厂，把 dict / list 用 <code>json.dumps(...)</code> 而非 <code>str(...)</code> 写入返回值。
+注意保持 <strong>Prompt Cache 字节级幂等</strong>（同输入同输出文本），所以要固定 <code>ensure_ascii</code>、不要带 <code>indent</code>、不要带时间戳。</p>
+
+<p>diff 思路（以 <code>get_paper_head_tool</code> 为例）：</p>
+
+<pre><code><span class="com"># core/tools/deepxiv_tools.py</span>
+<span class="kw">import</span> json
+
+<span class="kw">def</span> <span class="func">_serialize</span>(value) -&gt; <span class="kw">str</span>:
+    <span class="str">"""稳定序列化：dict / list 走 JSON；str / 其它走 str()。"""</span>
+    <span class="kw">if</span> isinstance(value, (<span class="kw">dict</span>, <span class="kw">list</span>)):
+        <span class="kw">return</span> json.dumps(value, ensure_ascii=<span class="kw">False</span>, sort_keys=<span class="kw">True</span>, default=<span class="kw">str</span>)
+    <span class="kw">if</span> isinstance(value, <span class="kw">str</span>):
+        <span class="kw">return</span> value
+    <span class="kw">return</span> <span class="kw">str</span>(value)
+
+<span class="kw">def</span> <span class="func">get_paper_head_tool</span>(token=<span class="kw">None</span>) -&gt; BaseTool:
+    client = DeepxivTools(token=token)
+
+    @tool
+    <span class="kw">def</span> <span class="func">get_paper_head</span>(arxiv_id: <span class="kw">str</span>) -&gt; <span class="kw">str</span>:
+        <span class="str">"""..."""</span>
+        <span class="kw">try</span>:
+            result = client.get_paper_head(arxiv_id)
+-           <span class="kw">return</span> _truncate(<span class="kw">str</span>(result))
++           <span class="kw">return</span> _truncate(_serialize(result))
+        <span class="kw">except</span> Exception <span class="kw">as</span> exc:
+            <span class="kw">return</span> <span class="str">f"Error in get_paper_head: {exc}"</span>
+
+    <span class="kw">return</span> get_paper_head</code></pre>
+
+<p>其它 6 个工厂同样替换（brief / structure / search / web_search 三个 dict-list 工具必改；
+read_section / get_full_paper 返回 str，可保持原样但建议统一走 <code>_serialize</code> 以防上游改类型）。</p>
+
+<p>修复后，<code>extract_last_tool_result</code> 第一条 <code>json.loads</code> 路径直接命中，
+<code>_backfill_paper_meta_from_tools</code> 即可拿到 head dict 并兜底 categories / authors / abstract。</p>
+
+<h3>4.2 强烈建议：兜底失败要可观测</h3>
+
+<p><code>core/nodes/paper_intake.py:198-199</code> 当前是静默 return，掩盖了本次 bug。建议改为 WARNING：</p>
+
+<pre><code>head_dict = extract_last_tool_result(react_messages, <span class="str">"get_paper_head"</span>)
+<span class="kw">if not</span> head_dict <span class="kw">or not</span> isinstance(head_dict, <span class="kw">dict</span>):
++   <span class="com"># 找到 head ToolMessage 但解析失败时给个 WARNING；找不到 ToolMessage 时 DEBUG 即可</span>
++   <span class="kw">if</span> any(getattr(m, <span class="str">"name"</span>, <span class="kw">None</span>) == <span class="str">"get_paper_head"</span>
++          <span class="kw">for</span> m <span class="kw">in</span> (react_messages <span class="kw">or</span> [])):
++       logger.warning(
++           <span class="str">"[%s] backfill skipped: get_paper_head ToolMessage exists but extract failed"</span>,
++           NODE_NAME,
++       )
+    <span class="kw">return</span> paper_meta</code></pre>
+
+<h3>4.3 可选：<code>extract_last_tool_result</code> 加 <code>ast.literal_eval</code> 兜底</h3>
+
+<p>作为深度防御，<code>core/react_base.py</code> 的 <code>extract_last_tool_result</code> 在 JSON 全部失败后，
+可以尝试 <code>ast.literal_eval(text)</code> 兼容 Python repr。但<strong>不建议作为首选修复</strong>，因为：</p>
+<ul>
+  <li>会掩盖工具序列化不规范这一上游问题。</li>
+  <li><code>ast.literal_eval</code> 对 <code>set</code>、<code>tuple</code>、自定义类的 repr 同样会失败，覆盖率有限。</li>
+  <li>该 helper 是"基础设施级"，下游所有节点共用；与其每个调用点容忍乱序列化，不如约束所有工具走 JSON。</li>
+</ul>
+
+<h3>4.4 可选：finalize 的 schema-enforce regen 应明示"非空 list"</h3>
+
+<p><code>core/nodes/paper_intake.py:23-47</code> 的 <code>PAPER_META_SCHEMA</code> 把 <code>categories</code> 标为 <code>array of string</code>，
+但 JSON Schema 默认允许空数组。可在 schema 里加 <code>"minItems": 1</code>：</p>
+
+<pre><code><span class="str">"categories"</span>: {<span class="str">"type"</span>: <span class="str">"array"</span>, <span class="str">"items"</span>: {<span class="str">"type"</span>: <span class="str">"string"</span>}, <span class="str">"minItems"</span>: <span class="num">1</span>}</code></pre>
+
+<p>但注意：</p>
+<ul>
+  <li>OpenAI <code>method=json_schema</code> 对 <code>minItems</code> 支持有限，<code>function_calling</code> 路径可能直接忽略约束。</li>
+  <li>论文若真的没有 categories（理论可能），强制 minItems 反而会让 LLM 编造分类。</li>
+  <li>这条不能替代 4.1，应作为补强。</li>
+</ul>
+
+<h3>4.5 测试侧后续动作</h3>
+
+<ul>
+  <li><strong>不</strong>修改 <code>tests/test_paper_intake_e2e.py</code> 的断言以"绕过"——契约就是 categories 非空。</li>
+  <li>建议补单元测试 <code>tests/test_paper_intake.py::test_backfill_categories_from_head_tool_message</code>，
+  使用纯 mock 的 <code>ToolMessage(content=&lt;JSON 序列化的 head dict&gt;)</code> 验证 backfill 路径，
+  避免下次回归还要靠 e2e 才能发现。</li>
+  <li>修复后回归命令：<code>pytest tests/test_paper_intake_e2e.py -m e2e -v --durations=0</code>，
+  连续 3 次全绿才可关 BUG-S1-02（避免被 LLM 服从度的偶发性误判为已修复）。</li>
+</ul>
+
+
+<h2>5. 环境信息</h2>
+
+<table class="meta-table">
+  <tr><th>OS</th><td>Linux 6.1.62-4.x86_64</td></tr>
+  <tr><th>Python</th><td>3.11.5（<code>.venv/bin/python</code>）</td></tr>
+  <tr><th>pytest</th><td>9.0.3（plugins: anyio-4.13.0, langsmith-0.8.2）</td></tr>
+  <tr><th>langchain-core</th><td>1.3.3</td></tr>
+  <tr><th>langchain-openai</th><td>1.2.1</td></tr>
+  <tr><th>langgraph</th><td>1.1.10</td></tr>
+  <tr><th>langgraph-checkpoint</th><td>4.0.3</td></tr>
+  <tr><th>openai</th><td>2.35.1</td></tr>
+  <tr><th>pydantic</th><td>2.13.4</td></tr>
+  <tr><th>deepxiv-sdk</th><td>0.2.5（本地仓库 <code>./deepxiv_sdk_repo</code> editable）</td></tr>
+  <tr><th>python-dotenv</th><td>1.2.2</td></tr>
+  <tr><th>外部 API 依赖</th><td>
+    <ul>
+      <li>LLM：<code>https://inference-api.nvidia.com/v1</code>，模型 <code>azure/openai/gpt-5.4</code>（env <code>LLM_API_KEY</code>）</li>
+      <li>deepxiv 服务：env <code>DEEPXIV_TOKEN</code></li>
+    </ul>
+  </td></tr>
+  <tr><th>凭证加载路径</th><td><code>tests/conftest.py</code> 调 <code>dotenv.load_dotenv</code>：项目根 <code>.env</code> 优先，<code>~/.env</code> 兜底；shell 中已 export 的 env 不会被覆盖（<code>override=False</code>）</td></tr>
+  <tr><th>用例耗时（4 用例总 67.40s）</th><td>每个用例 ~15-20s，含 2-3 次 LLM 调用 + 2 次 deepxiv 调用</td></tr>
+  <tr><th>retry_budget 扣减</th><td>每次 rounds=2，扣 2，remaining=48；与 <code>create_initial_state</code> 默认 50 一致（<code>config.MAX_TOTAL_LLM_CALLS</code>）</td></tr>
+</table>
+
+
+<h2>6. 关联工件</h2>
+
+<ul>
+  <li>历史报告：<code>docs/sprint1/test-reports/2026-05-14_paper-intake-e2e.md</code>（首次 e2e 跑次 + BUG-S1-02 草稿）</li>
+  <li>BUG 条目：<code>docs/TODO.md</code> 已有 <code>BUG-S1-02</code> 条目，需更新根因描述（categories 缺失的真因是工具序列化，不是 LLM 服从度）</li>
+  <li>测试入口：<code>tests/test_paper_intake_e2e.py</code></li>
+  <li>测试基建：<code>tests/conftest.py</code>、<code>pytest.ini</code></li>
+  <li>被测代码：
+    <ul>
+      <li><code>core/nodes/paper_intake.py</code>（<code>_map_intake_result</code> / <code>_backfill_paper_meta_from_tools</code>）</li>
+      <li><code>core/react_base.py</code>（<code>extract_last_tool_result</code> / <code>finalize_node</code> / <code>_invoke_with_schema</code>）</li>
+      <li><code>core/tools/deepxiv_tools.py</code>（<strong>需要修复</strong>：7 个工具工厂的 <code>str(result)</code>）</li>
+    </ul>
+  </li>
+</ul>
+
+<div class="callout-info">
+<strong>下一步建议</strong>：
+<ol>
+  <li>把本报告作为 BUG-S1-02 的最新根因证据交给 <code>@全栈开发代理</code>，请优先修 4.1（工具 JSON 序列化）。</li>
+  <li>同步把 4.2（兜底失败可观测性）一并修了，避免下次回归再被静默吞错。</li>
+  <li>修复后连跑 3 次 <code>pytest tests/test_paper_intake_e2e.py -m e2e -v</code> 全绿才能关闭 BUG。</li>
+  <li>建议补单元测试 <code>tests/test_paper_intake.py</code> 中 backfill 路径（不依赖真实 LLM 即可验），把这条 e2e bug 防御到单元层。</li>
+</ol>
+</div>
+
+<div class="footer">
+报告由 @测试工程师代理 于 2026-05-14 19:47 PDT 生成。
+对应 commit <code>3d5a650</code>。修复前请勿删除本文件，作为根因实锤证据保留。
+</div>
+
+</body>
+</html>

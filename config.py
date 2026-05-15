@@ -14,8 +14,11 @@ LOG_DIR: Path = WORKSPACE_DIR / "logs"
 # ========== LLM 默认配置 ==========
 
 DEFAULT_LLM_TEMPERATURE: float = 0.3
-DEFAULT_LLM_MAX_TOKENS: int = 4096
-DEFAULT_LLM_BASE_URL: str = "https://inference-api.nvidia.com/v1/responses"
+DEFAULT_LLM_MAX_TOKENS: int = 8192
+# 2026-05-14 4096 -> 8192：为 reasoning 模型（如 GPT-5 系列）的 reasoning_tokens 占用留余量；
+# paper_analysis (C2) 输出体量较大，4096 边界过紧；
+# max_tokens 不参与 prompt cache key，不影响命中率。
+DEFAULT_LLM_BASE_URL: str = "https://inference-api.nvidia.com/v1"
 DEFAULT_LLM_MODEL: str = "azure/openai/gpt-5.4"
 LLM_REQUEST_TIMEOUT: int = 60
 
