@@ -695,16 +695,16 @@ paper_analysis = _make_react_wrapper(
 - **中风险**：`<result>` 标签中的 JSON 不完整或格式不正确
 
 **自测检查点**：
-- [ ] `paper_analysis` 是 `_make_react_wrapper` 生成的 callable
-- [ ] ReAct wrapper 正确映射 paper_meta 到 context
-- [ ] 前置校验：`paper_meta` 为 None 时返回 error
-- [ ] Mock LLM + Mock 工具后，agent 自主制定阅读策略并输出 PaperAnalysis
-- [ ] agent 可通过多轮工具调用（get_structure -> read_section x N）完成分析
-- [ ] 非标准章节名：agent 能根据章节结构自主匹配
-- [ ] 降级处理：所有章节读取失败时 agent 调用 get_full_paper 兜底
-- [ ] 预算耗尽：达到 max_rounds 后 force_finish 触发，产出部分结果
-- [ ] 结果不完整时正确填充默认值并标记 degraded_nodes
-- [ ] Prompt Cache 子任务：对两篇不同 `arxiv_id` 的论文分别调用 `_build_analysis_system_prompt(context)`，断言两次返回的 system prompt 主体（截去尾部独立段落 / 或排除被外移的论文上下文部分后）**完全相同**
+- [x] [2026-05-14] @全栈开发代理 `paper_analysis` 是 `_make_react_wrapper` 生成的 callable（__name__ = react_wrapper_paper_analysis；同时验证 PAPER_ANALYSIS_SCHEMA 与 PaperAnalysis TypedDict 字段集合相等）
+- [x] [2026-05-14] @全栈开发代理 ReAct wrapper 正确映射 paper_meta 到 context（SystemMessage 固定主体 + HumanMessage 携带 arxiv_id）
+- [x] [2026-05-14] @全栈开发代理 前置校验：`paper_meta` 为 None 时返回 error + node_errors（permanent）
+- [x] [2026-05-14] @全栈开发代理 Mock LLM + Mock 工具后，agent 自主制定阅读策略并输出 PaperAnalysis（结构 → Method → Experiments → Results 路径全字段填充）
+- [x] [2026-05-14] @全栈开发代理 agent 可通过多轮工具调用（get_structure -> read_section x N）完成分析（4 次工具调用 + 1 次 final result）
+- [x] [2026-05-14] @全栈开发代理 非标准章节名：agent 根据章节结构自主匹配（Our Framework → Method、Ablation Study → Results）
+- [x] [2026-05-14] @全栈开发代理 降级处理：所有章节读取失败时 agent 调用 get_full_paper 兜底（sections_read=[] 触发 degraded 标记）
+- [x] [2026-05-14] @全栈开发代理 预算耗尽：达到 max_rounds 后 force_finish 触发，产出部分结果（FakeLLM.with_structured_output 提供 forced_dict，覆盖 schema 优先路径）
+- [x] [2026-05-14] @全栈开发代理 结果不完整时正确填充默认值并标记 degraded_nodes（analysis_notes 追加 `[DEGRADED] missing=...` 机器标记 + NodeError(degraded)）
+- [x] [2026-05-14] @全栈开发代理 Prompt Cache 子任务：两篇不同 arxiv_id 的论文分别调用 `_build_analysis_system_prompt(context)`，截去 `\n--- 当前论文上下文 ---\n` 尾部段落后主体字节级一致；主体与 `_ANALYSIS_SYSTEM_PROMPT_BODY` 常量字节级一致；主体不含任何论文级动态变量（arxiv_id / title / authors / 等）
 
 ---
 

@@ -24,8 +24,14 @@ if str(PROJECT_ROOT) not in sys.path:
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
 
-from core.nodes import paper_intake as paper_intake_module
-from core.nodes.paper_intake import (
+import importlib
+
+# 必须用 importlib 拿真实的子模块对象——core/nodes/__init__.py 会把同名 callable
+# 注册为 core.nodes 包的属性，遮蔽掉子模块引用；普通 import 语法此后只能拿到
+# callable 而非模块。
+paper_intake_module = importlib.import_module("core.nodes.paper_intake")
+
+from core.nodes.paper_intake import (  # noqa: E402
     NODE_NAME,
     PAPER_META_SCHEMA,
     _build_intake_system_prompt,

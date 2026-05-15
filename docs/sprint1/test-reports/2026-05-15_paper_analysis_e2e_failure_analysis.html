@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>paper_analysis e2e 失败分析 - 2026-05-15</title>
+<style>
+  :root {
+    --bg: #fafafa;
+    --fg: #1f2328;
+    --muted: #57606a;
+    --border: #d0d7de;
+    --code-bg: #f6f8fa;
+    --kw: #cf222e;
+    --str: #0a3069;
+    --com: #6e7781;
+    --func: #8250df;
+    --num: #0550ae;
+    --ok: #1a7f37;
+    --warn: #9a6700;
+    --err: #cf222e;
+    --bug: #d1242f;
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.65;
+    max-width: 1100px;
+    margin: 24px auto;
+    padding: 0 24px 80px;
+    font-size: 15px;
+  }
+  h1 { font-size: 26px; border-bottom: 2px solid var(--border); padding-bottom: 12px; }
+  h2 { font-size: 22px; border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-top: 36px; }
+  h3 { font-size: 18px; margin-top: 28px; }
+  h4 { font-size: 16px; margin-top: 20px; color: var(--muted); }
+
+  a { color: #0969da; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: #eef1f4; font-weight: 600; }
+
+  code, kbd, samp {
+    font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, "Courier New", monospace;
+    font-size: 0.92em;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 16px;
+    overflow-x: auto;
+    font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  pre code { background: none; border: none; padding: 0; font-size: inherit; }
+
+  .kw  { color: var(--kw); font-weight: 600; }
+  .str { color: var(--str); }
+  .com { color: var(--com); font-style: italic; }
+  .func{ color: var(--func); }
+  .num { color: var(--num); }
+
+  .badge {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    vertical-align: middle;
+  }
+  .badge-ok   { background: #dafbe1; color: var(--ok); border: 1px solid #4ac26b; }
+  .badge-fail { background: #ffebe9; color: var(--err); border: 1px solid #ff8182; }
+  .badge-warn { background: #fff8c5; color: var(--warn); border: 1px solid #d4a72c; }
+  .badge-bug  { background: #ffeef0; color: var(--bug); border: 1px solid var(--bug); }
+
+  .callout {
+    border-left: 4px solid #d1242f;
+    background: #fff5f5;
+    padding: 10px 14px;
+    margin: 14px 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .callout-ok {
+    border-left: 4px solid var(--ok);
+    background: #f3fbf6;
+    padding: 10px 14px;
+    margin: 14px 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .callout-info {
+    border-left: 4px solid #0969da;
+    background: #f1f6fb;
+    padding: 10px 14px;
+    margin: 14px 0;
+    border-radius: 0 6px 6px 0;
+  }
+
+  ul, ol { padding-left: 24px; }
+  li { margin: 4px 0; }
+
+  .meta-table th { width: 160px; background: #f6f8fa; }
+  .summary-table td { vertical-align: middle; }
+
+  hr { border: none; border-top: 1px dashed var(--border); margin: 24px 0; }
+
+  .footer {
+    margin-top: 48px;
+    color: var(--muted);
+    font-size: 13px;
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+  }
+</style>
+</head>
+<body>
+
+<h1>paper_analysis e2e 失败分析报告</h1>
+
+<table class="meta-table">
+  <tr><th>报告日期</th><td>2026-05-15 14:30 PDT</td></tr>
+  <tr><th>执行人</th><td>@测试工程师代理</td></tr>
+  <tr><th>Sprint</th><td>sprint1</td></tr>
+  <tr><th>触发原因</th><td>C2 (paper_analysis) 首次真实端到端验收时全量回归发现 3 用例失败（实为一次 LLM 调用 → 3 个共用 fixture 用例连带失败）</td></tr>
+  <tr><th>commit</th><td><code>86af2ce</code> (master)</td></tr>
+  <tr><th>关联报告</th><td><code>docs/sprint1/test-reports/2026-05-15_paper-analysis-e2e.md</code></td></tr>
+  <tr><th>BUG ID</th><td><span class="badge badge-bug">BUG-S1-03</span></td></tr>
+</table>
+
+<div class="callout">
+<strong>一句话结论</strong>：HippoRAG e2e 跑通后，LLM 在最终 <code>&lt;result&gt;</code> JSON 中<strong>偶发漏写 <code>sections_read</code> 字段值</strong>（输出空数组）——尽管同次输出的 <code>analysis_notes</code> 自然语言段落明确列出了所有读过的章节、且工具历史中 6 次 <code>read_section</code> 全部 success。
+<code>_map_analysis_result</code> 检测到 sections_read 空 → 标记 paper_analysis 进入 <code>degraded_nodes</code> → 测试断言"成功路径核心字段非空"失败。
+<strong>这是与 BUG-S1-02（categories 漏写）同形态的 LLM 服从度问题</strong>，发生在 paper_analysis 节点；区别在于 BUG-S1-02 的工具序列化已修复，本次工具结果正常到达 LLM 上下文，问题在于 LLM 最终 JSON 漏字段 + 节点缺少工具历史回填兜底。<strong>复现率约 25%</strong>（4 次全量回归中 1 次复现）。
+</div>
+
+
+<h2>1. 测试执行概览</h2>
+
+<table class="meta-table">
+  <tr><th>命令</th><td><code>pytest -v --durations=0</code>（全量回归第 1 次）</td></tr>
+  <tr><th>开始时间</th><td>2026-05-15 ~14:05 PDT</td></tr>
+  <tr><th>总耗时</th><td>213.31s</td></tr>
+  <tr><th>退出码</th><td><code>1</code>（3 个用例失败）</td></tr>
+  <tr><th>Python</th><td>3.11.5</td></tr>
+  <tr><th>pytest</th><td>9.0.3</td></tr>
+  <tr><th>LLM 端点</th><td><code>inference-api.nvidia.com</code>（默认 <code>azure/openai/gpt-5.4</code>）</td></tr>
+  <tr><th>靶论文</th><td>arXiv <code>2405.14831</code> (HippoRAG)，17 章节</td></tr>
+</table>
+
+<h3>结果摘要</h3>
+
+<table class="summary-table">
+  <thead>
+    <tr><th>用例</th><th>结果</th><th>说明</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td colspan="3" style="background:#f6f8fa;"><strong>paper_analysis e2e（共 6 用例）</strong></td>
+    </tr>
+    <tr>
+      <td><code>test_e2e_paper_meta_none_short_circuit</code></td>
+      <td><span class="badge badge-ok">PASSED</span></td>
+      <td>前置校验路径，不耗 LLM</td>
+    </tr>
+    <tr>
+      <td><code>test_e2e_basic_path_full_pipeline</code></td>
+      <td><span class="badge badge-fail">FAILED</span></td>
+      <td><code>sections_read=[]</code>，断言失败</td>
+    </tr>
+    <tr>
+      <td><code>test_e2e_react_actually_used_tools</code></td>
+      <td><span class="badge badge-fail">FAILED</span></td>
+      <td>同 fixture，同一次 paper_analysis 结果，<code>sections_read=[]</code> 触发 setup 期断言</td>
+    </tr>
+    <tr>
+      <td><code>test_e2e_prompt_cache_system_prompt_byte_identical</code></td>
+      <td><span class="badge badge-ok">PASSED</span></td>
+      <td>本测试自构造 secondary state，跑独立 paper_analysis，不受 fixture 污染</td>
+    </tr>
+    <tr>
+      <td><code>test_e2e_budget_not_exhausted_in_normal_paper</code></td>
+      <td><span class="badge badge-ok">PASSED</span></td>
+      <td>同 fixture，<code>retry_budget_remaining</code> 字段断言不受 sections_read 影响</td>
+    </tr>
+    <tr>
+      <td><code>test_e2e_node_errors_clean_on_success</code></td>
+      <td><span class="badge badge-fail">FAILED</span></td>
+      <td>同 fixture，<code>degraded_nodes</code> 含 paper_analysis → permanent 检查通过但 _assert_analysis_basics 提前 fail</td>
+    </tr>
+    <tr>
+      <td colspan="3" style="background:#f6f8fa;"><strong>paper_intake e2e（共 4 用例）</strong></td>
+    </tr>
+    <tr><td><code>test_e2e_versioned_id_cleanup</code></td><td><span class="badge badge-ok">PASSED</span></td><td>BUG-S1-02 修复后稳定通过</td></tr>
+    <tr><td><code>test_e2e_full_url_cleanup</code></td><td><span class="badge badge-ok">PASSED</span></td><td>同上</td></tr>
+    <tr><td><code>test_e2e_plain_id_cs_category</code></td><td><span class="badge badge-ok">PASSED</span></td><td>同上</td></tr>
+    <tr><td><code>test_e2e_node_errors_empty_on_success</code></td><td><span class="badge badge-ok">PASSED</span></td><td>同上</td></tr>
+    <tr>
+      <td colspan="3" style="background:#f6f8fa;"><strong>单元测试（共 16 用例）</strong></td>
+    </tr>
+    <tr><td>tests/test_paper_analysis.py 等</td><td><span class="badge badge-ok">PASSED</span></td><td>全部通过</td></tr>
+  </tbody>
+</table>
+
+<p>
+  <strong>统计</strong>：通过 23 / 失败 3 / 跳过 0 / 警告 1（<code>LangChainPendingDeprecationWarning: allowed_objects</code>，第三方包内部告警）。
+</p>
+
+
+<h2>2. 失败用例详情</h2>
+
+<table>
+  <thead>
+    <tr><th>用例</th><th>失败类型</th><th>错误摘要</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>test_e2e_basic_path_full_pipeline</code><br><span class="badge badge-bug">BUG-S1-03</span></td>
+      <td>生产代码偶发 bug<br>（LLM 服从度 + 兜底缺失）</td>
+      <td><code>AssertionError: sections_read 为空（核心字段）</code></td>
+    </tr>
+    <tr>
+      <td><code>test_e2e_react_actually_used_tools</code><br><span class="badge badge-bug">BUG-S1-03</span></td>
+      <td>同上 fixture 连带</td>
+      <td>同一次 paper_analysis update，<code>pa.get("sections_read")</code> 在 setup 期断言失败</td>
+    </tr>
+    <tr>
+      <td><code>test_e2e_node_errors_clean_on_success</code><br><span class="badge badge-bug">BUG-S1-03</span></td>
+      <td>同上 fixture 连带</td>
+      <td>同一次 paper_analysis update，<code>_assert_analysis_basics</code> 共用断言失败</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout-info">
+<strong>设计反思</strong>：本份测试为省 token 把 paper_analysis 一次真实调用结果用 module-scope fixture <code>primary_analysis_result</code> 共享给 4 个用例。一次失败连带 3 个用例同时红是预期副作用——可以接受（替代方案是每个用例独跑一次 paper_analysis，token 翻 4 倍）。
+</div>
+
+
+<h2>3. ReAct 轨迹（INFO 日志重建）</h2>
+
+<pre><code>get_paper_structure: arxiv_id=2405.14831 → 17 sections
+read_section: section=HippoRAG                                         → 10051 chars OK
+read_section: section=Experimental Setup                               → 3100 chars  OK
+read_section: section=Results                                          → 5419 chars  OK
+read_section: section=Appendix H Implementation Details & Compute...   → not found（WARNING）
+read_section: section=Appendix H Implementation Details                → 1491 chars  OK（自主重试）
+read_section: section=Introduction                                     → 4012 chars  OK
+read_section: section=Discussions                                      → 8848 chars  OK
+[paper_analysis] 完成: sections_read=0, method_len=990, degraded=True
+[paper_analysis] react wrapper done: rounds=4, remaining_budget=44</code></pre>
+
+<p>关键观察：</p>
+<ul>
+  <li>6 次 read_section 调用中 5 次直接成功 + 1 次失败后自主部分匹配重试也成功。</li>
+  <li>ReAct agent 共完成 4 轮（structure × 1 + 3 个 reasoning round 分别批量 dispatch read_section），耗预算 4，<strong>远未触发 force_finish</strong>。</li>
+  <li><code>[paper_analysis] 完成</code> 日志中 <code>sections_read=0</code>，说明 <code>_map_analysis_result</code> 拿到的 LLM 输出里 <code>sections_read</code> 就是空数组（不是日志渲染问题）。</li>
+</ul>
+
+
+<h2>4. 失败 update 字段对比</h2>
+
+<table>
+  <thead>
+    <tr><th>PaperAnalysis 字段</th><th>实际值</th><th>预期</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>method_summary</code></td><td>990 字符的高质量 HippoRAG 方法摘要</td><td>非空 ✓</td></tr>
+    <tr><td><code>key_formulas</code></td><td>3 个 LaTeX 公式</td><td>正常</td></tr>
+    <tr><td><code>datasets</code></td><td><code>['MuSiQue (answerable)', '2WikiMultiHopQA', 'HotpotQA']</code></td><td>非空 ✓</td></tr>
+    <tr><td><code>metrics</code></td><td><code>['Recall@2', 'Recall@5', 'EM', 'F1', 'All-Recall@2', 'All-Recall@5']</code></td><td>非空 ✓</td></tr>
+    <tr><td><code>hyperparams</code></td><td>9 个键完整填充（含 retrievers、threshold、damping factor 等）</td><td>非空 ✓</td></tr>
+    <tr><td><code>hardware_requirements</code></td><td>"4 NVIDIA RTX A6000 / 4 NVIDIA H100 ..." 详细描述</td><td>非空 ✓</td></tr>
+    <tr><td><code>framework</code></td><td><code>"PyTorch"</code></td><td>正常</td></tr>
+    <tr><td><code>baseline_results</code></td><td>完整的 5 大类基线对比表（包含 R@2/R@5/EM/F1/AR@2/AR@5 等所有数值）</td><td>异常完整</td></tr>
+    <tr><td style="background:#fff5f5;"><code><strong>sections_read</strong></code></td><td style="background:#fff5f5;"><code><strong>[]</strong></code> ← <span class="badge badge-fail">空数组</span></td><td style="background:#fff5f5;">应包含 6 个章节名</td></tr>
+    <tr><td><code>analysis_notes</code></td><td>"[DEGRADED] missing=sections_read\nRead strategy followed section structure first, then Method/Experiments/Results, with Introduction and Discussions for clarification. Initial read of 'Appendix H Implementation Details & Compute Requirements' failed due to section name mismatch; retried successfully with partial match 'Appendix H Implementation Details'. ..."</td><td>自由文本</td></tr>
+  </tbody>
+</table>
+
+<p><strong>反差点</strong>：<code>analysis_notes</code> 里 LLM 用自然语言精准列出了所有读过的章节，但 JSON 字段 <code>sections_read</code> 同次输出就是 <code>[]</code>。</p>
+
+
+<h2>5. 排查步骤与根因定位</h2>
+
+<h3>5.1 排除项</h3>
+<ol>
+  <li><strong>工具调用失败？</strong> → INFO 日志显示 6 次 read_section 全部 success。<span class="badge badge-ok">排除</span></li>
+  <li><strong>ReAct 子图 finalize 解析失败？</strong> → 其它字段全部完整填充，说明 <code>&lt;result&gt;</code> JSON 被正确解析。<span class="badge badge-ok">排除</span></li>
+  <li><strong>类型补齐 <code>_coerce_str_list</code> 把内容强转空？</strong> → 该函数只过滤 None / 空字符串，对非空字符串列表保持原样。LLM 输出本身就是空数组。<span class="badge badge-ok">排除</span></li>
+  <li><strong>同 BUG-S1-02 的 tool 序列化回归？</strong> → 工具结果实际到达 LLM 上下文（method_summary / datasets / metrics 都基于章节内容填好了，说明 LLM 看到了完整的章节文本）。本次问题不在序列化。<span class="badge badge-ok">排除</span></li>
+</ol>
+
+<h3>5.2 复现率验证</h3>
+<table>
+  <thead>
+    <tr><th>跑次</th><th>结果</th><th>备注</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>paper_analysis e2e 复跑第 1 次</td><td><span class="badge badge-ok">6/6</span></td><td>139.78s</td></tr>
+    <tr><td>paper_analysis e2e 复跑第 2 次</td><td><span class="badge badge-ok">6/6</span></td><td>129.62s</td></tr>
+    <tr><td>paper_analysis e2e 复跑第 3 次</td><td><span class="badge badge-ok">6/6</span></td><td>124.11s</td></tr>
+    <tr><td>全量 pytest 第 1 次</td><td><span class="badge badge-fail">23/26</span></td><td>本次失败 → BUG-S1-03 触发</td></tr>
+    <tr><td>全量 pytest 第 2 次</td><td><span class="badge badge-ok">26/26</span></td><td>183.24s</td></tr>
+    <tr><td>全量 pytest 第 3 次</td><td><span class="badge badge-ok">26/26</span></td><td>181.14s</td></tr>
+    <tr><td>basic_path 单测隔离验证</td><td><span class="badge badge-ok">PASSED</span></td><td>65.43s</td></tr>
+  </tbody>
+</table>
+<p><strong>综合复现率：4 次 paper_analysis 真实调用中 1 次踩中 ≈ 25%</strong>。属于稳定可观测的偶发 LLM 服从度问题，非确定性 bug 也非纯随机抖动。</p>
+
+<h3>5.3 根因判定</h3>
+<p>分两层：</p>
+<ul>
+  <li><strong>诱因（LLM 服从度）</strong>：C2 的 system prompt 在"字段填充优先级"段明文规定 <code>sections_read：实际成功读取的章节名列表（与工具调用历史一致）</code>，但 LLM 偶发会输出空数组——尤其在 baseline_results 字段填充得非常大（HippoRAG 的 baseline tables 占用了输出 token 的大头）、模型注意力被消耗的场景下。</li>
+  <li><strong>放大器（兜底缺失）</strong>：<code>_map_analysis_result</code> 当前只用 2 参签名（<code>result, state</code>），没用上 <code>_make_react_wrapper</code> 已经支持的"第 3 参 react_messages 透传"能力。架构 §2.8.2 "head 优先回填"契约要求节点在 LLM 漏字段时从 ReAct 子图工具历史回填——paper_intake 已通过 BUG-S1-02 修复的 <code>_backfill_paper_meta_from_tools</code> 实现了 categories 兜底；paper_analysis 没有对应的 sections_read 兜底。</li>
+</ul>
+
+<div class="callout-info">
+<strong>判定</strong>：BUG-S1-03 是<strong>生产代码偶发 bug</strong>，<strong>不是测试用例问题</strong>。测试断言基于 <code>_missing_core_fields</code> 把 sections_read 列入核心字段——这是 C2 自己定义的契约，且 PRD / dev-plan 都要求该字段非空。
+</div>
+
+
+<h2>6. Bug 报告</h2>
+
+<table class="meta-table">
+  <tr><th>Bug ID</th><td><span class="badge badge-bug">BUG-S1-03</span></td></tr>
+  <tr><th>归属节点</th><td><code>core/nodes/paper_analysis.py</code></td></tr>
+  <tr><th>形态</th><td>LLM 偶发漏写 <code>sections_read</code> 字段值（输出空数组），节点缺少工具历史回填兜底</td></tr>
+  <tr><th>复现率</th><td>≈ 25%（4 次全量回归中 1 次复现）</td></tr>
+  <tr><th>复现命令</th><td><code>pytest -v</code>（重复跑约 4 次能复现一次）<br>或 <code>pytest tests/test_paper_analysis_e2e.py::test_e2e_basic_path_full_pipeline -m e2e -v</code></td></tr>
+  <tr><th>影响范围</th><td>paper_analysis 节点偶发误标记 degraded；污染 <code>degraded_nodes</code> / <code>node_errors</code>；阻塞 paper_analysis 单节点 e2e 稳定性</td></tr>
+  <tr><th>是否阻塞 C2 验收</th><td>不阻塞主路径功能正确性（其它字段填充正常），但<strong>阻塞 paper_analysis 单节点 e2e 验收的稳定性</strong></td></tr>
+</table>
+
+<h3>建议修复方向（按 ROI 排序）</h3>
+<ol>
+  <li><strong>首选</strong>：在 <code>_map_analysis_result</code> 加 ReAct messages 工具历史回填——
+    <ul>
+      <li>把签名扩到 3 参（<code>result, state, react_messages</code>）；</li>
+      <li>扫描 <code>react_messages</code> 中所有 <code>name=read_section</code> 的 ToolMessage（兼容失败 ToolMessage，需判定 content 不是 <code>Error in ...</code> / <code>tool ... raised ...</code> 前缀）；</li>
+      <li>从对应的 tool_call args 抽 <code>section_name</code>（注意 <code>tool_calls</code> 在前一条 AIMessage，需配对扫描）；</li>
+      <li>若 LLM 输出 <code>sections_read</code> 为空但工具历史非空，则用工具历史回填；</li>
+      <li>同步在 analysis_notes 记录 <code>[BACKFILL] sections_read from tool history</code>。</li>
+    </ul>
+    <code>_make_react_wrapper</code> 第 877 行已支持 3 参签名，无需改基础设施。
+  </li>
+  <li><strong>次选</strong>：强化 prompt——在"输出要求"段补一句"若调用过 read_section 且返回非错误，最终 JSON 的 sections_read 必须包含对应章节名，缺少视为违规输出"。受限于 LLM 服从度，不如 #1 稳定。</li>
+  <li><strong>可选</strong>：把 sections_read 移出核心字段——降级判定不再依赖该字段。但这弱化了"读了哪些章节"的可观测性，不推荐。</li>
+</ol>
+
+<h3>修复后回归命令</h3>
+<pre><code>for i in {1..5}; do pytest -v || break; done</code></pre>
+<p>至少连续 5 次 26/26 通过才可关 Bug——25% 复现率需要足够样本量才能确认治理。</p>
+
+
+<h2>7. 与 BUG-S1-02 的对比</h2>
+
+<table>
+  <thead>
+    <tr><th>对比项</th><th>BUG-S1-02 (categories 漏写)</th><th>BUG-S1-03 (sections_read 漏写)</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>归属节点</td><td>paper_intake</td><td>paper_analysis</td></tr>
+    <tr><td>表层症状</td><td>categories=[]</td><td>sections_read=[]</td></tr>
+    <tr><td>根因层</td><td>工具序列化（<code>str(dict)</code> repr）阻断 backfill</td><td>节点逻辑缺少 tool 历史回填兜底</td></tr>
+    <tr><td>诱因层</td><td>LLM 服从度（categories 漏写）</td><td>LLM 服从度（sections_read 漏写）</td></tr>
+    <tr><td>复现率</td><td>≈ 83%（清洗类输入 5/6）</td><td>≈ 25%（4 次全量 1 次）</td></tr>
+    <tr><td>修复策略</td><td>1) 工具层 JSON 序列化；2) react_base 截断 JSON 修复；3) 节点 backfill</td><td>节点层 tool 历史回填兜底（与 paper_intake 类似但更轻）</td></tr>
+    <tr><td>基础设施依赖</td><td>需要 <code>extract_last_tool_result</code> 能解析工具结果（已修复）</td><td>需要 wrapper 透传 react_messages（已支持，仅节点未使用）</td></tr>
+  </tbody>
+</table>
+
+<div class="callout-info">
+<strong>共性观察</strong>：两个 bug 都暴露同一种系统性模式——
+"LLM 在最终 JSON 中漏写一个本应能从工具历史推导出的字段"。这是 ReAct agent 架构下的<strong>固有风险</strong>，未来每个 ReAct 节点都应主动设计"漏字段 → 工具历史回填"的兜底，把 LLM 服从度从单点依赖降为兜底依赖。建议架构师代理在后续 Sprint 把该模式提炼到 <code>react_base.py</code> 的辅助函数 / 节点编写规范中。
+</div>
+
+
+<h2>8. 后续动作</h2>
+
+<ul>
+  <li>[ ] Maria 决策：是否立即转交全栈开发代理修复 BUG-S1-03；如选首选方案，工作量约 15-30 分钟（节点层小改 + 单测增加 1 个 mock 用例）。</li>
+  <li>[ ] 修复后回归：5 次全量 pytest 全绿才可关 Bug。</li>
+  <li>[ ] 架构师代理参与：是否把"工具历史回填"模式提炼到 ReAct 节点编写规范（防止 paper_analysis 之后的 resource_scout / coding 等节点重复踩坑）。</li>
+  <li>[ ] 不阻塞：Prompt Cache <code>cached_tokens</code> 命中率定量验证仍待切换 DeepSeek 端点后进行（NVIDIA 网关不暴露该字段）。</li>
+</ul>
+
+<div class="footer">
+本报告由测试工程师代理在 paper_analysis e2e 首跑后生成。<br>
+关联文件：
+<ul>
+  <li><code>tests/test_paper_analysis_e2e.py</code>（新增）</li>
+  <li><code>docs/sprint1/test-reports/2026-05-15_paper-analysis-e2e.md</code>（完整测试执行报告）</li>
+  <li><code>docs/sprint1/test-reports/2026-05-14_paper_intake_e2e_failure_analysis.html</code>（BUG-S1-02 历史对照）</li>
+  <li><code>core/nodes/paper_analysis.py</code>（被测代码，未改动）</li>
+</ul>
+</div>
+
+</body>
+</html>
