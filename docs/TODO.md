@@ -8,7 +8,7 @@
 
 ## 阶段 1：基础骨架（技术架构 §12，第 1-2 周）
 
-- [ ] [2026-05-06] 创建项目目录结构（core/ 已创建，ui/, sandbox/ 等待后续 Sprint）
+- [x] [2026-05-18] @全栈开发代理 创建项目目录结构——Sprint 1 范围内 `core/` 全部就位（`core/`、`core/nodes/`、`core/tools/` 三层）；`ui/` 与 `sandbox/` 目录由 Sprint 2/3 各自具体实现待办（如 `ui/pages/paper_input.py`、`sandbox/local_venv.py`）按需创建，无需在此重复挂条目
 - [x] [2026-05-07] @全栈开发代理 编写 `requirements.txt`，声明所有 Python 依赖
 - [x] [2026-05-07] @全栈开发代理 A1 自测通过：pip install 无冲突 + pip check 无问题 + 全部 7 个包 import 成功
 - [x] [2026-05-07] @全栈开发代理 实现 `config.py`——全局配置（路径、默认值、环境变量）
@@ -47,6 +47,9 @@
 - [ ] [2026-05-06] 实现 `ui/pages/plan_review.py`——Streamlit 页面3：计划审核
 - [ ] [2026-05-06] 实现 `ui/components/llm_config_form.py`——LLM 配置表单组件
 - [ ] [2026-05-06] 实现 `app.py`——Streamlit 应用入口 + 工作线程 + 轮询机制
+- [x] [2026-05-17] @架构师代理 联动更新 `docs/technical-architecture.md` §4 数据结构：PaperMeta 新增 title_zh / abstract_zh / tldr_zh，PaperAnalysis 新增 method_summary_en / hardware_requirements_en（依据 PRD §4.7 输出语言策略）—— 完成：仅修改 §4 行 329-371 两段 TypedDict，5 个新字段全部 Optional 包装就位；method_summary/hardware_requirements 中英语义反转已在 docstring + 行内注释双重标注并引用 PRD §4.7.3；§4 之外章节经核对无字段名级别引用无需联动；TODO 留交全栈开发代理 Sprint 2 同步扩展 core/state.py + PAPER_META_SCHEMA + PAPER_ANALYSIS_SCHEMA。
+- [ ] [2026-05-17] @全栈开发代理 Sprint 2 落地：扩展 `core/state.py` 中 PaperMeta / PaperAnalysis TypedDict 加 *_zh / *_en 字段；同步扩展 `core/nodes/paper_intake.py::PAPER_META_SCHEMA` 与 `core/nodes/paper_analysis.py::PAPER_ANALYSIS_SCHEMA`；新增字段缺失时走 degraded 兜底（参考 BUG-S1-03 backfill 模式）
+- [ ] [2026-05-17] @全栈开发代理 Sprint 2 落地：paper_intake / paper_analysis 节点在 HumanMessage 通道追加"输出语言策略"段落（禁止改 system prompt 主体），落地后跑一次 Prompt Cache 命中率回归对照 Sprint 1 F 阶段基线（R-PC4 约束）
 - [ ] [2026-05-06] **阶段 2 验收**：从论文输入到计划审核的完整链路可在 Streamlit 界面运行，人在回路中断/恢复正常工作
 
 ## 阶段 3：执行闭环（技术架构 §12，第 5-7 周）
@@ -108,3 +111,4 @@
 - [x] [2026-05-06] Q3: 确定"只编码不复现"模式的默认交付标准——最低交付标准在 planning 节点人在回路审核时与用户沟通明确
 - [x] [2026-05-07] @全栈开发代理 更新技术架构文档：架构升级为 ReAct agent + dev_loop 双 agent 协作（§3.2 编排图更新、§3.2.1 ReAct Agent 架构、§3.2.2 dev_loop 双 Agent 协作子图、§3.3 dev_loop 失败中断、§3.4 条件路由更新、§5 模块结构更新、§6.4 工具工厂函数、§12.5 节点降级策略更新、§12.6 修复循环更新、§12.7 预算表更新、§12.8 标题更新、§13 实现优先级更新、文档末尾更新日志）
 - [x] [2026-05-07] @全栈开发代理 更新 Sprint 1 开发计划同步 ReAct 架构升级——新增 S1-11 react_base.py 任务（阶段 B4），config.py 新增 ReAct 配置常量，deepxiv_tools.py 新增 7 个工具工厂函数，paper_intake 和 paper_analysis 升级为 ReAct agent 实现，graph.py 使用 ReAct wrapper 注册节点，新增风险 R8/R9，更新时间估算（v1.0 ~26h -> v1.1 ~32h），总任务数 10->11
+- [x] [2026-05-18] @产品经理代理 完成 Sprint 2 产品需求文档（docs/sprint2/prd.md）——11 个功能模块（S2-01~S2-11）+ 12 条验收标准（AC-S2-01~AC-S2-12）+ 7 项风险矩阵 + 5 条开放问题；核心交付 resource_scout（全自动选仓 + git_tools 本地评估）/ planning（interrupt 人在回路，approve/revise/switch_repo/code_only 四种决策 + revise 上限 3 次）/ Streamlit 三页面 + 工作线程轮询框架 / PaperMeta·PaperAnalysis 五个新字段（*_zh / *_en）落地 + HumanMessage 通道 prompt 扩展（R-PC4 字节级幂等约束）

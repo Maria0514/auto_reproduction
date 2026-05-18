@@ -329,11 +329,14 @@ class LLMConfig(TypedDict):
 class PaperMeta(TypedDict):
     """步骤1输出：论文基础元数据"""
     arxiv_id: str
-    title: str
+    title: str                              # 英文主字段，C 双语，主消费方：resource_scout 用英文 title 检索 PwC/GitHub（PRD §4.7.3）
+    title_zh: Optional[str]                 # C 双语，主消费方：UI 卡片/详情页中文展示；兜底：LLM 漏写时 title_zh=title + degraded_nodes 标记（PRD §4.7.4）
     authors: List[str]
-    abstract: str
+    abstract: str                           # 英文主字段，C 双语，主消费方：paper_analysis 英文回退（保持术语精度）（PRD §4.7.3）
+    abstract_zh: Optional[str]              # C 双语，主消费方：UI 论文详情页中文展示；兜底：LLM 漏写时 abstract_zh=abstract + degraded_nodes 标记
     categories: List[str]
-    tldr: Optional[str]
+    tldr: Optional[str]                     # 英文主字段（deepxiv 原值），C 双语
+    tldr_zh: Optional[str]                  # C 双语，主消费方：UI 卡片高频展示位中文；兜底：LLM 漏写时 tldr_zh=tldr + degraded_nodes 标记
     keywords: Optional[List[str]]
     citation_count: Optional[int]
     github_url: Optional[str]
@@ -344,17 +347,24 @@ class PaperMeta(TypedDict):
 # ========== 论文分析结果 ==========
 
 class PaperAnalysis(TypedDict):
-    """步骤2输出：深度论文分析结果"""
-    method_summary: str
+    """步骤2输出：深度论文分析结果
+
+    注意：自 PRD §4.7 决策（2026-05-17）起，method_summary / hardware_requirements 主语言
+    由英文反转为中文（D 中优英备），原英文文本迁移至新增的 *_en 字段。Sprint 2 落地，
+    Sprint 1 保持现状不动 prompt。下游开发者请勿沿用旧语义。
+    """
+    method_summary: str                     # 中文主字段，D 中优英备，主消费方：planning（中文 prompt）+ reporting 报告正文叙述。语义反转自 Sprint 2，参见 PRD §4.7.3
+    method_summary_en: Optional[str]        # D 中优英备，主消费方：coding 节点（避免中文喂代码生成造成注释中英混杂）+ 跨语言检索。兜底：LLM 漏写时降级 degraded_nodes
     key_formulas: List[str]
-    datasets: List[str]
-    metrics: List[str]
+    datasets: List[str]                     # B 英文事实层，主消费方：resource_scout/coding 用英文数据集名匹配开源资源（"ImageNet" 不可译）（PRD §4.7.2）
+    metrics: List[str]                      # B 英文事实层，主消费方：reporting 与论文原文 metric 名对齐
     hyperparams: Dict[str, Any]
-    hardware_requirements: str
-    framework: Optional[str]
+    hardware_requirements: str              # 中文主字段，D 中优英备，主消费方：UI + planning 双消费，中文友好。语义反转自 Sprint 2，参见 PRD §4.7.3
+    hardware_requirements_en: Optional[str] # D 中优英备，英文备份保留；兜底：LLM 漏写时降级 degraded_nodes
+    framework: Optional[str]                # B 英文事实层枚举："PyTorch" / "TensorFlow" / "JAX"
     baseline_results: Dict[str, Any]
-    sections_read: List[str]
-    analysis_notes: str
+    sections_read: List[str]                # B 英文事实层，内部审计字段，与论文章节原名对齐
+    analysis_notes: str                     # E 混合：中文自由文本 + 英文机器标签（如 [DEGRADED] missing=...），机器标签保留英文语法不变
 
 
 # ========== 资源信息 ==========

@@ -507,6 +507,102 @@ execution 节点检测到代码执行失败后，将错误信息（stderr 关键
 
 ---
 
+### 4.7 输出语言策略与本地化
+
+> 决策日期：2026-05-17｜状态：**已决策**｜实施时机：Sprint 2（与 Streamlit UI 接入同步落地），Sprint 1 保持现状不动 prompt 主体。
+
+#### 4.7.1 设计原则
+
+paper_intake / paper_analysis 等节点的 system prompt 用中文撰写指令，但 LLM 输出的字段值（title / abstract / method_summary 等）延续工具返回的论文原文（英文）。这导致两个问题：
+
+1. **UI 不友好**：CS 学生用户虽有英文阅读能力，但首页卡片、计划审核页等高频展示位的纯英文摘要会降低浏览效率
+2. **若强制全中文**反而引发更严重的副作用：术语机翻歧义（如 "attention" 译"注意力"歧义）、下游 resource_scout 拿"中文数据集名"搜 GitHub 会搜不到、且会破坏 system prompt 主体的字节级稳定性进而退化 Prompt Cache 命中率（R-PC4）
+
+**核心设计原则**：按字段的"主消费方"决定输出语言，而非"统一中英文"。**事实层字段（用于下游检索 / 匹配 / 配置）一律英文；UI 展示型字段提供中文；既给 LLM 又给 UI 的自由文本字段按下游 LLM prompt 语言对齐**。
+
+#### 4.7.2 字段分类原则
+
+将系统中所有结构化输出字段划分为五类：
+
+| 分类 | 判定规则 | 输出语言规则 | 示例 |
+|---|---|---|---|
+| **A. 标识符 / 不可翻译值** | URL、ID、日期、数字、LaTeX、枚举值 | 原值不变 | arxiv_id, github_url, citation_count, key_formulas, framework |
+| **B. 英文事实层** | 主消费方是下游节点用于检索、API 查询、配置匹配 | 强制英文，禁止翻译 | datasets, metrics, keywords, categories, sections_read |
+| **C. 双语字段（中英并存）** | 主消费方既包含下游 LLM/检索，又包含 UI 展示 | 英文为主字段（保留原文用于检索/事实层），新增 `*_zh` 字段供 UI 使用 | title / title_zh、abstract / abstract_zh、tldr / tldr_zh |
+| **D. 中文优先 + 英文备份** | 主消费方是中文 prompt 的下游 LLM 节点（planning / reporting），UI 也消费 | 主字段中文，新增 `*_en` 字段保留英文备份 | method_summary / method_summary_en、hardware_requirements / hardware_requirements_en |
+| **E. 混合字段** | 自由文本含机器可读标签 | 自由文本用中文，机器可读标签（如 `[DEGRADED] missing=...`）保留英文语法不变 | analysis_notes |
+
+#### 4.7.3 PaperMeta / PaperAnalysis 字段清单
+
+**PaperMeta（步骤 1 输出）**：
+
+| 字段 | 分类 | 输出语言 | 说明 |
+|---|---|---|---|
+| arxiv_id | A | 原值 | |
+| title | **C 双语** | 英文主字段，新增 `title_zh` | resource_scout 用英文 title 搜 PwC / GitHub；UI 展示中文 |
+| authors | A | 原文 | 人名不翻译 |
+| abstract | **C 双语** | 英文主字段，新增 `abstract_zh` | paper_analysis 回退用英文版（保持术语精度），UI 展示中文版 |
+| categories | B | 英文 | arXiv 分类码（如 cs.CV），下游学科校验依赖原值 |
+| tldr | **C 双语** | 英文主字段（deepxiv 原值），新增 `tldr_zh` | UI 卡片高频展示位，中文优先 |
+| keywords | B | 英文 | resource_scout web search 兜底拼关键词时使用 |
+| citation_count | A | 数字 | |
+| github_url / pdf_url | A | URL | |
+| publish_date | A | 日期 | |
+
+**PaperAnalysis（步骤 2 输出）**：
+
+| 字段 | 分类 | 输出语言 | 说明 |
+|---|---|---|---|
+| method_summary | **D 中优英备** | 中文主字段，新增 `method_summary_en` | 主消费方是 planning 节点（中文 prompt），中文摘要更顺畅；英文备份给跨语言检索 |
+| key_formulas | A | LaTeX 不翻译 | |
+| datasets | B | 英文 | resource_scout / coding 必须用英文数据集名匹配开源资源（"ImageNet" 不可译） |
+| metrics | B | 英文 | reporting 节点与论文原文 metric 名对齐 |
+| hyperparams | A | 键值对 | |
+| hardware_requirements | **D 中优英备** | 中文主字段，新增 `hardware_requirements_en` | UI 与 planning 双消费，中文友好；英文备份保留 |
+| framework | B | 英文枚举 | "PyTorch" / "TensorFlow" / "JAX" |
+| baseline_results | A | 数值表 | |
+| sections_read | B | 英文 | 内部审计字段，与论文章节原名对齐 |
+| analysis_notes | **E 混合** | 中文自由文本 + 英文机器标签 | `[DEGRADED] missing=...` 机器可读标签**保留英文语法**，自由文本部分中文 |
+
+#### 4.7.4 Prompt 层面的实现指引
+
+输出语言策略落到 prompt 层时，必须遵循以下硬约束（与 R-PC4 联动）：
+
+1. **system prompt 主体冻结**：现有 `_INTAKE_SYSTEM_PROMPT` / `_ANALYSIS_SYSTEM_PROMPT_BODY` 主体内容已进入冻结期。**输出语言约束不可写入主体中段**，否则破坏 Prompt Cache 前缀稳定性
+2. **语言约束放置位置（按优先级）**：
+   - **首选**：写入 HumanMessage 通道（与现有 `_format_paper_context` 同通道）。例如 "请按以下语言策略输出：title 字段保留英文原文，title_zh 字段输出中文翻译，..."
+   - **次选**：作为 system prompt **尾部独立段落**追加（不修改主体），通过明确分隔符（如 `--- 输出语言策略 ---`）与主体隔离
+   - **禁止**：插入到 system prompt 中段或修改已有段落
+3. **schema 同步更新**：`PAPER_META_SCHEMA` / `PAPER_ANALYSIS_SCHEMA` 必须扩展 `*_zh` / `*_en` 字段定义，否则 structured output 解析会丢字段
+4. **字段缺失兜底**：当 LLM 漏写 `title_zh` 等翻译字段时，节点层 `_map_*_result` 必须有兜底逻辑（与 BUG-S1-02 / BUG-S1-03 同模式）：可选策略 a）`title_zh = title`（拉丁兜底）+ degraded 标记；b）二次轻量 LLM 调用专门做翻译。推荐策略 a），降级到 degraded_nodes 即可，避免额外 LLM 调用消耗预算
+
+> **R-PC4 风险约束（强制）**：Sprint 1 dev-plan.md L885 已明确"system prompt 主体进入冻结期、动态变化走 HumanMessage 通道"。本决策的语言策略约束**禁止以任何形式修改 prompt 主体**；Sprint 2 实施前必须先通过 F 阶段实验 1 跑一次 Prompt Cache 命中率基线，作为前后回归对照。
+
+#### 4.7.5 与下游节点的协作约束
+
+| 下游节点 | 消费规则 |
+|---|---|
+| resource_scout | **一律消费英文事实层字段**（title, datasets, keywords）做 PwC / GitHub / web search 检索匹配。**禁止用 `*_zh` 字段做检索**，否则零命中 |
+| planning | 消费 method_summary（中文主字段）+ hardware_requirements（中文主字段）+ datasets/metrics（英文事实层）。生成的复现计划文本主体为中文，但计划中引用数据集 / 指标名时保留英文原名 |
+| coding | 消费 framework / hyperparams / key_formulas（事实层）+ method_summary_en（英文备份，避免中文 prompt 喂代码生成造成注释中英混杂） |
+| execution | 仅消费配置字段，与语言无关 |
+| reporting | 消费 metrics + baseline_results（事实层，与论文原文对齐）+ method_summary（中文，用于报告正文叙述） |
+| UI（所有页面） | 优先消费 `*_zh` / `*` 中文版本；事实层字段（datasets, metrics, framework）按英文原文展示 |
+
+#### 4.7.6 实施时机
+
+| 阶段 | 动作 |
+|---|---|
+| **Sprint 1（当前）** | 保持现状，不动 prompt 主体；本决策仅以文档形式固化，不引入代码变更 |
+| **Sprint 2（与 UI 接入同步）** | 1. 扩展 PaperMeta / PaperAnalysis schema 新增 `*_zh` / `*_en` 字段；2. paper_intake / paper_analysis prompt 在 HumanMessage 通道追加语言策略段落；3. 跑 Prompt Cache 命中率回归（对照 Sprint 1 F 阶段基线）；4. UI 各页面切换到消费中文字段；5. resource_scout / planning / reporting 节点遵守 4.7.5 协作约束 |
+| **Sprint 3+** | 视用户反馈决定是否增强（如允许用户切换"全英文模式"用于学术对外分享场景） |
+
+#### 4.7.7 联动说明
+
+**联动**：本决策需在 `docs/technical-architecture.md` §4 数据结构章节同步更新 PaperMeta / PaperAnalysis 字段定义（新增 `title_zh` / `abstract_zh` / `tldr_zh` / `method_summary_en` / `hardware_requirements_en` 五个字段），由架构师代理在下一轮处理。
+
+---
+
 ## 5. 交互设计
 
 ### 5.1 技术选型
