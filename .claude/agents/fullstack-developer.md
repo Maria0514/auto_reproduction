@@ -46,6 +46,50 @@ deepxiv_sdk/              # 本地 SDK（editable install）
 - 完成自测后必须在 `dev-plan.md` 中将对应检查点从 `[ ]` 改为 `[x]`。
 - 完成任务后必须及时更新 `docs/TODO.md`。
 
+## 已知 bug 模式与必须规避的实现陷阱
+
+以下都是 Sprint 1 已经踩过的坑（详见 `docs/sprint1/test-reports/` HTML/MD 失败分析报告）。在实现新节点 / 新工具 / 新 ReAct wrapper 时，必须主动检查是否会重蹈覆辙：
+
+### 1. ToolMessage 序列化必须是合法 JSON（来源：BUG-S1-02）
+
+- **错误做法**：在工具工厂里用 `_truncate(str(result))` 把 dict / list 写入 ToolMessage。`str(dict)` 是 Python repr（单引号），下游 `extract_last_tool_result` 用 `json.loads` 解析**永远失败**，导致工具历史回填静默失效，但表面看 LLM 又能"读懂"内容，bug 极其隐蔽。
+- **正确做法**：返回 dict / list 的工具必须用 `json.dumps(result, ensure_ascii=False, sort_keys=True, default=str)` 序列化后再 `_truncate`（见 `core/tools/deepxiv_tools.py::_serialize`）。`sort_keys=True` + `ensure_ascii=False` 是 Prompt Cache 字节级幂等的前提，不能省。返回 `str` 的工具保持原样即可。
+- **截断容忍**：`_truncate` 可能切掉 JSON 尾部闭合符号，`extract_last_tool_result` 已实现"截断 JSON 修复"（react_base.py），新增工具时不要绕过这条路径自行解析 ToolMessage。
+
+### 2. ReAct 节点 `_map_xxx_result` 必须用 3 参签名 + 工具历史回填（来源：BUG-S1-02 / BUG-S1-03）
+
+- **错误做法**：`_map_xxx_result(result, state)` 2 参签名，只信任 LLM 的 `<result>` JSON。LLM 偶发会漏写关键字段（categories 5/6 复现、sections_read ≈25% 复现），节点直接误标 degraded 或字段丢失。
+- **正确做法**：
+  1. `_map_xxx_result(result, state, react_messages=None)` 用 3 参签名。`_make_react_wrapper`（react_base.py L877）通过 `inspect` 自动检测 3 参签名并透传 `final_messages`，注册端零改动。
+  2. 新增 `_backfill_xxx_from_tools(payload, react_messages)`：扫描 react_messages 中的 ToolMessage，按 `tool_call_id` 配对前序 AIMessage.tool_calls 抽工具参数；**必须过滤失败 ToolMessage**（典型失败前缀：`Error in ...` / `tool ... raised ...`），仅回填成功结果。
+  3. 在 `_build_xxx` 之后、`_missing_core_fields` 之前调用 backfill——这是"head 优先回填"的架构契约（architecture §2.8.2），凡 `_missing_core_fields` 列入的核心字段都必须有工具历史兜底，不能依赖 LLM 服从度。
+  4. 参考实现：`paper_intake._backfill_paper_meta_from_tools` / `paper_analysis._backfill_analysis_from_tools`。
+
+### 3. backfill 失败必须打 WARNING 日志，禁止静默吞错（来源：BUG-S1-02）
+
+- **错误做法**：backfill 解析 ToolMessage 失败时直接 `return` / `pass`。BUG-S1-02 整整两次诊断才定位到根因，就因为这一步没日志。
+- **正确做法**：当 react_messages 中实际存在目标工具的 ToolMessage、但 backfill 仍然无法配对/解析出任何成功记录时，打 WARNING 日志（附 tool 名 + 失败原因摘要）。无 ToolMessage 的情况不打（避免噪声）。
+
+### 4. Prompt Cache 字节级幂等不能被动态拼接破坏（来源：paper_analysis Prompt Cache 治理）
+
+- **错误做法**：把 `arxiv_id` / `paper_meta` 等论文级动态变量直接 f-string 拼进 system prompt 主体。
+- **正确做法**：
+  - system prompt 主体导出为常量（如 `_ANALYSIS_SYSTEM_PROMPT_BODY`），主体内不得出现任何论文级动态变量。
+  - 动态上下文放在 system prompt 尾部独立段落（如 `--- 当前论文上下文 ---`），并用 `json.dumps(..., sort_keys=True, ensure_ascii=False)` 渲染，保证同一论文每次字节级一致。
+  - 配套测试：新增节点必须有"主体字节级一致"的断言（两篇不同论文截取 SystemMessage，去尾部段落后比较）。参考 `tests/test_paper_analysis_e2e.py::test_e2e_prompt_cache_system_prompt_byte_identical`。
+
+### 5. 回归验收必须连跑足够次数（来源：BUG-S1-02 / BUG-S1-03）
+
+- LLM 服从度类 bug 复现率从 5/6 到 25% 不等，单次绿不能证明已修复。
+- **复现率高（≥50%）**：连跑 3 次全绿才可关 bug。
+- **复现率低（10%~50%）**：连跑 5 次全绿才可关 bug，且必须包含全量回归（覆盖跨节点污染）。
+- 修复后必须更新 dev-plan 检查点和 TODO 条目，附实际跑数 / 耗时（参考 BUG-S1-02 / BUG-S1-03 在 TODO.md 的归档格式）。
+
+### 6. 修改 `__init__.py` 显式 export 时小心遮蔽子模块（来源：C2 配套修复）
+
+- 在 `core/nodes/__init__.py` 把节点 callable 显式 `from .paper_intake import paper_intake` 之后，`core.nodes.paper_intake` 在测试中可能被 callable 遮蔽，导致 `from core.nodes import paper_intake` 拿到的是 callable 而不是模块。
+- **正确做法**：测试中需要访问模块属性时，用 `importlib.import_module("core.nodes.paper_intake")` 而非 `from ... import`。新增节点时同步检查测试文件是否受影响。
+
 ## 工作方式
 
 ### 第一步：理解与计划
