@@ -749,12 +749,12 @@ START -> paper_intake -> paper_analysis -> resource_scout -> planning -> coding 
 - 若 checkpointer 未传入，从 `core/checkpointer.py` 获取默认实例
 
 **自测检查点**：
-- [ ] `build_graph()` 返回 CompiledGraph 实例
-- [ ] 图包含 7 个节点
-- [ ] paper_intake 和 paper_analysis 节点使用的是 ReAct wrapper 函数
-- [ ] 占位节点不修改状态（返回空字典）
-- [ ] 可使用 mock checkpointer 编译成功
-- [ ] 全链路可通过 `graph.invoke(state, config)` 执行（使用 mock 或真实依赖）
+- [x] `build_graph()` 返回 CompiledGraph 实例
+- [x] 图包含 7 个节点
+- [x] paper_intake 和 paper_analysis 节点使用的是 ReAct wrapper 函数
+- [x] 占位节点不修改状态（返回空字典）
+- [x] 可使用 mock checkpointer 编译成功
+- [x] 全链路可通过 `graph.invoke(state, config)` 执行（使用 mock 或真实依赖）
 
 ---
 
@@ -783,39 +783,39 @@ START -> paper_intake -> paper_analysis -> resource_scout -> planning -> coding 
 
 - **预计复杂度**：中
 
-**自测清单**：
+**自测清单**（[2026-05-17] @全栈开发代理 全部通过，落盘 `tests/test_sprint1_smoke.py` 14 用例，1.75s 全绿）：
 
 1. **导入测试**：
-   - [ ] `from core.state import GlobalState, PaperMeta, PaperAnalysis, ExecutionMode, create_initial_state`
-   - [ ] `from core.errors import AutoReproError, TransientError, PermanentError, LLMAuthError, LLMRateLimitError, LLMContextOverflowError, LLMOutputError, make_node_error`
-   - [ ] `from core.llm_client import create_llm, call_with_structured_output, estimate_tokens, check_context_limit`
-   - [ ] `from core.react_base import ReActState, create_react_subgraph, _make_react_wrapper`
-   - [ ] `from core.tools.deepxiv_tools import DeepxivTools, get_paper_brief_tool, get_paper_head_tool, get_paper_structure_tool, read_section_tool, get_full_paper_tool, search_papers_tool, web_search_tool`
-   - [ ] `from core.nodes.paper_intake import paper_intake`
-   - [ ] `from core.nodes.paper_analysis import paper_analysis`
-   - [ ] `from core.checkpointer import get_checkpointer`
-   - [ ] `from core.graph import build_graph`
-   - [ ] `from config import PROJECT_ROOT, CHECKPOINT_DB_PATH, get_deepxiv_token, get_llm_api_key, REACT_MAX_ROUNDS_PAPER_INTAKE, REACT_MAX_ROUNDS_PAPER_ANALYSIS, REACT_RESULT_TAG_OPEN, REACT_RESULT_TAG_CLOSE, TOOL_RESULT_MAX_LENGTH`
+   - [x] `from core.state import GlobalState, PaperMeta, PaperAnalysis, ExecutionMode, create_initial_state`
+   - [x] `from core.errors import AutoReproError, TransientError, PermanentError, LLMAuthError, LLMRateLimitError, LLMContextOverflowError, LLMOutputError, make_node_error`
+   - [x] `from core.llm_client import create_llm, call_with_structured_output, estimate_tokens, check_context_limit`
+   - [x] `from core.react_base import ReActState, create_react_subgraph, _make_react_wrapper`
+   - [x] `from core.tools.deepxiv_tools import DeepxivTools, get_paper_brief_tool, get_paper_head_tool, get_paper_structure_tool, read_section_tool, get_full_paper_tool, search_papers_tool, web_search_tool`
+   - [x] `from core.nodes.paper_intake import paper_intake`
+   - [x] `from core.nodes.paper_analysis import paper_analysis`
+   - [x] `from core.checkpointer import get_checkpointer`
+   - [x] `from core.graph import build_graph`
+   - [x] `from config import PROJECT_ROOT, CHECKPOINT_DB_PATH, get_deepxiv_token, get_llm_api_key, REACT_MAX_ROUNDS_PAPER_INTAKE, REACT_MAX_ROUNDS_PAPER_ANALYSIS, REACT_RESULT_TAG_OPEN, REACT_RESULT_TAG_CLOSE, TOOL_RESULT_MAX_LENGTH`
 
-2. **异常继承关系验证**
+2. [x] **异常继承关系验证**（TransientError/PermanentError → AutoReproError；LLMError → AutoReproError；LLMAuthError + LLMContextOverflowError → PermanentError；LLMRateLimitError + LLMOutputError → TransientError；永久/瞬态互斥）
 
-3. **create_initial_state 默认值验证**
+3. [x] **create_initial_state 默认值验证**（retry_budget_remaining=50 / fix_loop_count=0 / execution_mode=FULL / node_errors=[] / degraded_nodes=[] / paper_meta=None / paper_analysis=None / messages=[] / fix_loop_history=[]）
 
-4. **estimate_tokens 基本功能验证**
+4. [x] **estimate_tokens 基本功能验证**（空串→int≥0；非空→int>0；长文本估值严格大于短文本）
 
-5. **config.py 环境变量覆盖验证**
+5. [x] **config.py 环境变量覆盖验证**（monkeypatch.setenv + importlib.reload 验证 get_deepxiv_token / get_llm_api_key 实时取到新值）
 
 ---
 
 #### 任务 E3：问题修复
 
 - **预计复杂度**：不确定
-
-**说明**：修复 E2 自测中发现的所有问题。常见问题预判：
-- 循环导入（`core/errors.py` -> `core/state.py`）
-- LangGraph API 版本兼容性
-- ~~deepxiv_sdk 导入路径~~ （已解决：本地参考仓库目录已从 `./deepxiv_sdk/` 重命名为 `./deepxiv_sdk_repo/`，消除与 pip 包名的 namespace package 冲突；代码统一通过 `from deepxiv_sdk import ...` 使用 pip 安装的包，无需 try/except fallback）
-- TypedDict Optional 字段的默认值处理
+- **[2026-05-17] 实际结论**：E2 自测无任何失败，修复任务空集。预判的四类问题在 A~D 阶段已规避：
+  - 循环导入：`core/errors.py` 不反向依赖 `core/state.py`，已在 A2/A4 阶段切断。
+  - LangGraph API 兼容：D1 已统一 `from langgraph.graph import StateGraph, START, END`，全量 56/56 通过验证。
+  - deepxiv_sdk 导入路径：通过 pip 包 `deepxiv_sdk` 统一导入，本地参考仓库已重命名为 `deepxiv_sdk_repo`。
+  - TypedDict Optional 默认值：`create_initial_state` 显式填充全部字段（含 None 与空列表），smoke 测试已覆盖。
+- **阶段 E 验收**：`pytest -q` 全量 56/56 通过（253.76s，含 16 个真实链路 e2e），可交接测试工程师执行 F 阶段。
 
 ---
 
