@@ -1,4 +1,4 @@
-# 本项目为一个基于multi-agent架构的论文自动复现系统，团队成员相关产出与项目进展等文档都放在./docs/文件夹内
+# 本项目是一个基于 LangGraph 的 agentic workflow 论文自动复现系统（流水线骨架 + 节点内 ReAct agent），未来将在 coding ↔ execution 修复循环引入局部 multi-agent 子图。团队成员相关产出与项目进展等文档都放在 ./docs/ 文件夹内。
 
 # 项目架构速览
 - 流水线：paper_intake → paper_analysis → resource_scout → planning（人在回路）→ coding → execution（↔coding 修复循环）→ reporting

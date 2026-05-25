@@ -37,7 +37,15 @@
 - [x] [2026-05-17] @全栈开发代理 F2 完成：交付测试工程师验收上下文文档 `docs/sprint1/handoff-to-test-engineer.md`（含环境准备 / 端到端测试运行方式 / 各模块 mock 测试入口 / 已知限制 L-01~L-07（含 LLMConfig.api_key 序列化、planning interrupt 占位、Prompt Cache 跨 provider AB 实验未跑等）/ PRD §6 AC-1~AC-9 与代码模块对应关系表 9/9 全覆盖 / pytest 基线 56/56 状态快照）。关键发现：9 条验收标准全部有自动化测试覆盖，无 manual-only AC；基线 `pytest -q` 全量 56/56 通过（255.70s），可移交测试工程师进入 Sprint 1 最终验收。
 - [x] [2026-05-17] @测试工程师代理 Sprint 1 最终验收：**通过（PASS）**。F1 14/14 文件独立 ls+grep 复核全部就位、关键导出齐全；3 次连跑 `pytest -q` 全量回归累计 168/168 用例通过（耗时 340.79s / 274.26s / 247.26s），0 失败、0 跳过、0 LLM 抖动；PRD §6 AC-1~AC-9 覆盖 9/9（AC-1~AC-8 自动化，AC-9 pip install 属手动归档）；F2 L-01~L-07 七条已知限制全部可接受、无新增 BUG、无阻断项。仅发现 handoff 文档计数笔误（实测 43 mock + 13 e2e，handoff 写成 40+16，总数 56 一致不影响验收）。报告路径：`docs/sprint1/test-reports/2026-05-17_sprint1-final-acceptance.md`
 
+## 本次会话产出（架构定位校准）
+
+- [x] [2026-05-24] @架构师代理 校准全局架构定位措辞：把 "基于 multi-agent 架构" 修正为 "基于 LangGraph 的 agentic workflow + 节点内 ReAct + dev_loop 局部 multi-agent"，覆盖 `.claude/CLAUDE.md` / `docs/technical-architecture.md`（§1 技术栈表、§3.2.2 dev_loop、文末更新日志）/ `docs/product-design-specification.md`（§1.1、§6.5、§9.3 T1）共 7 处。**不回改 sp1/sp2 sprint 快照文档**（历史定稿）。
+
 ## 阶段 2：核心链路（技术架构 §12，第 3-4 周）
+
+> **状态**：Sprint 2 设计已完成（PRD / architecture / dev-plan 三份已定稿，详见 `docs/sprint2/`），**代码尚未开工**。下一步首要事项 = 跑完 sp2 dev-plan 阶段 S 的 3 个 spike（S-1 interrupt+threading / S-2 SqliteSaver 跨线程 / S-3 Prompt Cache fresh 基线），spike 通过后再进入 A 阶段（状态/工具层落地）。
+
+- [ ] [2026-05-24] @全栈开发代理 Sprint 2 启动：执行 dev-plan 阶段 S 三个 spike（`scripts/spike_interrupt_threading.py` / `scripts/spike_sqlite_concurrent.py` / Prompt Cache fresh 基线），完成后归档报告到 `docs/sprint2/test-reports/`
 
 - [ ] [2026-05-06] 实现 `core/tools/git_tools.py`——仓库克隆（git clone）与本地仓库分析操作（提交活跃度、目录结构等）
 - [ ] [2026-05-06] 实现 `core/nodes/resource_scout.py`——节点3：资源搜集与评估
@@ -81,6 +89,16 @@
 - [ ] [2026-05-13] @Maria 跑 Prompt Cache 命中率基线实验：固定 arxiv_id 在 5 分钟内连续跑 paper_analysis × 3 次，记录 `cached_tokens / prompt_tokens` 比值；对照组在 system prompt 尾部追加随机后缀
 - [ ] [2026-05-13] @Maria Prompt Cache 跨 provider AB 实验：切到 DeepSeek 等自动型 OpenAI 兼容端点，验证前缀稳定改造在脱离 NVIDIA 网关后仍能命中缓存
 - [ ] [2026-05-06] 代码审查与类型标注完善
+
+---
+
+## 未来计划（Sprint 3+）
+
+> 以下条目为远期路线图，**依赖 Sprint 2 全部完成 + sp2 5 项 spike 验证通过**才会激活，当前不进入排期。
+
+- [ ] [2026-05-24] @架构师代理 Sprint 3 dev_loop 真 multi-agent 改造（依赖 sp2 完成）：把现有 coding ↔ execution 单 agent 修复循环升级为 LangGraph supervisor 模式 multi-agent 子图（Coder / Executor / Reviewer 三 agent + 共享 scratchpad + supervisor 路由），保持主图 7 节点 DAG 骨架不变。预设产出 = `core/subgraphs/dev_loop/` 目录 + `docs/sprint3/architecture.md`。
+- [ ] [2026-05-24] @架构师代理 Sprint 3 启动前评估 dev_loop 子图与现有 fix_loop_count / NodeError / retry_budget_remaining 等错误追踪字段的兼容性，输出兼容性矩阵（在 sprint3 prd 之前）
+- [ ] [2026-05-24] @产品经理代理 Sprint 3 PRD 立项前置条件：sp2 验收通过 + 上述兼容性矩阵确认 + Maria 在求职简历里把 "dev_loop multi-agent 子图" 列为目标交付物
 
 ---
 

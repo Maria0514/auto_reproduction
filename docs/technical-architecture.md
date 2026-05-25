@@ -12,7 +12,7 @@
 | 类别 | 技术选型 | 版本要求 | 说明 |
 |------|---------|---------|------|
 | 编程语言 | Python | >= 3.10 | 项目主语言 |
-| Agent 编排框架 | LangGraph | >= 0.2.0 | 多 Agent 工作流编排与状态管理 |
+| Agent 编排框架 | LangGraph | >= 0.2.0 | Agentic workflow 编排与状态管理（静态 DAG + 节点内 ReAct，dev_loop 子图为局部 multi-agent） |
 | 前端框架 | Streamlit | >= 1.35.0 | 轻量 Web UI |
 | 论文数据 SDK | deepxiv-sdk | >= 0.2.5 | 仅使用 Reader 类，不使用 SDK 自带 Agent |
 | LLM 接口 | OpenAI 兼容 API | - | 用户自配 base_url + model + api_key |
@@ -181,7 +181,7 @@ class ReActState(TypedDict):
 
 #### 3.2.2 dev_loop 双 Agent 协作子图
 
-dev_loop 是一个独立的 LangGraph `StateGraph`，作为子图嵌入主图。与其他节点的 ReAct 架构不同，dev_loop 内部包含两个协作 agent（coding_agent 和 execution_agent），通过共享对话历史实现真正的 multi-agent 交互。
+dev_loop 是一个独立的 LangGraph `StateGraph`，作为子图嵌入主图。它是本系统**唯一**的真 multi-agent 区域——与其他节点的单 agent ReAct 不同，dev_loop 内部包含两个（Sprint 3+ 规划扩展为三个：Coder / Executor / Reviewer，supervisor 模式）协作 agent，通过共享对话历史实现 agent 间交互。系统的其余 6 个节点保持 agentic workflow 形态（静态 DAG + 节点内单 agent ReAct）。
 
 **DevLoopState 定义要点**：
 
@@ -1290,3 +1290,4 @@ install_deps() 部分失败
 *2026-05-06 更新：新增 §12 错误处理策略章节（架构师方案 + 产品经理评审决策），更新 §5 模块结构和 §13 实现优先级。*
 *2026-05-06 更新：调整 resource_scout 设计——MVP 阶段移除 GitHub API 依赖，仓库获取通过 git clone 完成，仓库搜索通过 deepxiv github_url + Papers With Code API + web search 替代；github_tools 重命名为 git_tools，职责调整为仓库克隆与本地分析。*
 *2026-05-07 更新：架构升级为 ReAct agent 自主模式——所有节点内部从"单次 LLM 调用"改为 ReAct 循环子图，能自主选择工具和多轮推理；coding + execution 合并为 dev_loop 双 agent 协作子图，通过共享对话历史实现真正的 multi-agent 交互。新增 §3.2.1 ReAct Agent 架构、§3.2.2 dev_loop 双 Agent 协作子图。*
+*2026-05-24 更新：架构定位校准——明确本系统是"基于 LangGraph 的 agentic workflow"（流水线骨架 + 节点内 ReAct agent），而非完整的 multi-agent 系统；真 multi-agent 交互仅存在于 dev_loop 子图（coding ↔ execution）。Sprint 3 计划将 dev_loop 升级为 Coder / Executor / Reviewer 三 agent supervisor 模式，详见 docs/TODO.md "未来计划" 区段。*

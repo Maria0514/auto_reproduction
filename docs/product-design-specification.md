@@ -12,7 +12,7 @@
 
 ### 1.1 产品定位
 
-本产品是一个基于 multi-agent 架构的论文自动复现系统，面向计算机科学（CS）领域的科研工作者。系统接收一篇论文作为输入，自动完成论文分析、资源搜集、复现规划、编码执行、结果验证和报告生成的全流程，最大限度降低实验复现的人力成本和技术门槛。
+本产品是一个基于 LangGraph 的 agentic workflow 论文自动复现系统，面向计算机科学（CS）领域的科研工作者。系统以静态流水线（7 节点 DAG）为骨架、节点内由 ReAct agent 自主调用工具完成各阶段任务，并在编码执行阶段（dev_loop 子图）引入 agent 间协作。系统接收一篇论文作为输入，自动完成论文分析、资源搜集、复现规划、编码执行、结果验证和报告生成的全流程，最大限度降低实验复现的人力成本和技术门槛。
 
 ### 1.2 目标用户
 
@@ -734,7 +734,7 @@ auto-repro status --task <task_id>
 
 ### 6.5 系统自身的部署
 
-系统本身（multi-agent 核心 + Streamlit UI）运行在用户的本地机器上。用户通过浏览器访问 `localhost` 上的 Streamlit 界面。
+系统本身（LangGraph 编排核心 + Streamlit UI）运行在用户的本地机器上。用户通过浏览器访问 `localhost` 上的 Streamlit 界面。
 
 ---
 
@@ -837,7 +837,7 @@ auto-repro status --task <task_id>
 
 | 编号 | 问题 |
 |------|------|
-| T1 | multi-agent 之间的通信机制和状态管理方案 |
+| T1 | agentic workflow 节点间状态传递机制 + dev_loop 子图内 multi-agent 协作模式 |
 | T2 | 代码执行的沙箱隔离策略（安全性） |
 | T3 | 长时间运行任务的断点保存和恢复机制 |
 | T4 | Streamlit 与后端 Agent 的异步通信方案 |
