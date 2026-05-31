@@ -20,7 +20,7 @@ from core.errors import (
     PermanentError,
     TransientError,
 )
-from core.state import LLMConfig
+from core.state import LLMConfig, LLMConfigSet
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,49 @@ def create_llm(config: LLMConfig) -> ChatOpenAI:
         max_tokens=config["max_tokens"],
         timeout=LLM_REQUEST_TIMEOUT,
     )
+
+
+def resolve_llm_config(
+    llm_config_set: LLMConfigSet,
+    node_name: Optional[str],
+) -> LLMConfig:
+    """节点级 LLM 路由：优先 overrides[node_name]，缺失回退 default。
+
+    Sprint 2 任务 A2（dev-plan §A2 / 架构 §2.1.1.bis）。本函数为纯函数，
+    不创建 ChatOpenAI、不发起任何网络请求，仅在 LLMConfigSet 内做配置选路：
+
+    - 优先返回节点级覆写 ``overrides[node_name]``（节点在覆写表中显式登记时）；
+    - 否则回退到全局 ``default`` 配置（节点未覆写、或 node_name 为 None 的共用路径）。
+
+    Args:
+        llm_config_set: 多模型配置集合，必须含合法 ``default`` 子配置。
+        node_name: 当前节点名；为 None 时（如 force_finish 共用路径）直接返回 default。
+
+    Raises:
+        PermanentError: llm_config_set 为 None、非 dict、或缺 ``default`` 键
+            （形态错误属不可重试的配置缺陷，故归类为永久错误）。
+
+    Returns:
+        最终生效的 LLMConfig（保证非 None）。
+    """
+    # 边界 1：llm_config_set 为 None / 非 dict / 缺 default 键 → 形态错误，抛永久错误。
+    # 注意 dict.get 对非 dict 不可用，故先做 isinstance 判定再取 default。
+    if not isinstance(llm_config_set, dict) or "default" not in llm_config_set:
+        raise PermanentError("llm_config_set.default 缺失或形态错误")
+
+    default_config = llm_config_set["default"]
+
+    # 边界 2：node_name 为 None（force_finish 等共用路径）→ 直接返回 default。
+    if node_name is None:
+        return default_config
+
+    # overrides 缺失或非 dict 时按空覆写表处理（向后兼容 sp1 单一全局配置模式）。
+    overrides = llm_config_set.get("overrides")
+    if not isinstance(overrides, dict):
+        return default_config
+
+    # 边界 3 / 4：命中覆写表则返回节点级配置，否则回退 default。
+    return overrides.get(node_name, default_config)
 
 
 def _extract_status_code(error: Exception) -> Optional[int]:

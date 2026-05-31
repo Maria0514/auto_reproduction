@@ -363,13 +363,13 @@ def resolve_llm_config(
 - `node_name` 在 `overrides` 中 → 返回 overrides[node_name]
 
 **自测检查点**：
-- [ ] CP-A2-1 `resolve_llm_config({"default": cfg_A, "overrides": {}}, "paper_intake")` 返回 cfg_A
-- [ ] CP-A2-2 `resolve_llm_config({"default": cfg_A, "overrides": {"paper_analysis": cfg_B}}, "paper_analysis")` 返回 cfg_B
-- [ ] CP-A2-3 `resolve_llm_config({"default": cfg_A, "overrides": {"paper_analysis": cfg_B}}, "paper_intake")` 返回 cfg_A（其它节点 fallback）
-- [ ] CP-A2-4 `resolve_llm_config({"default": cfg_A, "overrides": {}}, None)` 返回 cfg_A（None 路径）
-- [ ] CP-A2-5 `resolve_llm_config({}, "paper_intake")` 抛 `PermanentError`
-- [ ] CP-A2-6 `resolve_llm_config(None, "paper_intake")` 抛 `PermanentError`
-- [ ] CP-A2-7 `create_llm()` 函数签名未变（仍接受单 LLMConfig，向后兼容）
+- [x] CP-A2-1 `resolve_llm_config({"default": cfg_A, "overrides": {}}, "paper_intake")` 返回 cfg_A — PASS 2026-05-31 @全栈开发代理
+- [x] CP-A2-2 `resolve_llm_config({"default": cfg_A, "overrides": {"paper_analysis": cfg_B}}, "paper_analysis")` 返回 cfg_B — PASS 2026-05-31 @全栈开发代理
+- [x] CP-A2-3 `resolve_llm_config({"default": cfg_A, "overrides": {"paper_analysis": cfg_B}}, "paper_intake")` 返回 cfg_A（其它节点 fallback） — PASS 2026-05-31 @全栈开发代理
+- [x] CP-A2-4 `resolve_llm_config({"default": cfg_A, "overrides": {}}, None)` 返回 cfg_A（None 路径） — PASS 2026-05-31 @全栈开发代理
+- [x] CP-A2-5 `resolve_llm_config({}, "paper_intake")` 抛 `PermanentError` — PASS 2026-05-31 @全栈开发代理
+- [x] CP-A2-6 `resolve_llm_config(None, "paper_intake")` 抛 `PermanentError` — PASS 2026-05-31 @全栈开发代理
+- [x] CP-A2-7 `create_llm()` 函数签名未变（仍接受单 LLMConfig，向后兼容） — PASS 2026-05-31 @全栈开发代理
 
 ---
 
