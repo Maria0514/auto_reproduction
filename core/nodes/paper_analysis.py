@@ -39,6 +39,8 @@ PAPER_ANALYSIS_SCHEMA: Dict[str, Any] = {
         "baseline_results": {"type": "object", "additionalProperties": True},
         "sections_read": {"type": "array", "items": {"type": "string"}},
         "analysis_notes": {"type": "string"},
+        "method_summary_en": {"type": ["string", "null"]},
+        "hardware_requirements_en": {"type": ["string", "null"]},
     },
     "required": [
         "method_summary",

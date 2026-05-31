@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Sprint 2 A1 任务成果总结 - 2026-05-27</title>
+<style>
+  :root {
+    --bg: #fafafa;
+    --fg: #1f2328;
+    --muted: #57606a;
+    --border: #d0d7de;
+    --code-bg: #f6f8fa;
+    --kw: #cf222e;
+    --str: #0a3069;
+    --com: #6e7781;
+    --func: #8250df;
+    --num: #0550ae;
+    --ok: #1a7f37;
+    --warn: #9a6700;
+    --err: #cf222e;
+    --bug: #d1242f;
+    --info: #0969da;
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.65;
+    max-width: 1100px;
+    margin: 24px auto;
+    padding: 0 24px 80px;
+    font-size: 15px;
+  }
+  h1 { font-size: 26px; border-bottom: 2px solid var(--border); padding-bottom: 12px; }
+  h2 { font-size: 22px; border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-top: 36px; }
+  h3 { font-size: 18px; margin-top: 28px; }
+  h4 { font-size: 16px; margin-top: 20px; color: var(--muted); }
+
+  a { color: #0969da; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: #eef1f4; font-weight: 600; }
+
+  code, kbd, samp {
+    font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, "Courier New", monospace;
+    font-size: 0.92em;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 16px;
+    overflow-x: auto;
+    font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  pre code { background: none; border: none; padding: 0; font-size: inherit; }
+
+  .badge {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    vertical-align: middle;
+  }
+  .badge-ok   { background: #dafbe1; color: var(--ok); border: 1px solid #4ac26b; }
+  .badge-fail { background: #ffebe9; color: var(--err); border: 1px solid #ff8182; }
+  .badge-warn { background: #fff8c5; color: var(--warn); border: 1px solid #d4a72c; }
+  .badge-info { background: #ddf4ff; color: var(--info); border: 1px solid #54aeff; }
+
+  .callout {
+    border-left: 4px solid #d1242f;
+    background: #fff5f5;
+    padding: 10px 14px;
+    margin: 14px 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .callout-ok {
+    border-left: 4px solid var(--ok);
+    background: #f3fbf6;
+    padding: 10px 14px;
+    margin: 14px 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .callout-info {
+    border-left: 4px solid var(--info);
+    background: #f1f6fb;
+    padding: 10px 14px;
+    margin: 14px 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .callout-warn {
+    border-left: 4px solid var(--warn);
+    background: #fffbea;
+    padding: 10px 14px;
+    margin: 14px 0;
+    border-radius: 0 6px 6px 0;
+  }
+
+  ul, ol { padding-left: 24px; }
+  li { margin: 4px 0; }
+
+  .meta-table th { width: 160px; background: #f6f8fa; }
+  .summary-table td { vertical-align: middle; }
+
+  hr { border: none; border-top: 1px dashed var(--border); margin: 24px 0; }
+
+  .footer {
+    margin-top: 48px;
+    color: var(--muted);
+    font-size: 13px;
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+  }
+
+  .timeline {
+    position: relative;
+    margin: 20px 0;
+    padding-left: 28px;
+    border-left: 2px solid var(--border);
+  }
+  .timeline-item {
+    position: relative;
+    margin: 14px 0;
+  }
+  .timeline-item::before {
+    content: "";
+    position: absolute;
+    left: -34px;
+    top: 6px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--info);
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 1px var(--border);
+  }
+  .timeline-item.done::before { background: var(--ok); }
+  .timeline-date {
+    font-size: 12px;
+    color: var(--muted);
+    font-family: "JetBrains Mono", monospace;
+  }
+
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin: 16px 0;
+  }
+  .kpi {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    background: #fff;
+  }
+  .kpi-label {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  .kpi-value {
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--info);
+  }
+  .kpi-sub {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Sprint 2 任务 A1 成果总结报告</h1>
+
+<table class="meta-table">
+  <tr><th>报告日期</th><td>2026-05-27</td></tr>
+  <tr><th>Sprint</th><td>sprint2</td></tr>
+  <tr><th>任务编号</th><td>A1（S2-09 数据结构扩展）</td></tr>
+  <tr><th>开发负责</th><td>@全栈开发代理</td></tr>
+  <tr><th>验收负责</th><td>@测试工程师代理</td></tr>
+  <tr><th>基线 commit</th><td><code>0ad16fc</code>（A1 改动未提交，工作区状态）</td></tr>
+  <tr><th>验收结论</th><td><span class="badge badge-ok">PASS（带 3 条 A3-watchlist 条件）</span></td></tr>
+  <tr><th>报告路径</th><td><code>docs/sprint2/test-reports/2026-05-27_a1-summary.html</code></td></tr>
+</table>
+
+<div class="callout-ok">
+  <strong>执行摘要</strong>：A1 任务 = <code>core/state.py</code> 数据契约扩展（多模型配置 LLMConfigSet + 5 双语字段 + planning revise 计数 + 新老形态兜底）。开发交付 + 测试独立复核全部通过；sp1 168/168 测试基线零退化；全量回归 <strong>72/72 PASS in 478.85s</strong>（含 13 个真实 LLM e2e）；单测稳定性 3 次连跑累计 144/144 PASS 0 抖动；保留 <code>llm_config</code> 镜像字段作为过渡期向后兼容（A3 完成后清理，已挂 watchlist）。
+</div>
+
+<div class="kpi-grid">
+  <div class="kpi">
+    <div class="kpi-label">单测用例总数</div>
+    <div class="kpi-value">16</div>
+    <div class="kpi-sub">开发 10 + 测试补全 6</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">全量回归通过</div>
+    <div class="kpi-value">72 / 72</div>
+    <div class="kpi-sub">含 13 个 e2e LLM 链路</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">单测 3 次连跑</div>
+    <div class="kpi-value">144 / 144</div>
+    <div class="kpi-sub">2.58 / 3.16 / 3.21 s</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">sp1 基线退化</div>
+    <div class="kpi-value">0</div>
+    <div class="kpi-sub">168/168 保留</div>
+  </div>
+</div>
+
+<h2>1. 任务背景与目标</h2>
+
+<p>A1 是 Sprint 2 阶段 A（状态与工具层 P0 基础设施）的入口任务，承担 <strong>"数据契约层升级"</strong> 角色——所有 sp2 后续节点（resource_scout / planning）、新工具（git_tools / pwc_tools）、新 UI（Streamlit 三页面）都要消费 A1 产出的 TypedDict 字段与配置形态。</p>
+
+<p>A1 解决三个核心需求：</p>
+
+<ul>
+  <li><strong>多模型配置</strong>（PRD §5.4 / Q-S2-01 RESOLVED）：4 个节点可各自配不同 LLM；引入 <code>LLMConfigSet</code> = <code>default</code> + <code>overrides: Dict[NodeName, LLMConfig]</code>，节点级路由由 A2 helper + A3 单行 diff 接入。</li>
+  <li><strong>中英双语字段</strong>（PRD §4.7.3 / R-S2-05）：UI 展示用中文（<code>title_zh / abstract_zh / tldr_zh</code>），代码生成检索用英文（<code>method_summary_en / hardware_requirements_en</code>），事实层字段（datasets / metrics）保持英文不译。</li>
+  <li><strong>planning revise 透明化</strong>（PRD §2.3 / Q-S2-03 RESOLVED）：<code>_planning_revise_count</code> + <code>_planning_user_feedback</code> 记录用户修改次数，UI 在 ≥ 5 次时软提示切 code_only 但不锁按钮（硬上限语义已废弃）。</li>
+</ul>
+
+<h2>2. 交付物清单</h2>
+
+<table>
+  <thead><tr><th>类型</th><th>文件</th><th>改动</th></tr></thead>
+  <tbody>
+    <tr><td rowspan="3">业务代码</td>
+        <td><code>core/state.py</code></td>
+        <td>新增 <code>LLMConfigSet</code> / <code>NodeName</code> Literal；<code>PaperMeta</code> +3 <code>_zh</code> 字段；<code>PaperAnalysis</code> +2 <code>_en</code> 字段；<code>RepoInfo</code> +<code>local_path</code>；<code>GlobalState</code> +<code>llm_config_set</code> + <code>_planning_revise_count</code> + <code>_planning_user_feedback</code>；<code>create_initial_state</code> 支持新老形态双兼容</td></tr>
+    <tr><td><code>core/nodes/paper_intake.py</code></td>
+        <td><code>PAPER_META_SCHEMA</code> properties +3 <code>_zh</code> 字段（方案 A 同步 diff）</td></tr>
+    <tr><td><code>core/nodes/paper_analysis.py</code></td>
+        <td><code>PAPER_ANALYSIS_SCHEMA</code> properties +2 <code>_en</code> 字段（方案 A 同步 diff，闭合 CP1 字段对齐断言）</td></tr>
+    <tr><td>测试代码</td>
+        <td><code>tests/test_sprint2_a1.py</code></td>
+        <td><strong>新增</strong>：开发 10 用例覆盖 CP-A1-1~8 + 测试工程师补全 6 用例 Aux-1~6，共 16 用例</td></tr>
+    <tr><td rowspan="3">文档</td>
+        <td><code>docs/sprint2/dev-plan.md</code></td>
+        <td>CP-A1-1~9 标 <span class="badge badge-ok">PASS</span>；§5 文件清单 <code>core/state.py</code> 状态更新；S-1/S-2/S-3 spike 标注同步</td></tr>
+    <tr><td><code>docs/TODO.md</code></td>
+        <td>阶段 2 A1 条目标 <code>[x]</code>；新增测试工程师 PASS 记录 + A3-watchlist 条目</td></tr>
+    <tr><td><code>docs/sprint2/test-reports/2026-05-27_a1-acceptance.md</code></td>
+        <td>测试工程师独立验收报告（PASS 带条件 C1/C2/C3）</td></tr>
+  </tbody>
+</table>
+
+<h2>3. 实现要点</h2>
+
+<h3>3.1 多模型配置形态</h3>
+
+<pre><code><span style="color: var(--kw);">class</span> <span style="color: var(--func);">LLMConfigSet</span>(TypedDict):
+    <span style="color: var(--str);">"""多模型 LLM 配置集合（架构 §2.1.1.bis）。"""</span>
+    default: LLMConfig                      <span style="color: var(--com);"># 全局默认，必填</span>
+    overrides: Dict[str, LLMConfig]         <span style="color: var(--com);"># 节点级覆写，允许空</span>
+
+NodeName = Literal[<span style="color: var(--str);">"paper_intake"</span>, <span style="color: var(--str);">"paper_analysis"</span>, <span style="color: var(--str);">"resource_scout"</span>, <span style="color: var(--str);">"planning"</span>]</code></pre>
+
+<p>四个节点对应 PRD §2.4 / AC-S2-11 的覆写白名单。<code>overrides</code> 为空 <code>dict</code> 等同 sp1 单模型形态，向后兼容。</p>
+
+<h3>3.2 新老形态双兼容兜底</h3>
+
+<p><code>create_initial_state</code> 是 sp1 测试基线零退化的关键路径：</p>
+
+<ul>
+  <li><strong>老形态</strong>（sp1 调用）：<code>create_initial_state(arxiv_id, &lt;LLMConfig dict 含 base_url&gt;)</code> → 自动包装为 <code>{"default": cfg, "overrides": {}}</code></li>
+  <li><strong>新形态</strong>（sp2 调用）：<code>create_initial_state(arxiv_id, &lt;LLMConfigSet dict 含 default 子配置&gt;)</code> → 直接透传 + 规整 <code>overrides</code> 字段</li>
+  <li><strong>非法形态</strong>：抛 <code>ValueError</code>（既不含 <code>base_url</code> 也不含 <code>default</code>）</li>
+</ul>
+
+<h3>3.3 双语字段语义反转（PRD §4.7.3）</h3>
+
+<table>
+  <thead><tr><th>字段</th><th>sp1 语义</th><th>sp2 起语义</th><th>消费方</th></tr></thead>
+  <tbody>
+    <tr><td><code>method_summary</code></td><td>英文</td><td><strong>中文（主）</strong></td><td>planning / reporting 中文 prompt</td></tr>
+    <tr><td><code>method_summary_en</code></td><td>不存在</td><td><strong>英文（备份）</strong></td><td>coding 节点跨语言检索</td></tr>
+    <tr><td><code>hardware_requirements</code> / <code>_en</code></td><td>英文</td><td>同上反转</td><td>同上</td></tr>
+    <tr><td><code>datasets / metrics</code></td><td>英文</td><td><strong>英文不译</strong></td><td>resource_scout 检索匹配（PRD §4.7.5）</td></tr>
+  </tbody>
+</table>
+
+<h2>4. 关键设计决策</h2>
+
+<h3>4.1 保留 <code>llm_config</code> 镜像字段（与 dev-plan 偏差但合理）</h3>
+
+<div class="callout-info">
+  <strong>决策</strong>：dev-plan L308 原意是删除 <code>llm_config</code> 字段，当前实现保留作为过渡期向后兼容镜像（值始终 = <code>llm_config_set["default"]</code>）。
+</div>
+
+<p><strong>理由</strong>：sp1 既有代码在 3 个位置直读 <code>state["llm_config"]</code>：</p>
+
+<ul>
+  <li><code>core/react_base.py:825</code>（B4 ReAct 基础设施，sp2 A3 单行 diff 才会改）</li>
+  <li><code>tests/test_sprint1_smoke.py:229</code>（sp1 烟雾测试断言）</li>
+  <li><code>tests/test_graph_e2e.py:254</code>（sp1 e2e 测试断言）</li>
+</ul>
+
+<p>若在 A1 直接删字段，会立刻打破 sp1 168/168 测试基线（CP-A1-9 硬约束）。保留镜像让两条路径并存到 A3 完成后，再做一次 atomic 清理。</p>
+
+<h3>4.2 方案 A：A1 顺手补 schema 同步 diff</h3>
+
+<p>A1 给 <code>PaperAnalysis</code> TypedDict 加了 2 个新字段后，<code>tests/test_paper_analysis.py::CP1</code> 的字段对齐断言（<code>PaperAnalysis.__annotations__ == PAPER_ANALYSIS_SCHEMA.properties</code>）会立刻挂——这是 dev-plan 把"加 TypedDict 字段"放 A1、"改 schema 同步"放 B1 造成的逻辑耦合。</p>
+
+<p><strong>Maria 决策方案 A</strong>：A1 顺手做最小 schema diff（5 行 properties 追加），不动 B1 的 <code>_LANGUAGE_POLICY_SECTION</code> / backfill / Prompt Cache 回归（这些是 B1 真正的工作量）。理由：schema 与 TypedDict 是同一层契约的两个面，本就应原子改动。</p>
+
+<h2>5. 测试覆盖矩阵</h2>
+
+<h3>5.1 开发代理交付的 10 个用例（CP-A1-1 ~ CP-A1-8）</h3>
+
+<table>
+  <thead><tr><th>Checkpoint</th><th>断言要点</th><th>对应 dev-plan</th></tr></thead>
+  <tbody>
+    <tr><td>CP-A1-1</td><td><code>LLMConfigSet / NodeName</code> 可导入</td><td>L318</td></tr>
+    <tr><td>CP-A1-2</td><td><code>PaperMeta</code> 3 个 <code>_zh</code> 字段在 annotations 内</td><td>L319</td></tr>
+    <tr><td>CP-A1-3</td><td><code>PaperAnalysis</code> 2 个 <code>_en</code> 字段在 annotations 内</td><td>L320</td></tr>
+    <tr><td>CP-A1-4</td><td><code>RepoInfo.local_path</code> 字段存在</td><td>L321</td></tr>
+    <tr><td>CP-A1-5</td><td><code>GlobalState</code> 含 <code>llm_config_set</code> + <code>_planning_revise_count</code> + <code>_planning_user_feedback</code></td><td>L322</td></tr>
+    <tr><td>CP-A1-6</td><td>老形态 <code>LLMConfig</code> → 兜底包装为 <code>{"default": cfg, "overrides": {}}</code>（×1 用例）</td><td>L323</td></tr>
+    <tr><td>CP-A1-7</td><td>新形态 <code>LLMConfigSet</code> 透传（×3 用例：含 overrides / 缺 overrides 规整 / 非法 ValueError）</td><td>L324</td></tr>
+    <tr><td>CP-A1-8</td><td>默认值正确（<code>revise_count=0 / user_feedback=None</code>）</td><td>L325</td></tr>
+  </tbody>
+</table>
+
+<h3>5.2 测试工程师补全的 6 个边界用例（Aux-1 ~ Aux-6）</h3>
+
+<table>
+  <thead><tr><th>用例</th><th>边界场景</th><th>价值</th></tr></thead>
+  <tbody>
+    <tr><td>Aux-1</td><td><code>bool / int</code> 子类区分</td><td>防止 Python <code>True == 1</code> 误判 <code>_planning_revise_count</code> 类型</td></tr>
+    <tr><td>Aux-2</td><td><code>LLMConfigSet</code> annotations 结构性断言</td><td>防 sp3 误把 <code>default</code> 改成 Optional</td></tr>
+    <tr><td>Aux-3</td><td>主字段语义反转保留性</td><td><code>method_summary</code> / <code>hardware_requirements</code> 必须存在且非 Optional</td></tr>
+    <tr><td>Aux-4</td><td>多节点 override + 调用方 mutate 隔离</td><td><code>create_initial_state</code> 必须深拷贝 overrides，避免共享引用 bug</td></tr>
+    <tr><td>Aux-5</td><td>非 NodeName Literal key 宽松透传现状记录</td><td>当前实现允许 <code>overrides</code> 含未知 key（无运行期校验），文档化兜底语义</td></tr>
+    <tr><td>Aux-6</td><td>镜像不变量 4 路径集中断言</td><td><strong>关键护栏</strong>：始终保证 <code>state["llm_config"] == state["llm_config_set"]["default"]</code>，A3 完成后升级为反向断言</td></tr>
+  </tbody>
+</table>
+
+<h2>6. 验收数据</h2>
+
+<h3>6.1 全量回归（CP-A1-9 硬约束）</h3>
+
+<pre><code>$ pytest -q
+......................................................................   [100%]
+72 passed, 1 warning in 478.85s (0:07:58)</code></pre>
+
+<p>72 用例 = sp1 既有 56 用例（含 16 e2e）+ sp2 A1 新增 16 用例。<strong>0 失败 / 0 跳过 / 0 项目代码 warning</strong>（唯一 warning 是 sp1 在案的 langgraph 第三方 <code>allowed_objects</code> deprecation）。</p>
+
+<p>耗时 478.85s 高于开发代理自测的 222.52s，差异源于 NVIDIA gateway 网络抖动（sp1 验收报告 §3 记录范围 247-340s）。代码层零影响。</p>
+
+<h3>6.2 单测稳定性（3 次连跑沿用 BUG-S1-02/03 治理范式）</h3>
+
+<table>
+  <thead><tr><th>Run</th><th>耗时</th><th>结果</th></tr></thead>
+  <tbody>
+    <tr><td>Run 1</td><td>2.58s</td><td><span class="badge badge-ok">48/48 PASS</span></td></tr>
+    <tr><td>Run 2</td><td>3.16s</td><td><span class="badge badge-ok">48/48 PASS</span></td></tr>
+    <tr><td>Run 3</td><td>3.21s</td><td><span class="badge badge-ok">48/48 PASS</span></td></tr>
+    <tr><th>累计</th><th>—</th><th><strong>144/144 PASS · 0 抖动</strong></th></tr>
+  </tbody>
+</table>
+
+<p>覆盖文件：<code>test_sprint2_a1.py</code> + <code>test_sprint1_smoke.py</code> + <code>test_paper_intake.py</code> + <code>test_paper_analysis.py</code> + <code>test_react_base.py</code> + <code>test_graph.py</code>。</p>
+
+<h2>7. 已知偏差与 A3-watchlist</h2>
+
+<div class="callout-warn">
+  <strong>偏差判定：带条件接受（ACCEPT WITH CONDITION）</strong>。<code>llm_config</code> 镜像字段保留至 A3 完成。
+</div>
+
+<table>
+  <thead><tr><th>条件</th><th>内容</th><th>状态</th></tr></thead>
+  <tbody>
+    <tr><td><strong>C1</strong></td>
+        <td>A1~A3 之间禁止任何代码新增 <code>llm_config_set</code> / <code>llm_config</code> 的运行期修改路径</td>
+        <td><span class="badge badge-info">遵循中</span></td></tr>
+    <tr><td><strong>C2</strong></td>
+        <td>A3 完成时同步移除 <code>llm_config</code> 字段 + 升级 Aux-6 为反向断言（"<code>llm_config</code> 不应存在"）</td>
+        <td><span class="badge badge-warn">挂账 A3</span></td></tr>
+    <tr><td><strong>C3</strong></td>
+        <td>保留 Aux-6 作为长期镜像保护网，A3 完成前任何对 <code>state.py</code> 改动都先跑 Aux-6 防漂移</td>
+        <td><span class="badge badge-ok">已落盘</span></td></tr>
+  </tbody>
+</table>
+
+<h2>8. 给 B1 的实施建议（验收报告 §6 摘要）</h2>
+
+<ol>
+  <li><strong>守 R-PC4 字节级幂等</strong>：<code>_LANGUAGE_POLICY_SECTION</code> 必须是模块级常量（与 <code>_ANALYSIS_SYSTEM_PROMPT_BODY</code> 同源），插入位置在 SystemMessage 主体之后、动态上下文之前，禁止包含任何运行期变量。</li>
+  <li><strong>统一 LLM 配置读取路径</strong>：B1 节点改造时一律走 <code>llm_config_set["default"]</code>，不要新增 <code>state["llm_config"]</code> 直读位点（C1 条件约束）。</li>
+  <li><strong>Prompt Cache 命中率回归</strong>：对照 S-3 基线 R<sub>baseline</sub> = 0.7669，AC-S2-08 守门 R<sub>after</sub> ≥ 0.7286（×0.95）。建议 B1 完成后立刻跑 E2 回归。</li>
+  <li><strong>backfill 兜底沿用 BUG-S1-03 范式</strong>：LLM 漏写 <code>_zh</code> / <code>_en</code> 字段时回退为对应主字段值并标记 <code>degraded_nodes</code>。</li>
+  <li><strong>HumanMessage 通道扩展</strong>：输出语言策略段落放 HumanMessage 而非 SystemMessage 主体（架构 §4.5）。</li>
+  <li><strong>3 次连跑回归</strong>：B1 完成后沿用稳定性治理范式，至少 3 次 e2e 连跑 + 全量回归全绿才能交付测试工程师。</li>
+</ol>
+
+<h2>9. 时间线</h2>
+
+<div class="timeline">
+  <div class="timeline-item done">
+    <div class="timeline-date">2026-05-24</div>
+    <strong>Spike S-1</strong> interrupt+threading PASS（7/7 CP，3 次连跑 0.793 / 0.661 / 0.685 s）
+  </div>
+  <div class="timeline-item done">
+    <div class="timeline-date">2026-05-24</div>
+    <strong>Spike S-2</strong> SqliteSaver 跨线程并发 60s 压力 PASS（6/6 CP，p99 留 2.8~4.6× 余量）
+  </div>
+  <div class="timeline-item done">
+    <div class="timeline-date">2026-05-25</div>
+    <strong>Spike S-3</strong> Prompt Cache fresh 基线 PASS（5/5 CP，R<sub>baseline</sub> = 0.7669）
+  </div>
+  <div class="timeline-item done">
+    <div class="timeline-date">2026-05-27</div>
+    <strong>A1 实现</strong> @全栈开发代理 完成 <code>core/state.py</code> 主体改动 + 10 用例自测
+  </div>
+  <div class="timeline-item done">
+    <div class="timeline-date">2026-05-27</div>
+    <strong>方案 A 闭合</strong> 顺手补齐 <code>PAPER_META_SCHEMA</code> +3 / <code>PAPER_ANALYSIS_SCHEMA</code> +2 字段同步 diff（5 行 Edit），闭合 CP1 字段对齐断言
+  </div>
+  <div class="timeline-item done">
+    <div class="timeline-date">2026-05-27</div>
+    <strong>测试工程师独立验收</strong> 补全 Aux-1~6 共 6 用例 + 3 次稳定性连跑 + 全量 72/72 PASS，<span class="badge badge-ok">PASS 带条件</span>
+  </div>
+  <div class="timeline-item">
+    <div class="timeline-date">下一步</div>
+    <strong>A2 / A3</strong> <code>resolve_llm_config</code> helper + <code>react_base.py</code> 单行 diff（A3 完成后清理 <code>llm_config</code> 镜像字段，闭合 C2 条件）
+  </div>
+</div>
+
+<h2>10. 引用文档</h2>
+
+<ul>
+  <li><a href="../dev-plan.md">docs/sprint2/dev-plan.md</a> §A1（L289-330）</li>
+  <li><a href="../architecture.md">docs/sprint2/architecture.md</a> §2.1.1.bis（多模型配置）/ §4.7（planning revise 字段）/ §4.9（节点级 LLM 路由）</li>
+  <li><a href="../prd.md">docs/sprint2/prd.md</a> §4.7.3（双语字段策略）/ §2.3（planning revise 无硬上限）</li>
+  <li><a href="2026-05-27_a1-acceptance.md">2026-05-27_a1-acceptance.md</a>（测试工程师独立验收报告）</li>
+  <li><a href="2026-05-25_prompt-cache-baseline.md">2026-05-25_prompt-cache-baseline.md</a>（S-3 基线 R = 0.7669）</li>
+  <li><a href="2026-05-24_spike-s1-interrupt-threading.md">2026-05-24_spike-s1-interrupt-threading.md</a>（S-1 interrupt + threading）</li>
+  <li><a href="2026-05-24_spike-s2-sqlite-concurrent.md">2026-05-24_spike-s2-sqlite-concurrent.md</a>（S-2 SqliteSaver 并发）</li>
+</ul>
+
+<div class="footer">
+  本报告由 Claude Code（claude-opus-4-7）协助 @Maria 撰写，归档于 <code>docs/sprint2/test-reports/</code>。<br>
+  Sprint 2 阶段 A 推进中（A1 ✅ → A2 / A3 / A4 / A5 / A6 待开工）；阶段 S 三 spike 全部 PASS；sp1 168/168 测试基线零退化。
+</div>
+
+</body>
+</html>
