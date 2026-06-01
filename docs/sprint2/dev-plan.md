@@ -506,16 +506,18 @@ def _serialize_tool_result(result: object) -> str:
 - 同 URL 重复克隆：先检查 `WORKSPACE_REPOS_DIR / repo_slug` 是否存在，存在则直接返回 `{"success": True, "local_path": existing_path, "duration_seconds": 0.0}` 跳过克隆。
 
 **自测检查点**：
-- [ ] CP-A5-1 `git_clone("https://github.com/python/cpython", tempdir)` 在网络可达时返回 `success=True` + 合法 `local_path`（mock subprocess.run 即可，e2e 跑真实 clone 留给 E1）
-- [ ] CP-A5-2 `git_clone` 对死链 URL（mock subprocess.run 返回 stderr="Repository not found" + exit 128）抛 `PermanentError`，**不重试**
-- [ ] CP-A5-3 `git_clone` 对网络瞬态错误（mock subprocess.run 抛 TimeoutExpired）3 次指数退避后抛 `TransientError`
-- [ ] CP-A5-4 `git_clone(url, "/etc/passwd")` 抛 `PermanentError("dest_dir 越界")`（路径越界拒绝）
-- [ ] CP-A5-5 `git_clone` 对同一 URL 二次调用直接返回 `success=True` + `duration_seconds=0.0`（重复跳过）
-- [ ] CP-A5-6 `analyze_local_repo(local_path)` 对 tempdir + `git init` + 创建 README.md + git commit 的小仓库返回完整 RepoInfo，含 `local_path`、`has_readme=True`、`dir_structure` 字典序、`is_official=False`
-- [ ] CP-A5-7 `analyze_local_repo` 对无 README 仓库返回 `has_readme=False`、`has_requirements=False`
-- [ ] CP-A5-8 `check_url_reachable("https://github.com")` 返回 True（mock requests.head 即可）；死链返回 False
-- [ ] CP-A5-9 3 个工具工厂均返回 `BaseTool` 实例，且 `_serialize_tool_result({"success": True, "local_path": "/x"})` 输出**合法 JSON**（`json.loads(...)` 不报错；含 `ensure_ascii=False, sort_keys=True`）
-- [ ] CP-A5-10 `subprocess.run` 全部不使用 `shell=True`（通过断言 `Popen.args` 是列表确认）
+- [x] CP-A5-1 `git_clone("https://github.com/python/cpython", tempdir)` 在网络可达时返回 `success=True` + 合法 `local_path`（mock subprocess.run 即可，e2e 跑真实 clone 留给 E1） — PASS 2026-06-01 @全栈开发代理（`tests/test_sprint2_a5.py::test_cp_a5_1_git_clone_success`，含命令列表形式断言）
+- [x] CP-A5-2 `git_clone` 对死链 URL（mock subprocess.run 返回 stderr="Repository not found" + exit 128）抛 `PermanentError`，**不重试** — PASS 2026-06-01 @全栈开发代理（断言 run 仅调 1 次 + sleep 0 次）
+- [x] CP-A5-3 `git_clone` 对网络瞬态错误（mock subprocess.run 抛 TimeoutExpired）3 次指数退避后抛 `TransientError` — PASS 2026-06-01 @全栈开发代理（断言 run 4 次执行 + sleep 序列 [1.0,2.0,4.0]；补 test_cp_a5_3b 覆盖 stderr 网络关键字退避路径）
+- [x] CP-A5-4 `git_clone(url, "/etc/passwd")` 抛 `PermanentError("dest_dir 越界")`（路径越界拒绝） — PASS 2026-06-01 @全栈开发代理（断言越界校验在 subprocess 之前，run 0 次）
+- [x] CP-A5-5 `git_clone` 对同一 URL 二次调用直接返回 `success=True` + `duration_seconds=0.0`（重复跳过） — PASS 2026-06-01 @全栈开发代理（预建 slug 目录，断言 run 0 次）
+- [x] CP-A5-6 `analyze_local_repo(local_path)` 对 tempdir + `git init` + 创建 README.md + git commit 的小仓库返回完整 RepoInfo，含 `local_path`、`has_readme=True`、`dir_structure` 字典序、`is_official=False` — PASS 2026-06-01 @全栈开发代理（真实 git init/commit，断言 12 字段全集与 core.state.RepoInfo 逐字段对齐 + commit_count_recent==1 + last_commit_date 非空）
+- [x] CP-A5-7 `analyze_local_repo` 对无 README 仓库返回 `has_readme=False`、`has_requirements=False` — PASS 2026-06-01 @全栈开发代理（非 git 仓库 commit 指标降级不抛异常）。**契约澄清（2026-06-01 @测试工程师代理）**：对非 git 目录 / 空仓库，`commit_count_recent` 与 `last_commit_date` 降级值为 **`None`（不是 0）**，表示"读不到数据"而非"近半年真有 0 次提交"。下游 B2 resource_scout 评分须用 `commit_count_recent is None` 判缺失，**禁止用 `== 0`**（否则会把"无数据"误判为"零活跃"）。
+- [x] CP-A5-8 `check_url_reachable("https://github.com")` 返回 True（mock requests.head 即可）；死链返回 False — PASS 2026-06-01 @全栈开发代理（200→True / 404→False / 异常→False / 301·302→True，断言 allow_redirects=True）
+- [x] CP-A5-9 3 个工具工厂均返回 `BaseTool` 实例，且 `_serialize_tool_result({"success": True, "local_path": "/x"})` 输出**合法 JSON**（`json.loads(...)` 不报错；含 `ensure_ascii=False, sort_keys=True`） — PASS 2026-06-01 @全栈开发代理（含中文不转义 + 键字典序断言；补 test_cp_a5_9_factory_output 验证 3 工厂成功/失败两路径 ToolMessage 均 json.loads 可解析，禁 str(dict)）
+- [x] CP-A5-10 `subprocess.run` 全部不使用 `shell=True`（通过断言 `Popen.args` 是列表确认） — PASS 2026-06-01 @全栈开发代理（spy 录制 git_clone + analyze_local_repo 全部 run 调用，逐条断言 cmd 为 list 且 shell 不为 True）
+
+> **自测汇总（2026-06-01 @全栈开发代理）**：`tests/test_sprint2_a5.py` 19/19 PASS；非 e2e 核心回归 `pytest -q -m "not e2e" --ignore=tests/test_paper_intake.py` 3 次连跑 **132/132**（较 A4 验收基线 113 增 19 = 全部 A5 用例并入），0 失败 0 跳过 0 抖动。1 warning 为 langgraph 库级预存（与 A5 无关）。补充用例：git 二进制缺失 FileNotFoundError→PermanentError、_repo_slug 对 https/ssh/.git 后缀解析。RepoInfo 12 字段与 `core/state.py` TypedDict 逐字段对齐无冲突。
 
 **风险标注**：
 - **中风险**：git 二进制版本兼容性（macOS / Linux）；建议启动时 `git --version` 探测并写日志
