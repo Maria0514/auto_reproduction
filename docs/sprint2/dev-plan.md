@@ -399,14 +399,16 @@ from core.llm_client import resolve_llm_config
 - 当 sp1 老 state 使用 `state["llm_config"]` 时，由 A1 的 `create_initial_state` 兜底层兜底（state 内已经是 `llm_config_set`），不会触发 KeyError。
 
 **自测检查点**：
-- [ ] CP-A3-1 修改后 `_make_react_wrapper` 函数签名未变（通过 `inspect.signature` 断言形参列表完全一致）
-- [ ] CP-A3-2 用 sp1 mock LLM 跑 paper_intake：`_make_react_wrapper` 内部调用 `create_llm(cfg_A)`，cfg_A 来自 `state["llm_config_set"]["default"]`（路径 P1 全局回退验证）
-- [ ] CP-A3-3 构造 state with `llm_config_set = {"default": cfg_A, "overrides": {"paper_intake": cfg_B}}`，跑 paper_intake，验证 `create_llm(cfg_B)` 被调用（单节点 override 验证）
-- [ ] CP-A3-4 **sp1 B4 react_base.py 8 项自测全部仍通过**（运行 `pytest tests/test_react_base.py -q` 零退化）
-- [ ] CP-A3-5 **sp1 paper_intake / paper_analysis 全量单测通过**（覆盖 `_map_*_result` 兼容性、CP1~CP11）
+- [x] CP-A3-1 修改后 `_make_react_wrapper` 函数签名未变（通过 `inspect.signature` 断言形参列表完全一致）— PASS 2026-05-31 @全栈开发代理（`tests/test_react_base_sp2.py::test_cp_a3_1_*`）
+- [x] CP-A3-2 用 sp1 mock LLM 跑 paper_intake：`_make_react_wrapper` 内部调用 `create_llm(cfg_A)`，cfg_A 来自 `state["llm_config_set"]["default"]`（路径 P1 全局回退验证）— PASS 2026-05-31 @全栈开发代理（mock create_llm 捕获实参 == default，含"node 未命中 override 回退"补充用例）
+- [x] CP-A3-3 构造 state with `llm_config_set = {"default": cfg_A, "overrides": {"paper_intake": cfg_B}}`，跑 paper_intake，验证 `create_llm(cfg_B)` 被调用（单节点 override 验证）— PASS 2026-05-31 @全栈开发代理（含 P3 多节点全 override 各取其所补充用例）
+- [x] CP-A3-4 **sp1 B4 react_base.py 8 项自测全部仍通过**（运行 `pytest tests/test_react_base.py -q` 零退化）— PASS 2026-05-31 @全栈开发代理（mock state 同步升级为 llm_config_set 结构）
+- [x] CP-A3-5 **sp1 paper_intake / paper_analysis 全量单测通过**（覆盖 `_map_*_result` 兼容性、CP1~CP11）— PASS 2026-05-31 @全栈开发代理（核心非 e2e 单测集 97 passed in 2.65s）
 
 **风险标注**：
 - **中风险**：单行 diff 看似简单，但影响 sp1 所有 ReAct 节点；A3-4/A3-5 任一失败必须立即停工修复
+
+> **测试工程师独立验收（2026-06-01，PASS）**：CP-A3-1~5 全部独立复核命中；watchlist 4 处 + 连带清理 8 处到位；镜像字段删除影响面盘清（全仓 0 处真实 `state["llm_config"]` 直读）；补 4 条 A3 集成视角边界用例至 `tests/test_react_base_sp2.py`（共 10）；核心单测 3 次连跑 303/303 + 全量 `pytest -q` 含 e2e 2 次 236/236 零退化、0 LLM 抖动；零 BUG。遗留 L-A3-01（paper_intake main 风格脚本游离回归网外）+ L-A3-02（pytest.ini 注释偏差）非阻断。详见 `docs/sprint2/test-reports/2026-06-01_a3-acceptance.md`。
 
 ---
 

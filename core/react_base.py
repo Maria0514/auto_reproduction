@@ -36,7 +36,7 @@ from config import (
     TOOL_RESULT_MAX_LENGTH,
 )
 from core.errors import TransientError
-from core.llm_client import create_llm
+from core.llm_client import create_llm, resolve_llm_config
 from core.state import GlobalState
 
 logger = logging.getLogger(__name__)
@@ -822,7 +822,10 @@ def _make_react_wrapper(
         )
 
         # 创建 LLM 实例并通过 context 注入子图（避免每个内部节点重复构造）
-        llm = create_llm(state["llm_config"])
+        # Sprint 2 任务 A3（架构 §4.9 落地约束 3）：节点级 LLM 路由——
+        # 通过 resolve_llm_config 按 node_name 在 llm_config_set 内选路
+        # （overrides[node_name] 命中则用节点级覆写，否则回退 default）。
+        llm = create_llm(resolve_llm_config(state["llm_config_set"], node_name))
         injected_context = dict(context)
         injected_context["_llm"] = llm
 

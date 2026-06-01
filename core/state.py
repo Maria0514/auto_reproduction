@@ -160,16 +160,13 @@ class FixLoopRecord(TypedDict):
 class GlobalState(TypedDict):
     """LangGraph 全局状态，贯穿整个工作流的唯一数据契约。
 
-    Sprint 2 breaking change（架构 §2.1.1.bis / dev-plan A1）：
-        - 新增 llm_config_set: LLMConfigSet（多模型权威配置源）；
-        - 保留 llm_config: LLMConfig 作为**过渡期向后兼容字段**——
-          create_initial_state 兜底层始终把 llm_config_set["default"] 镜像写入 llm_config，
-          让 sp1 测试断言（如 test_sprint1_smoke.py:229）与 react_base.py:825
-          的老路径在 A3 单行 diff 之前继续工作；
-        - sp3 待 A3 完成 react_base 单行 diff 后，可彻底移除 llm_config 字段（仅保留 llm_config_set）。
+    Sprint 2 breaking change（架构 §2.1.1.bis / dev-plan A1+A3）：
+        - llm_config_set: LLMConfigSet 是多模型权威配置源（default + 节点级 overrides）；
+        - 过渡期镜像字段 llm_config 已于 A3 完成（react_base.py 改读 llm_config_set）后
+          **彻底移除**——节点级 LLM 路由统一走 resolve_llm_config(llm_config_set, node_name)，
+          不再存在任何 state["llm_config"] 直读路径。
     """
-    llm_config: LLMConfig                 # 过渡期向后兼容字段（A3 后可移除）
-    llm_config_set: LLMConfigSet          # Sprint 2 权威配置源
+    llm_config_set: LLMConfigSet          # Sprint 2 权威配置源（唯一 LLM 配置入口）
     user_input: str
     input_type: str
     paper_meta: Optional[PaperMeta]
@@ -219,8 +216,8 @@ def create_initial_state(
         - 形参 ``llm_config`` 同时接受 sp1 老形态 LLMConfig 与 sp2 新形态 LLMConfigSet；
         - 老形态入参自动包装为 ``{"default": cfg, "overrides": {}}``；
         - 新形态入参直接透传，但要求至少含合法 ``default`` 字段；
-        - state 中同时写入 ``llm_config_set``（权威）与 ``llm_config``（过渡期兼容镜像，
-          值取 ``llm_config_set["default"]``），保 sp1 168/168 测试基线零退化。
+        - state 中仅写入 ``llm_config_set``（唯一权威配置源）；A3 完成后过渡期镜像
+          字段 ``llm_config`` 已移除，节点级 LLM 路由统一走 resolve_llm_config。
 
     Args:
         user_input: 用户输入（如 arxiv_id 字符串）。
@@ -238,7 +235,6 @@ def create_initial_state(
             "default": legacy_cfg,
             "overrides": {},
         }
-        default_cfg: LLMConfig = legacy_cfg
     elif isinstance(llm_config, dict) and isinstance(llm_config.get("default"), dict):
         # 新形态 LLMConfigSet 入参；规整 overrides 字段（缺失时填空 dict）
         new_cfg = cast(LLMConfigSet, llm_config)
@@ -247,7 +243,6 @@ def create_initial_state(
             "default": new_cfg["default"],
             "overrides": dict(overrides),
         }
-        default_cfg = config_set["default"]
     else:
         raise ValueError(
             "create_initial_state: llm_config 必须是 LLMConfig（含 base_url）"
@@ -255,7 +250,6 @@ def create_initial_state(
         )
 
     return GlobalState(
-        llm_config=default_cfg,
         llm_config_set=config_set,
         user_input=user_input,
         input_type="arxiv_id",

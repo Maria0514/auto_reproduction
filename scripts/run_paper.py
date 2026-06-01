@@ -159,7 +159,8 @@ def main() -> int:
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / f"{args.arxiv_id.replace('/', '_')}_{ts}.json"
         dumpable = dict(final_state)
-        dumpable.pop("llm_config", None)  # 含 api_key，剔除
+        dumpable.pop("llm_config", None)  # A3 已移除该镜像字段，保留 pop 兼容老 checkpoint
+        dumpable.pop("llm_config_set", None)  # 含 api_key，剔除
         with out_path.open("w", encoding="utf-8") as f:
             json.dump(
                 dumpable,

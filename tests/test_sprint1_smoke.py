@@ -226,7 +226,9 @@ def test_create_initial_state_defaults() -> None:
 
     # 顺带核查不容易遗漏的几个字段
     assert state["user_input"] == "2405.14831"
-    assert state["llm_config"] == llm_config
+    # A3 起镜像字段 llm_config 已移除；老形态入参被包装进 llm_config_set.default
+    assert "llm_config" not in state
+    assert state["llm_config_set"]["default"] == llm_config
     assert state["current_step"] == "start"
     assert state["error"] is None
     assert state["messages"] == []

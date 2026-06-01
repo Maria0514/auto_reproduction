@@ -218,7 +218,7 @@ def test_e2e_d1_02_placeholder_nodes_do_not_pollute_state(main_pipeline_result):
     1. ``resource_info`` / ``reproduction_plan`` / ``code_output_dir`` / ``execution_result``
        / ``report_path`` 这些占位节点对应的字段应仍为 None（占位节点没有真实业务）。
     2. ``paper_meta`` / ``paper_analysis`` 字段未被 5 个下游占位节点覆盖（值与上游写入相同）。
-    3. ``user_input`` / ``input_type`` / ``llm_config`` 等初始字段保持不变。
+    3. ``user_input`` / ``input_type`` / ``llm_config_set`` 等初始字段保持不变。
     """
     final_state, _db, _tid = main_pipeline_result
 
@@ -250,8 +250,9 @@ def test_e2e_d1_02_placeholder_nodes_do_not_pollute_state(main_pipeline_result):
     assert final_state.get("input_type") == "arxiv_id", (
         f"input_type 被覆盖：{final_state.get('input_type')!r}"
     )
-    # llm_config 应仍存在（LangGraph 默认合并语义不删除字段）
-    assert final_state.get("llm_config"), "llm_config 在流水线后被清空"
+    # A3 起镜像字段 llm_config 已移除；llm_config_set 应仍存在（LangGraph 默认合并语义不删除字段）
+    assert final_state.get("llm_config_set"), "llm_config_set 在流水线后被清空"
+    assert final_state["llm_config_set"].get("default"), "llm_config_set.default 在流水线后被清空"
 
 
 # ============== TC-E2E-D1-03：SqliteSaver 持久化与回读（AC-2） ==============

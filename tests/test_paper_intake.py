@@ -47,12 +47,16 @@ def _make_state(user_input: str) -> Dict[str, Any]:
     return {
         "user_input": user_input,
         "input_type": "arxiv_id",
-        "llm_config": {
-            "base_url": "https://example.test/v1",
-            "model": "test-model",
-            "api_key": "sk-test",
-            "temperature": 0.3,
-            "max_tokens": 1024,
+        # A3 起 _make_react_wrapper 读 llm_config_set（经 resolve_llm_config 选路）
+        "llm_config_set": {
+            "default": {
+                "base_url": "https://example.test/v1",
+                "model": "test-model",
+                "api_key": "sk-test",
+                "temperature": 0.3,
+                "max_tokens": 1024,
+            },
+            "overrides": {},
         },
         "retry_budget_remaining": 50,
         "node_errors": [],

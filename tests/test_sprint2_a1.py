@@ -5,13 +5,12 @@ CP-A1-9（全量 pytest 168/168 回归）由仓库根 ``pytest -q`` 走，不在
 
 参考实现：
     - sp1 同款风格 tests/test_sprint1_smoke.py（轻量结构性断言，无真实 LLM）。
-    - 关键设计偏差备注（CP-A1-5）：
-        dev-plan L308 原意是把 ``GlobalState.llm_config`` 替换为 ``llm_config_set``，
-        但 core/state.py 实际选择"新增 llm_config_set + 保留 llm_config 镜像"的双字段
-        过渡形态——理由是 react_base.py:825 与 test_sprint1_smoke.py:229 / test_graph_e2e.py:254
-        仍在直取 ``state["llm_config"]``，待 sp2 A3 单行 diff 完成后才能彻底移除。
-        本测试遵循当前实现，断言"llm_config_set 必须存在"+"llm_config 作为镜像
-        允许同时存在并等于 llm_config_set['default']"，与代码注释（state.py L160-170）一致。
+    - A3 完成后更新（2026-05-31）：
+        dev-plan L308 原意是把 ``GlobalState.llm_config`` 替换为 ``llm_config_set``。
+        A1 期间为兼容 sp1 测试基线保留了 ``llm_config`` 过渡期镜像字段；A3 单行 diff
+        完成后（react_base.py 改读 ``llm_config_set`` 经 resolve_llm_config 选路），
+        镜像字段已**彻底移除**。本测试相应升级为"llm_config_set 必须存在"+
+        "``llm_config`` not in state"（反向断言镜像字段已删），与 state.py 注释一致。
 """
 
 from __future__ import annotations
@@ -158,10 +157,9 @@ def test_cp_a1_6_create_initial_state_legacy_llm_config_wrapping() -> None:
         "overrides": {},
     }, "create_initial_state 老形态兜底失败：未正确包装为 {'default': cfg, 'overrides': {}}"
 
-    # 过渡期镜像字段：llm_config 应等于 llm_config_set["default"]
-    # （state.py L160-170 显式记录的设计约定，保 sp1 测试基线零退化）
-    assert state["llm_config"] == legacy_cfg, (
-        "过渡期镜像约定被破坏：state['llm_config'] 应等于 llm_config_set['default']"
+    # A3 完成后过渡期镜像字段 llm_config 已移除：只剩 llm_config_set（权威）
+    assert "llm_config" not in state, (
+        "A3 后镜像字段 llm_config 应已移除，仅保留 llm_config_set"
     )
 
 
@@ -197,9 +195,9 @@ def test_cp_a1_7_create_initial_state_new_llm_config_set_passthrough() -> None:
     assert state["llm_config_set"]["default"] == cfg_default
     assert state["llm_config_set"]["overrides"] == {"paper_analysis": cfg_analysis}
 
-    # 过渡期镜像：llm_config 应取 default（不是 override）
-    assert state["llm_config"] == cfg_default, (
-        "过渡期镜像应取 llm_config_set['default']，不是某个 override"
+    # A3 完成后过渡期镜像字段 llm_config 已移除
+    assert "llm_config" not in state, (
+        "A3 后镜像字段 llm_config 应已移除，仅保留 llm_config_set"
     )
 
 
@@ -436,17 +434,16 @@ def test_cp_a1_aux_5_overrides_with_non_node_name_key_runtime_lenient() -> None:
 
 
 def test_cp_a1_aux_6_llm_config_mirror_invariant_both_paths() -> None:
-    """Aux-6: 镜像不变量在新/老两种入参路径下均成立。
+    """Aux-6: A3 完成后镜像字段已移除——四种入参形态下 ``llm_config`` 均不在 state。
 
-    state.py L160-170 显式声明：``state["llm_config"]`` 是 ``state["llm_config_set"]["default"]``
-    的过渡期镜像。本用例集中断言这条不变量在四种入参形态下都成立：
+    A1 期间 state 同时含 ``llm_config``（镜像）与 ``llm_config_set``（权威）。
+    A3 单行 diff 完成后（react_base.py 改读 ``llm_config_set`` 经 resolve_llm_config
+    选路），过渡期镜像字段已**彻底移除**。本用例升级为反向断言：在四种入参形态下
+    都只剩 ``llm_config_set``（权威），``llm_config`` not in state：
       (i)   sp1 老形态 LLMConfig（含 base_url）
       (ii)  sp2 新形态 LLMConfigSet 含 overrides
       (iii) sp2 新形态 LLMConfigSet 不含 overrides 键
       (iv)  sp2 新形态 LLMConfigSet overrides 为空 dict
-
-    A3 单行 diff 完成后，react_base.py:825 改读 ``llm_config_set`` 路径，
-    届时本用例应升级为 ``"llm_config" not in state``（彻底移除字段断言）。
     """
     from core.state import LLMConfig, LLMConfigSet, create_initial_state
 
@@ -465,26 +462,29 @@ def test_cp_a1_aux_6_llm_config_mirror_invariant_both_paths() -> None:
         "max_tokens": 4096,
     }
 
-    # (i) 老形态
+    # (i) 老形态：镜像字段已移除，权威配置 default 取入参 cfg_a
     s1 = create_initial_state(user_input="x", llm_config=cfg_a)
-    assert s1["llm_config"] == s1["llm_config_set"]["default"] == cfg_a
+    assert "llm_config" not in s1
+    assert s1["llm_config_set"]["default"] == cfg_a
 
-    # (ii) 新形态含 overrides
+    # (ii) 新形态含 overrides：default 取 cfg_a，override 完整保留
     s2 = create_initial_state(
         user_input="x",
         llm_config={"default": cfg_a, "overrides": {"paper_analysis": cfg_b}},
     )
-    assert s2["llm_config"] == s2["llm_config_set"]["default"] == cfg_a
-    # 镜像取 default 不是 override
-    assert s2["llm_config"] != cfg_b
+    assert "llm_config" not in s2
+    assert s2["llm_config_set"]["default"] == cfg_a
+    assert s2["llm_config_set"]["overrides"]["paper_analysis"] == cfg_b
 
     # (iii) 新形态缺 overrides 键（规整为 {}）
     s3 = create_initial_state(user_input="x", llm_config={"default": cfg_a})
-    assert s3["llm_config"] == s3["llm_config_set"]["default"] == cfg_a
+    assert "llm_config" not in s3
+    assert s3["llm_config_set"]["default"] == cfg_a
     assert s3["llm_config_set"]["overrides"] == {}
 
     # (iv) 新形态 overrides 为空 dict（显式）
     s4 = create_initial_state(
         user_input="x", llm_config={"default": cfg_a, "overrides": {}}
     )
-    assert s4["llm_config"] == s4["llm_config_set"]["default"] == cfg_a
+    assert "llm_config" not in s4
+    assert s4["llm_config_set"]["default"] == cfg_a
