@@ -9,6 +9,8 @@ PROJECT_ROOT: Path = Path(__file__).parent.resolve()
 CHECKPOINT_DB_PATH: Path = PROJECT_ROOT / "checkpoints.db"
 WORKSPACE_DIR: Path = PROJECT_ROOT / "workspace"
 LOG_DIR: Path = WORKSPACE_DIR / "logs"
+# Sprint 2：resource_scout git clone 落盘目录（加入 ensure_directories 自动创建）
+WORKSPACE_REPOS_DIR: Path = WORKSPACE_DIR / "repos"
 
 
 # ========== LLM 默认配置 ==========
@@ -60,6 +62,41 @@ REACT_RESULT_TAG_OPEN: str = "<result>"
 REACT_RESULT_TAG_CLOSE: str = "</result>"
 TOOL_RESULT_MAX_LENGTH: int = 8000
 
+# Sprint 2 新增 ReAct 轮数上限（沿用 sp1 字面量风格，无 env 覆盖）
+REACT_MAX_ROUNDS_RESOURCE_SCOUT: int = 10
+REACT_MAX_ROUNDS_PLANNING: int = 8
+
+
+# ========== Sprint 2：planning 人在回路 ==========
+# revise 无次数硬上限（依赖 MAX_TOTAL_LLM_CALLS 总预算兜底）；
+# 仅当 revise_count >= 此阈值时 UI 展示"是否切 code_only"软提示卡片（不锁按钮）。
+# 决策来源：PRD §2.3 / AC-S2-06，硬上限语义已废弃。
+
+PLANNING_SOFT_HINT_THRESHOLD: int = 5
+
+
+# ========== Sprint 2：git_tools（resource_scout 仓库克隆与探测） ==========
+
+GIT_CLONE_TIMEOUT: int = 60  # git clone 子进程超时（秒）
+GIT_CLONE_DEPTH: int = 1  # 浅克隆 depth
+URL_REACHABLE_TIMEOUT: int = 5  # check_url_reachable HEAD 探测超时（秒）
+
+
+# ========== Sprint 2：Papers With Code API（pwc_tools） ==========
+
+PWC_BASE_URL: str = "https://paperswithcode.com/api/v1"
+PWC_RATE_LIMIT_RPS: int = 5  # 本地节流速率（5 req/s 即 200ms 间隔）
+PWC_TIMEOUT_CONNECT: int = 5  # HTTP connect 超时（秒）
+PWC_TIMEOUT_READ: int = 10  # HTTP read 超时（秒）
+
+
+# ========== Sprint 2：Streamlit UI ==========
+
+STREAMLIT_POLL_INTERVAL: int = 1500  # st_autorefresh 间隔（毫秒）
+STREAMLIT_PAGE_INPUT: str = "input"  # UI 路由常量：论文输入页
+STREAMLIT_PAGE_PROGRESS: str = "progress"  # UI 路由常量：分析进度页
+STREAMLIT_PAGE_REVIEW: str = "review"  # UI 路由常量：计划审核页
+
 
 # ========== 环境变量读取 ==========
 
@@ -84,3 +121,4 @@ def get_llm_model() -> str:
 def ensure_directories() -> None:
     WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+    WORKSPACE_REPOS_DIR.mkdir(parents=True, exist_ok=True)

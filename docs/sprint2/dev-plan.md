@@ -443,10 +443,12 @@ from core.llm_client import resolve_llm_config
 - `WORKSPACE_REPOS_DIR` 添加到 `ensure_directories()` 中确保启动时创建。
 
 **自测检查点**：
-- [ ] CP-A4-1 `from config import PLANNING_SOFT_HINT_THRESHOLD, REACT_MAX_ROUNDS_RESOURCE_SCOUT, REACT_MAX_ROUNDS_PLANNING, GIT_CLONE_TIMEOUT, WORKSPACE_REPOS_DIR, PWC_BASE_URL, STREAMLIT_POLL_INTERVAL` 全部可导入
-- [ ] CP-A4-2 `PLANNING_SOFT_HINT_THRESHOLD == 5` / `REACT_MAX_ROUNDS_RESOURCE_SCOUT == 10` / `REACT_MAX_ROUNDS_PLANNING == 8`
-- [ ] CP-A4-3 `WORKSPACE_REPOS_DIR.is_dir()` 在调用 `ensure_directories()` 后为 True
-- [ ] CP-A4-4 sp1 既有常量（`MAX_TOTAL_LLM_CALLS`、`REACT_MAX_ROUNDS_PAPER_INTAKE` 等）零修改
+- [x] CP-A4-1 `from config import PLANNING_SOFT_HINT_THRESHOLD, REACT_MAX_ROUNDS_RESOURCE_SCOUT, REACT_MAX_ROUNDS_PLANNING, GIT_CLONE_TIMEOUT, WORKSPACE_REPOS_DIR, PWC_BASE_URL, STREAMLIT_POLL_INTERVAL` 全部可导入 — PASS 2026-06-01 @全栈开发代理（`tests/test_sprint2_a4.py::test_cp_a4_1_*`，含全表 15 常量无遗漏覆盖）
+- [x] CP-A4-2 `PLANNING_SOFT_HINT_THRESHOLD == 5` / `REACT_MAX_ROUNDS_RESOURCE_SCOUT == 10` / `REACT_MAX_ROUNDS_PLANNING == 8` — PASS 2026-06-01 @全栈开发代理（含全表值逐项断言 + 严格 int/Path/str 类型断言 + WORKSPACE_REPOS_DIR == WORKSPACE_DIR/'repos'）
+- [x] CP-A4-3 `WORKSPACE_REPOS_DIR.is_dir()` 在调用 `ensure_directories()` 后为 True — PASS 2026-06-01 @全栈开发代理（`ensure_directories()` 已追加 `WORKSPACE_REPOS_DIR.mkdir(parents=True, exist_ok=True)`）
+- [x] CP-A4-4 sp1 既有常量（`MAX_TOTAL_LLM_CALLS`、`REACT_MAX_ROUNDS_PAPER_INTAKE` 等）零修改 — PASS 2026-06-01 @全栈开发代理（14 个 sp1 关键常量逐项值断言，含 `MAX_TOTAL_LLM_CALLS == 50`）
+
+> **测试工程师独立验收（2026-06-01，PASS）**：CP-A4-1~4 逐条独立复核全部命中（Read config.py 核值 + `git diff HEAD~1` 实证 config.py 为纯追加 0 删改 + `WORKSPACE_REPOS_DIR` 确入 `ensure_directories()` L124）。补 6 条边界用例至 `tests/test_sprint2_a4.py`（共 12）：A4→A5 路径不变量 `resolve()+is_relative_to`（开发代理只断未 resolve 的 `==`）/ `PWC_RATE_LIMIT_RPS→200ms` 换算 / timeout 正数 + connect≤read / UI 路由互异 / env 无覆盖设计声明 reload 断言 / `ensure_directories` 幂等。非 e2e 核心回归 3 次连跑 113/113（增 6）+ A4 文件 3 次 12/12，累计 375/375 PASS、0 失败 0 跳过、0 抖动。零 BUG。报告：`docs/sprint2/test-reports/2026-06-01_a4-acceptance.md`。
 
 ---
 
