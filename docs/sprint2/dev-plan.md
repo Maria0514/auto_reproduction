@@ -608,17 +608,17 @@ def make_search_pwc_tool() -> BaseTool:
 - **不**在 `state["node_errors"]` 中留痕（工具层瞬态错误不进 NodeError，只在 resource_scout 整体降级为 from_scratch 时由节点 `_map_*_result` 统一标记 degraded）；
 - 缓存命中 / miss 仅打 DEBUG 日志。
 
-**自测检查点**：
-- [ ] CP-A6-1 `search_pwc_by_arxiv("2405.14831")` 在 mock requests 返回 200 时返回 `List[Dict]`，结构含 `paper_id` / `title` / `repos`
-- [ ] CP-A6-2 mock requests 第一次 429（Retry-After: 1）+ 第二次 200，函数最终成功（验证 Retry-After 退避）
-- [ ] CP-A6-3 mock requests 3 次 429（无 Retry-After）后抛 `TransientError`（验证指数退避 + 重试上限）
-- [ ] CP-A6-4 mock requests 3 次 timeout 后抛 `TransientError`
-- [ ] CP-A6-5 同一 arxiv_id 连续调用 `search_pwc_by_arxiv` 两次：第二次 HTTP 请求次数为 0（LRU 缓存命中验证）
-- [ ] CP-A6-6 `_throttle()` 200ms 间隔生效：连续 5 次调用累计耗时 ≥ 800ms（4 * 200ms 间隔）
-- [ ] CP-A6-7 设置 `PWC_API_TOKEN=test_token` env 后重新 import 模块，`_build_headers()` 含 `Authorization: Token test_token`；未设置时无此 header
-- [ ] CP-A6-8 `make_search_pwc_tool()` 返回 BaseTool 实例，ToolMessage 输出为合法 JSON（`json.loads` 不报错；含 `ensure_ascii=False, sort_keys=True`）
-- [ ] CP-A6-9 工具函数内部捕获 `TransientError` 后返回错误描述字符串（沿用 sp1 deepxiv_tools 工具工厂内的异常→字符串路径，不抛异常打断 ReAct 子图）
-- [ ] CP-A6-10 WARNING 日志非静默吞错（HTTP 失败时 caplog 能捕获至少 1 条 WARNING）
+**自测检查点**：（by test-engineer 2026-06-01，全部 pytest 覆盖且 22/22 全绿，见 test-reports/2026-06-01_a6-pwc-tools.md）
+- [x] CP-A6-1 `search_pwc_by_arxiv("2405.14831")` 在 mock requests 返回 200 时返回 `List[Dict]`，结构含 `paper_id` / `title` / `repos`
+- [x] CP-A6-2 mock requests 第一次 429（Retry-After: 1）+ 第二次 200，函数最终成功（验证 Retry-After 退避）
+- [x] CP-A6-3 mock requests 429（无 Retry-After）后抛 `TransientError`（验证指数退避 + 重试上限）。**语义澄清（test-engineer）**：实现为「首次 + 3 次重试 = 共 4 次 attempt」才抛，符合下方 §573 表格「超过 3 次重试→抛」权威语义（首次请求不计入 retry）；CP 文字「3 次」指「3 次重试」，建议补「（首次+3 次重试，共 4 次 attempt）」消歧。测试按「4 次 429 才抛 + 3 次 429+第 4 次 200 不抛」双向断言。
+- [x] CP-A6-4 mock requests timeout 后抛 `TransientError`（同上：共 4 次 timeout 才抛）
+- [x] CP-A6-5 同一 arxiv_id 连续调用 `search_pwc_by_arxiv` 两次：第二次 HTTP 请求次数为 0（LRU 缓存命中验证）
+- [x] CP-A6-6 `_throttle()` 200ms 间隔生效：连续 5 次调用累计耗时 ≥ 800ms（4 * 200ms 间隔）——测试用真实 sleep+monotonic 断言 ≥0.76s（留 5% 抖动容差）
+- [x] CP-A6-7 设置 `PWC_API_TOKEN=test_token` env 后重新 import 模块（`importlib.reload`），`_build_headers()` 含 `Authorization: Token test_token`；未设置时无此 header
+- [x] CP-A6-8 `make_search_pwc_tool()` 返回 BaseTool 实例，ToolMessage 输出为合法 JSON（`json.loads` 不报错；含 `ensure_ascii=False, sort_keys=True`）
+- [x] CP-A6-9 工具函数内部捕获 `TransientError` 后返回错误描述字符串（沿用 sp1 deepxiv_tools 工具工厂内的异常→字符串路径，不抛异常打断 ReAct 子图）
+- [x] CP-A6-10 WARNING 日志非静默吞错（HTTP 失败时 caplog 能捕获至少 1 条 WARNING）
 
 **风险标注**：
 - **中风险**：PwC API 当前免费匿名可用，但 endpoint 路径与字段命名未来可能变化（参考 PwC GitHub）；建议在工具函数内部容错地处理 schema 偏差
