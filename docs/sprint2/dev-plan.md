@@ -866,16 +866,18 @@ def _map_resource_scout_result(
 | max_rounds 耗尽 | force_finish 路径输出当前最佳候选（即使为空） |
 
 **自测检查点**：
-- [ ] CP-B2-1 `resource_scout` 是 `_make_react_wrapper` 生成的 callable，`__name__ == "react_wrapper_resource_scout"`
-- [ ] CP-B2-2 RESOURCE_SCOUT_SCHEMA properties 与 ResourceInfo TypedDict 字段集合对齐（除了 agent 自报告字段 `search_log`）
-- [ ] CP-B2-3 Mock LLM 走"有 github_url 路径"：单次 `git_clone_and_analyze` 成功后输出 `<result>` 含 1 个 RepoInfo，`resource_strategy="use_repo"`、`selected_repo == repos[0]`
-- [ ] CP-B2-4 Mock LLM 走"无 github_url + PwC 成功路径"：先 search_pwc → git_clone_and_analyze → 输出含 PwC 来源的 RepoInfo；`source` 字段标识 "pwc"
-- [ ] CP-B2-5 Mock LLM 走"全失败降级路径"（mock github_url=None + pwc 抛 TransientError + web_search 返回空）：输出 `resource_strategy="from_scratch"` + `repos=[]` + `selected_repo=None`；`degraded_nodes` 含 `"resource_scout"`；`node_errors` 含 degraded 记录；**节点不抛致命异常**
-- [ ] CP-B2-6 LLM 漏写 `repos` 但 react_messages 含 1 个 `git_clone_and_analyze` 成功 ToolMessage：`_backfill_repos_from_tools` 回填 1 个 RepoInfo，**WARNING 日志非静默**
-- [ ] CP-B2-7 `_map_resource_scout_result` 用 3 参签名（含 react_messages），通过 `inspect.signature` 断言形参列表含 `react_messages`
-- [ ] CP-B2-8 quality_score 全部 <0.3 时：`selected_repo == repos[0]` + `analysis_notes` 含 `[QUALITY_WARN]` 标记
-- [ ] CP-B2-9 max_rounds=10 耗尽时 force_finish 路径输出最佳已知候选（可为空，但节点不抛错）
-- [ ] CP-B2-10 _RESOURCE_SCOUT_SYSTEM_PROMPT_BODY 主体不含任何论文级动态变量（grep 断言 + 字节级一致测试）
+- [x] CP-B2-1 `resource_scout` 是 `_make_react_wrapper` 生成的 callable，`__name__ == "react_wrapper_resource_scout"`
+- [x] CP-B2-2 RESOURCE_SCOUT_SCHEMA properties 与 ResourceInfo TypedDict 字段集合对齐（除了 agent 自报告字段 `search_log`）
+- [x] CP-B2-3 Mock LLM 走"有 github_url 路径"：单次 `git_clone_and_analyze` 成功后输出 `<result>` 含 1 个 RepoInfo，`resource_strategy="use_repo"`、`selected_repo == repos[0]`
+- [x] CP-B2-4 Mock LLM 走"无 github_url + PwC 成功路径"：先 search_pwc → git_clone_and_analyze → 输出含 PwC 来源的 RepoInfo；`source` 字段标识 "pwc"
+- [x] CP-B2-5 Mock LLM 走"全失败降级路径"（mock github_url=None + pwc 抛 TransientError + web_search 返回空）：输出 `resource_strategy="from_scratch"` + `repos=[]` + `selected_repo=None`；`degraded_nodes` 含 `"resource_scout"`；`node_errors` 含 degraded 记录；**节点不抛致命异常**
+- [x] CP-B2-6 LLM 漏写 `repos` 但 react_messages 含 1 个 `git_clone_and_analyze` 成功 ToolMessage：`_backfill_repos_from_tools` 回填 1 个 RepoInfo，**WARNING 日志非静默**
+- [x] CP-B2-7 `_map_resource_scout_result` 用 3 参签名（含 react_messages），通过 `inspect.signature` 断言形参列表含 `react_messages`
+- [x] CP-B2-8 quality_score 全部 <0.3 时：`selected_repo == repos[0]` + `analysis_notes` 含 `[QUALITY_WARN]` 标记
+- [x] CP-B2-9 max_rounds=10 耗尽时 force_finish 路径输出最佳已知候选（可为空，但节点不抛错）
+- [x] CP-B2-10 _RESOURCE_SCOUT_SYSTEM_PROMPT_BODY 主体不含任何论文级动态变量（grep 断言 + 字节级一致测试）
+
+> CP-B2-1~10 全部由 @测试工程师代理独立验收实证覆盖且通过（2026-06-02），见 `docs/sprint2/test-reports/2026-06-02_b2-acceptance.md`；`tests/test_sprint2_b2.py` 共 34 项（dev 18 + 测试工程师补强 16）。
 
 **风险标注**：
 - **高风险**：agent 工具选择策略质量直接影响候选仓库覆盖率；R8 沿用（max_rounds 留足余量 + finalize 校验结果完整性 + backfill 兜底）
