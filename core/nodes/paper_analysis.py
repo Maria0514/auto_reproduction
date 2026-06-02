@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 from config import REACT_MAX_ROUNDS_PAPER_ANALYSIS
 from core.errors import make_node_error
 from core.react_base import _make_react_wrapper, extract_last_tool_result
-from core.state import GlobalState, PaperAnalysis
+from core.state import GlobalState, NodeError, PaperAnalysis
 from core.tools.deepxiv_tools import (
     get_full_paper_tool,
     get_paper_structure_tool,
@@ -29,18 +29,30 @@ PAPER_ANALYSIS_SCHEMA: Dict[str, Any] = {
     "description": "论文深度分析结果，paper_analysis 节点输出契约。",
     "type": "object",
     "properties": {
-        "method_summary": {"type": "string"},
+        "method_summary": {
+            "type": "string",
+            "description": "方法概述（中文主字段，自 Sprint 2 起语义反转为中文，给 planning/reporting 中文 prompt 消费）。",
+        },
         "key_formulas": {"type": "array", "items": {"type": "string"}},
         "datasets": {"type": "array", "items": {"type": "string"}},
         "metrics": {"type": "array", "items": {"type": "string"}},
         "hyperparams": {"type": "object", "additionalProperties": True},
-        "hardware_requirements": {"type": "string"},
+        "hardware_requirements": {
+            "type": "string",
+            "description": "硬件需求（中文主字段，自 Sprint 2 起语义反转为中文）。",
+        },
         "framework": {"type": ["string", "null"]},
         "baseline_results": {"type": "object", "additionalProperties": True},
         "sections_read": {"type": "array", "items": {"type": "string"}},
         "analysis_notes": {"type": "string"},
-        "method_summary_en": {"type": ["string", "null"]},
-        "hardware_requirements_en": {"type": ["string", "null"]},
+        "method_summary_en": {
+            "type": ["string", "null"],
+            "description": "方法概述英文备份字段（给 coding 节点消费，避免中英混杂；Optional）。",
+        },
+        "hardware_requirements_en": {
+            "type": ["string", "null"],
+            "description": "硬件需求英文备份字段（Optional）。",
+        },
     },
     "required": [
         "method_summary",
@@ -106,6 +118,21 @@ _ANALYSIS_SYSTEM_PROMPT_BODY = """你是深度论文分析专家，专注于从 
 """
 
 
+# Sprint 2 追加：输出语言策略段落（架构 §2.6.2 / §4.5 首选方案 A）。
+# 必须是 module-level 静态常量，禁止 f-string / 动态生成（R-PC4 字节级幂等）。
+# 拼接在 _ANALYSIS_SYSTEM_PROMPT_BODY 主体之后、"--- 当前论文上下文 ---" 动态段落
+# 之前。该常量字节稳定，论文间共享，前缀仍稳定到本段落末尾。一旦定稿，sp2 内部
+# 不允许微调（架构 §4.8 冻结期；任何字节修改 = Prompt Cache 全 miss）。
+_LANGUAGE_POLICY_SECTION = """--- 输出语言策略 ---
+请在 <result> JSON 中按以下规则填写字段语言：
+- method_summary：中文叙述（主字段，给 planning/reporting 中文 prompt 消费）；
+- method_summary_en：英文叙述（备份字段，给 coding 节点消费，避免中英混杂）；
+- hardware_requirements / hardware_requirements_en：同上；
+- datasets / metrics / framework / sections_read：英文事实层，禁止翻译；
+- analysis_notes：中文自由文本 + 英文机器标签（如 [DEGRADED] missing=...）。
+"""
+
+
 def _format_paper_context(arxiv_id: str, paper_meta: Optional[Dict[str, Any]]) -> str:
     """把 arxiv_id / paper_meta 渲染为稳定的尾部上下文段落。
 
@@ -143,9 +170,10 @@ def _build_analysis_system_prompt(context: Dict[str, Any]) -> str:
     paper_meta = context.get("paper_meta") if isinstance(context, dict) else None
     tail = _format_paper_context(arxiv_id, paper_meta)
     return (
-        _ANALYSIS_SYSTEM_PROMPT_BODY
+        _ANALYSIS_SYSTEM_PROMPT_BODY                       # ← 主体冻结（sp1 字节级一致）
+        + "\n" + _LANGUAGE_POLICY_SECTION                  # ← Sprint 2 追加（字节稳定常量）
         + "\n--- 当前论文上下文 ---\n"
-        + tail
+        + tail                                              # ← 论文级动态
     )
 
 
@@ -196,6 +224,10 @@ def _build_paper_analysis(result: Dict[str, Any]) -> PaperAnalysis:
         baseline_results=_coerce_dict(result.get("baseline_results")),
         sections_read=_coerce_str_list(result.get("sections_read")),
         analysis_notes=_coerce_str(result.get("analysis_notes")),
+        method_summary_en=_coerce_optional_str(result.get("method_summary_en")),
+        hardware_requirements_en=_coerce_optional_str(
+            result.get("hardware_requirements_en")
+        ),
     )
 
 
@@ -343,6 +375,50 @@ def _backfill_analysis_from_tools(
     return analysis
 
 
+def _backfill_en_fields(
+    analysis: PaperAnalysis,
+    degraded_nodes: List[str],
+    node_errors: List[NodeError],
+) -> bool:
+    """LLM 漏写 *_en 英文备份字段时回退对应中文主字段值并标记 degraded（架构 §2.6.3）。
+
+    沿用 BUG-S1-02 / BUG-S1-03 治理范式：非静默——触发回退时写 degraded NodeError +
+    打 WARNING 日志。**严禁引入二次 LLM 翻译调用**（PRD §4.7.4 硬约束），仅做主字段兜底。
+
+    Args:
+        analysis: 待回填的 PaperAnalysis（原地修改）。
+        degraded_nodes: degraded 节点列表（原地去重追加）。
+        node_errors: NodeError 列表（原地追加一条 degraded 记录）。
+
+    Returns:
+        True 表示触发了至少一项回退。
+    """
+    fell_back = False
+    if not analysis.get("method_summary_en") and analysis.get("method_summary"):
+        analysis["method_summary_en"] = analysis["method_summary"]
+        fell_back = True
+    if (not analysis.get("hardware_requirements_en")
+            and analysis.get("hardware_requirements")):
+        analysis["hardware_requirements_en"] = analysis["hardware_requirements"]
+        fell_back = True
+    if fell_back:
+        if NODE_NAME not in degraded_nodes:
+            degraded_nodes.append(NODE_NAME)
+        node_errors.append(
+            make_node_error(
+                NODE_NAME,
+                "degraded",
+                "LLM 漏写英文备份字段 *_en，已回退中文主字段值（未触发二次翻译）",
+                None,
+            )
+        )
+        logger.warning(
+            "[%s] *_en 字段缺失回退为中文主字段（避免静默吞错，未触发二次 LLM 翻译）",
+            NODE_NAME,
+        )
+    return fell_back
+
+
 def _map_analysis_result(
     result: Optional[Dict[str, Any]],
     state: GlobalState,
@@ -391,6 +467,10 @@ def _map_analysis_result(
     # 复现率），但 ReAct 子图已经成功调用过 read_section。此处先从工具调用
     # 历史回填可推导字段，再判定 degraded，避免误标记。
     analysis = _backfill_analysis_from_tools(analysis, react_messages)
+
+    # Sprint 2：LLM 漏写 *_en 英文备份字段时回退中文主字段值（非静默 + degraded 标记）。
+    # 放在工具历史回填之后——此时 method_summary 已尽可能完整，再做 en 兜底。
+    _backfill_en_fields(analysis, degraded_nodes, node_errors)
 
     missing = _missing_core_fields(analysis)
     if missing:

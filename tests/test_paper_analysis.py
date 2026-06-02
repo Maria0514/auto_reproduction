@@ -38,6 +38,7 @@ from core.nodes.paper_analysis import (  # noqa: E402
     NODE_NAME,
     PAPER_ANALYSIS_SCHEMA,
     _ANALYSIS_SYSTEM_PROMPT_BODY,
+    _LANGUAGE_POLICY_SECTION,
     _backfill_analysis_from_tools,
     _build_analysis_system_prompt,
     _map_analysis_result,
@@ -421,6 +422,12 @@ def case_normal_path(monkeypatch, report: Report) -> None:
                         "baseline_results": {"BLEU_EN_DE": 28.4},
                         "sections_read": ["Method", "Experiments", "Results"],
                         "analysis_notes": "normal path",
+                        # Sprint 2：完整 clean path 应同时给出 *_en 备份字段，避免触发
+                        # _backfill_en_fields 的 degraded 兜底（CP4 验证不被误标 degraded）。
+                        "method_summary_en": (
+                            "Transformer based on multi-head self-attention."
+                        ),
+                        "hardware_requirements_en": "8x P100 GPUs",
                     })
                     + "</result>"
                 ),
@@ -848,10 +855,15 @@ def case_prompt_cache_prefix_stable(report: Report) -> None:
         body_b = prompt_b.split(separator, 1)[0]
         assert body_a == body_b, "主体字节级不一致，破坏 Prompt Cache 前缀稳定"
 
-        # 3) 主体应与导出的常量 _ANALYSIS_SYSTEM_PROMPT_BODY 字节级一致
-        #    （split 后 body 含 BODY 末尾的换行符；只比较 rstrip 后的内容）
-        assert body_a.rstrip("\n") == _ANALYSIS_SYSTEM_PROMPT_BODY.rstrip("\n"), (
-            "主体与 _ANALYSIS_SYSTEM_PROMPT_BODY 不一致；任何修改都应同步常量"
+        # 3) 主体前缀应为 _ANALYSIS_SYSTEM_PROMPT_BODY + _LANGUAGE_POLICY_SECTION
+        #    （Sprint 2 在主体冻结的前提下追加了字节稳定的输出语言策略段落，
+        #     架构 §4.5 方案 A；split 后 body 含末尾换行符，只比较 rstrip 后内容）
+        expected_prefix = (
+            _ANALYSIS_SYSTEM_PROMPT_BODY + "\n" + _LANGUAGE_POLICY_SECTION
+        )
+        assert body_a.rstrip("\n") == expected_prefix.rstrip("\n"), (
+            "主体前缀与 _ANALYSIS_SYSTEM_PROMPT_BODY + _LANGUAGE_POLICY_SECTION 不一致；"
+            "任何修改都应同步常量"
         )
 
         # 4) 主体里不得出现任何论文级动态变量（防止意外硬编码）
@@ -897,6 +909,14 @@ def case_backfill_sections_read_from_tools(report: Report) -> None:
             "hardware_requirements": "4 NVIDIA RTX A6000",
             "framework": "PyTorch",
             "baseline_results": {"BM25_R2": 0.43},
+            # Sprint 2：给出 *_en 备份字段，使本用例只验证 sections_read 工具历史回填，
+            # 不被 _backfill_en_fields 的 degraded 兜底干扰（CP11 聚焦 BUG-S1-03 回归）。
+            "method_summary_en": (
+                "HippoRAG is a neurobiologically inspired retrieval framework "
+                "that combines a knowledge graph with personalized PageRank to "
+                "improve multi-hop retrieval over passages."
+            ),
+            "hardware_requirements_en": "4 NVIDIA RTX A6000",
             # 关键：LLM 漏写——按字段填充优先级原本应列出实际读过的章节名
             "sections_read": [],
             "analysis_notes": (

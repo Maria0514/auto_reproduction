@@ -723,16 +723,16 @@ def _backfill_zh_fields(meta: PaperMeta, degraded_nodes: List[str],
 - sp2 后续 planning prompt 引用（B3 实施时已按中文主字段对齐，详见 architecture §2.4.2）
 
 **自测检查点**：
-- [ ] CP-B1-1 `PAPER_META_SCHEMA.properties` 含 `title_zh` / `abstract_zh` / `tldr_zh` 字段，且不在 `required` 数组内
-- [ ] CP-B1-2 `PAPER_ANALYSIS_SCHEMA.properties` 含 `method_summary_en` / `hardware_requirements_en` 字段，且不在 `required` 数组内；`method_summary` / `hardware_requirements` 字段 description 含"中文"
-- [ ] CP-B1-3 `_LANGUAGE_POLICY_SECTION` 是 module-level 常量，多次调用 `_build_analysis_system_prompt({...different arxiv...})` 时该段落字节级一致
-- [ ] CP-B1-4 `_ANALYSIS_SYSTEM_PROMPT_BODY` 在 sp2 改造后字节级与 sp1 完全一致（diff 工具断言）
-- [ ] CP-B1-5 **主体字节级一致测试**（参考 sp1 `test_e2e_prompt_cache_system_prompt_byte_identical`）：两篇不同论文截取 SystemMessage，去尾部 `--- 当前论文上下文 ---` 段落后字节级一致；改造后 prompt 前缀截止到 `_LANGUAGE_POLICY_SECTION` 末尾也字节级一致
-- [ ] CP-B1-6 LLM mock 漏写 `title_zh`：`_map_intake_result` 回退 `title_zh = title`，`degraded_nodes` 含 `"paper_intake"`，`node_errors` 含 degraded 记录，**WARNING 日志非静默**（caplog.records 含 1 条 WARNING）
-- [ ] CP-B1-7 LLM mock 漏写 `method_summary_en`：`_map_analysis_result` 回退 `method_summary_en = method_summary`，同上 degraded 标记 + WARNING 日志
-- [ ] CP-B1-8 LLM mock 同时漏写多个 `*_zh` 字段：全部回退、`degraded_nodes` 仅追加一次（去重）、`node_errors` 仅一条
-- [ ] CP-B1-9 **严禁引入二次 LLM 翻译调用**：grep 节点代码确认无 `create_llm` / `llm.invoke` 二次调用 path（除 ReAct 子图内主流程外）
-- [ ] CP-B1-10 sp1 既有 paper_intake / paper_analysis 单测 CP1~CP11 全部仍通过
+- [x] CP-B1-1 `PAPER_META_SCHEMA.properties` 含 `title_zh` / `abstract_zh` / `tldr_zh` 字段，且不在 `required` 数组内 — PASS（test_sprint2_b1::test_cp_b1_1）
+- [x] CP-B1-2 `PAPER_ANALYSIS_SCHEMA.properties` 含 `method_summary_en` / `hardware_requirements_en` 字段，且不在 `required` 数组内；`method_summary` / `hardware_requirements` 字段 description 含"中文" — PASS（test_cp_b1_2，主字段补 description "中文主字段"）
+- [x] CP-B1-3 `_LANGUAGE_POLICY_SECTION` 是 module-level 常量，多次调用 `_build_analysis_system_prompt({...different arxiv...})` 时该段落字节级一致 — PASS（test_cp_b1_3，含无 f-string 占位断言）
+- [x] CP-B1-4 `_ANALYSIS_SYSTEM_PROMPT_BODY` 在 sp2 改造后字节级与 sp1 完全一致（diff 工具断言）— PASS（test_cp_b1_4 + git show HEAD 比对 byte-identical，`_INTAKE_SYSTEM_PROMPT` 同样冻结）
+- [x] CP-B1-5 **主体字节级一致测试**：两篇不同论文截取 SystemMessage，去尾部 `--- 当前论文上下文 ---` 段落后字节级一致；改造后 prompt 前缀截止到 `_LANGUAGE_POLICY_SECTION` 末尾也字节级一致 — PASS（test_cp_b1_5 + sp1 test_paper_analysis CP10 升级断言）
+- [x] CP-B1-6 LLM mock 漏写 `title_zh`：`_map_intake_result` 回退 `title_zh = title`，`degraded_nodes` 含 `"paper_intake"`，`node_errors` 含 degraded 记录，**WARNING 日志非静默** — PASS（test_cp_b1_6，caplog 断言 WARNING）
+- [x] CP-B1-7 LLM mock 漏写 `method_summary_en`：`_map_analysis_result` 回退 `method_summary_en = method_summary`，同上 degraded 标记 + WARNING 日志 — PASS（test_cp_b1_7）
+- [x] CP-B1-8 LLM mock 同时漏写多个 `*_zh` 字段：全部回退、`degraded_nodes` 仅追加一次（去重）、`node_errors` 仅一条 — PASS（test_cp_b1_8 + 反向用例 zh 已存在时不回退/不 degraded）
+- [x] CP-B1-9 **严禁引入二次 LLM 翻译调用**：grep 节点代码确认无 `create_llm` / `llm.invoke` 二次调用 path — PASS（test_cp_b1_9 inspect.getsource 扫描 4 函数无 create_llm/llm.invoke/ChatOpenAI/translate）
+- [x] CP-B1-10 sp1 既有 paper_intake / paper_analysis 单测 CP1~CP11 全部仍通过 — PASS（test_cp_b1_10 跑 main()：paper_analysis 11/11 + paper_intake 8/8；CP4/CP11 mock 补 *_en 保持 clean path 语义）
 
 **风险标注**：
 - **中风险**：R-PC4 字节级幂等违反 = AC-S2-08 硬约束失败 = 不能交付；E2 阶段必须连跑命中率回归
