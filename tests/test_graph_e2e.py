@@ -73,7 +73,8 @@ pytestmark = [
     pytest.mark.e2e,
     pytest.mark.skip(
         reason="sp1 D1 e2e 与 sp2 C1（planning interrupt 暂停 + 真节点）语义冲突，"
-        "待测试工程师在 sp2 E 阶段重写为 resume 流程 graph e2e",
+        "已由 sp2 E 阶段重写为 tests/test_sprint2_c1_e2e.py（resume 流程 graph e2e，"
+        "2026-06-03 真实 LLM 链路 3 用例验收通过）；本旧套件保留为历史证据，永久 skip。",
     ),
 ]
 
