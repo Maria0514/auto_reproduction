@@ -1,0 +1,113 @@
+{
+  "spike": "S-3",
+  "task": "Prompt Cache fresh 基线复采",
+  "timestamp": "20260602-194921",
+  "arxiv_id": "2405.14831",
+  "base_url": "https://inference-api.nvidia.com/v1",
+  "model": "azure/openai/gpt-5.4",
+  "paper_intake": {
+    "elapsed_seconds": 15.121,
+    "title": "HippoRAG: Neurobiologically Inspired Long-Term Memory for Large Language Models"
+  },
+  "phase2_elapsed_seconds": 154.35,
+  "ttl_violated": true,
+  "runs": [
+    {
+      "run_index": 1,
+      "llm_calls": 4,
+      "total_cached_tokens": 17408,
+      "total_prompt_tokens": 30547,
+      "total_cache_creation_tokens": 0,
+      "hit_ratio": 0.5698759288964547,
+      "elapsed_seconds": 53.169,
+      "per_call_metrics": [
+        {
+          "cached_tokens": 0,
+          "prompt_tokens": 3110,
+          "cache_creation_tokens": 0
+        },
+        {
+          "cached_tokens": 3072,
+          "prompt_tokens": 4635,
+          "cache_creation_tokens": 0
+        },
+        {
+          "cached_tokens": 4608,
+          "prompt_tokens": 9757,
+          "cache_creation_tokens": 0
+        },
+        {
+          "cached_tokens": 9728,
+          "prompt_tokens": 13045,
+          "cache_creation_tokens": 0
+        }
+      ]
+    },
+    {
+      "run_index": 2,
+      "llm_calls": 4,
+      "total_cached_tokens": 26880,
+      "total_prompt_tokens": 31030,
+      "total_cache_creation_tokens": 0,
+      "hit_ratio": 0.8662584595552691,
+      "elapsed_seconds": 49.031,
+      "per_call_metrics": [
+        {
+          "cached_tokens": 3072,
+          "prompt_tokens": 3110,
+          "cache_creation_tokens": 0
+        },
+        {
+          "cached_tokens": 4480,
+          "prompt_tokens": 4635,
+          "cache_creation_tokens": 0
+        },
+        {
+          "cached_tokens": 9600,
+          "prompt_tokens": 9757,
+          "cache_creation_tokens": 0
+        },
+        {
+          "cached_tokens": 9728,
+          "prompt_tokens": 13528,
+          "cache_creation_tokens": 0
+        }
+      ]
+    },
+    {
+      "run_index": 3,
+      "llm_calls": 4,
+      "total_cached_tokens": 22912,
+      "total_prompt_tokens": 35033,
+      "total_cache_creation_tokens": 0,
+      "hit_ratio": 0.6540119316073416,
+      "elapsed_seconds": 52.149,
+      "per_call_metrics": [
+        {
+          "cached_tokens": 3072,
+          "prompt_tokens": 3110,
+          "cache_creation_tokens": 0
+        },
+        {
+          "cached_tokens": 4480,
+          "prompt_tokens": 4635,
+          "cache_creation_tokens": 0
+        },
+        {
+          "cached_tokens": 4736,
+          "prompt_tokens": 10630,
+          "cache_creation_tokens": 0
+        },
+        {
+          "cached_tokens": 10624,
+          "prompt_tokens": 16658,
+          "cache_creation_tokens": 0
+        }
+      ]
+    }
+  ],
+  "r_baseline": 0.7601,
+  "r2_hit_ratio": 0.8663,
+  "r3_hit_ratio": 0.654,
+  "r1_cold_hit_ratio": 0.5699
+}

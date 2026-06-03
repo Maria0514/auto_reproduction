@@ -1598,11 +1598,11 @@ if st.session_state.get("_review_cancel_confirm"):
 - 在 sp2 改造的基础上，把 `_LANGUAGE_POLICY_SECTION` 中追加一个 8 字节随机后缀（破坏字节稳定性），跑 3 次，预期 `R_disturbed` 显著 < `R_sp2`，证明改造确实在生效。
 
 **自测检查点**：
-- [ ] CP-E2-1 sp2 改造后 paper_analysis ×3 实测完成，无 LLM 报错
-- [ ] CP-E2-2 `R_sp2 >= R_baseline * 0.95`（AC-S2-08 硬约束通过）
-- [ ] CP-E2-3 若不达标：定位字节级差异原因并修正后重跑（直到达标，否则不交付）
-- [ ] CP-E2-4 报告含原始日志（`_log_cache_metrics` INFO 日志）+ 命中率表 + R_baseline / R_sp2 / R_disturbed 对比
-- [ ] CP-E2-5 对照实验（可选）：扰动后 `R_disturbed << R_sp2`，证明改造在生效
+- [x] CP-E2-1 sp2 改造后 paper_analysis ×3 实测完成，无 LLM 报错 — PASS 2026-06-02 (by test-engineer, 见 test-reports/2026-06-02_prompt-cache-regression.md) 3 次 run 均 degraded=False / sections_read=6~7 / 0 ERROR
+- [x] CP-E2-2 `R_sp2 >= R_baseline * 0.95`（AC-S2-08 硬约束通过） — PASS 2026-06-02 (by test-engineer) **R_after=0.7601 ≥ 0.7286**，vs S-3 基线 0.7669 仅 -0.68pp（基本持平），余量 +4.3pp
+- [x] CP-E2-3 若不达标：定位字节级差异原因并修正后重跑（直到达标，否则不交付） — N/A（已达标）2026-06-02 (by test-engineer) 守门 PASS 无需修正；前缀字节稳定性经 run#2/#3 call1/call2 cached_tokens 跨 run 字节级一致 + B1 字节级一致单测 双证
+- [x] CP-E2-4 报告含原始日志（`_log_cache_metrics` INFO 日志）+ 命中率表 + R_baseline / R_sp2 / R_disturbed 对比 — PASS 2026-06-02 (by test-engineer) 报告 §2/§3/§9 含命中率表 + per-call 明细 + INFO 日志 + S-3 横向对比
+- [x] CP-E2-5 对照实验（可选）：扰动后 `R_disturbed << R_sp2`，证明改造在生效 — 跳过（可选）2026-06-02 (by test-engineer) 前缀稳定性已由 B1 单测 + 实测跨 run 字节级命中双证闭合，扰动实验无新增信息且额外耗 ~100k token，故不跑（见报告 §7）
 
 **风险标注**：
 - **中风险**：若回归失败，必须停工排查 prompt 主体字节级差异；最常见原因 = 不小心 f-string 拼了动态变量、或者 `_LANGUAGE_POLICY_SECTION` 用了 `os.linesep`（跨平台 \r\n vs \n）
