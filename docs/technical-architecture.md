@@ -485,6 +485,7 @@ class GlobalState(TypedDict):
     execution_mode: ExecutionMode
     sandbox_type: str                    # "venv" | "docker" | "none"
     error: Optional[str]
+    analysis_notes: str                  # 顶层人类可审核备注通道（resource_scout [SEARCH_LOG]/[QUALITY_WARN]、planning [CANCELLED]/[PLANNING_FALLBACK] 经 read-modify-write 累加）；必须声明为通道否则节点写入被 LangGraph 丢弃
     messages: List[Dict[str, str]]
 
     # --- 错误追踪（§12.3）---

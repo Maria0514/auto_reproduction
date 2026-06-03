@@ -1050,18 +1050,18 @@ def _map_planning_result(
 ```
 
 **自测检查点**：
-- [ ] CP-B3-1 `planning` 是手写函数（不是 `_make_react_wrapper` 直接生成），签名 `(state: GlobalState) -> dict`
-- [ ] CP-B3-2 ReAct 子图 `_planning_react` 通过 `_make_react_wrapper(node_name="planning", ...)` 生成（自动获得节点级 LLM 路由能力）
-- [ ] CP-B3-3 Mock LLM + Mock interrupt 返回 `{"decision": "approve"}`：节点返回 dict 含 `reproduction_plan.approved == True`、`current_step == "planning"`
-- [ ] CP-B3-4 Mock interrupt 返回 `{"decision": "revise", "user_feedback": "缩减实验"}`：返回 dict 含 `_planning_user_feedback == "缩减实验"`、`_planning_revise_count == revise_count + 1`、**不含 `reproduction_plan.approved = True`**（让 graph 走 self-loop 重新 planning）
-- [ ] CP-B3-5 **连续 6 次 revise 不强制 approve**：模拟 6 次 `{"decision": "revise"}`，每次节点都正常返回新 state、`_planning_revise_count` 单调递增 1→6、节点不抛错也不强制 approve、`analysis_notes` 不出现 "revise_limit_reached"
-- [ ] CP-B3-6 Mock interrupt 返回 `{"decision": "switch_repo", "new_repo_url": "https://..."}`：返回 dict 含 `resource_info.selected_repo.url == "https://..."`、`_planning_revise_count == revise_count + 1`（与 revise 共享计数）
-- [ ] CP-B3-7 Mock interrupt 返回 `{"decision": "code_only"}`：返回 dict 含 `execution_mode == ExecutionMode.CODE_ONLY` + `reproduction_plan.approved == True`
-- [ ] CP-B3-8 Mock interrupt 返回 `{"decision": "cancel"}`：返回 dict 含 `current_step == "cancelled_by_user"` + `analysis_notes` 含 `[CANCELLED]`；`reproduction_plan.approved` 仍为 False（cancel 不强制 approve）
-- [ ] CP-B3-9 Mock interrupt 返回非法 payload（`{"foo": "bar"}` 或 `None`）：节点走 `_finalize_approve(reason="invalid_resume_payload")` 兜底不抛错
-- [ ] CP-B3-10 `_PLANNING_SYSTEM_PROMPT_BODY` 主体不含任何论文级动态变量（grep 断言 + 字节级一致测试，参考 sp1 paper_analysis CP10）
-- [ ] CP-B3-11 ReAct 子图本身失败（mock LLM 抛 LLMError）时节点仍输出最简版 `reproduction_plan`（仅 plan_summary + code_strategy）并触发 interrupt
-- [ ] CP-B3-12 `_map_planning_result` 用 3 参签名（含 react_messages），与 sp1 治理范式一致
+- [x] [2026-06-03] CP-B3-1 `planning` 是手写函数（不是 `_make_react_wrapper` 直接生成），签名 `(state: GlobalState) -> dict`
+- [x] [2026-06-03] CP-B3-2 ReAct 子图 `_planning_react` 通过 `_make_react_wrapper(node_name="planning", ...)` 生成（自动获得节点级 LLM 路由能力）
+- [x] [2026-06-03] CP-B3-3 Mock LLM + Mock interrupt 返回 `{"decision": "approve"}`：节点返回 dict 含 `reproduction_plan.approved == True`、`current_step == "planning"`
+- [x] [2026-06-03] CP-B3-4 Mock interrupt 返回 `{"decision": "revise", "user_feedback": "缩减实验"}`：返回 dict 含 `_planning_user_feedback == "缩减实验"`、`_planning_revise_count == revise_count + 1`、**不含 `reproduction_plan.approved = True`**（让 graph 走 self-loop 重新 planning）
+- [x] [2026-06-03] CP-B3-5 **连续 6 次 revise 不强制 approve**：模拟 6 次 `{"decision": "revise"}`，每次节点都正常返回新 state、`_planning_revise_count` 单调递增 1→6、节点不抛错也不强制 approve、`analysis_notes` 不出现 "revise_limit_reached"
+- [x] [2026-06-03] CP-B3-6 Mock interrupt 返回 `{"decision": "switch_repo", "new_repo_url": "https://..."}`：返回 dict 含 `resource_info.selected_repo.url == "https://..."`、`_planning_revise_count == revise_count + 1`（与 revise 共享计数）
+- [x] [2026-06-03] CP-B3-7 Mock interrupt 返回 `{"decision": "code_only"}`：返回 dict 含 `execution_mode == ExecutionMode.CODE_ONLY` + `reproduction_plan.approved == True`
+- [x] [2026-06-03] CP-B3-8 Mock interrupt 返回 `{"decision": "cancel"}`：返回 dict 含 `current_step == "cancelled_by_user"` + `analysis_notes` 含 `[CANCELLED]`；`reproduction_plan.approved` 仍为 False（cancel 不强制 approve）
+- [x] [2026-06-03] CP-B3-9 Mock interrupt 返回非法 payload（`{"foo": "bar"}` 或 `None`）：节点走 `_finalize_approve(reason="invalid_resume_payload")` 兜底不抛错
+- [x] [2026-06-03] CP-B3-10 `_PLANNING_SYSTEM_PROMPT_BODY` 主体不含任何论文级动态变量（grep 断言 + 字节级一致测试，参考 sp1 paper_analysis CP10）
+- [x] [2026-06-03] CP-B3-11 ReAct 子图本身失败（mock LLM 抛 LLMError）时节点仍输出最简版 `reproduction_plan`（仅 plan_summary + code_strategy）并触发 interrupt
+- [x] [2026-06-03] CP-B3-12 `_map_planning_result` 用 3 参签名（含 react_messages），与 sp1 治理范式一致
 
 **风险标注**：
 - **高风险**：interrupt 在节点函数体内调用的语义边界（R-S2-08）—— 通过 S-1 spike 提前验证
@@ -1145,19 +1145,19 @@ def _route_after_planning(state: GlobalState) -> str:
 **3. 编译选项**：Sprint 2 仍**不使用** `interrupt_before` / `interrupt_after`（架构 §2.5.2），因为 `interrupt()` 在节点内部调用而非节点边界触发。
 
 **自测检查点**：
-- [ ] CP-C1-1 `build_graph()` 返回 `CompiledGraph` 实例（沿用 sp1 D1 自测）
-- [ ] CP-C1-2 图节点集合 = `{paper_intake, paper_analysis, resource_scout, planning, coding, execution, reporting}`（共 7 个）
-- [ ] CP-C1-3 paper_intake / paper_analysis 仍是 ReAct wrapper（sp1 D1 自测沿用）
-- [ ] CP-C1-4 resource_scout 是 `_make_react_wrapper` 生成的 callable（B2 自测沿用，graph 集成视角再验证一次）
-- [ ] CP-C1-5 planning 是手写 callable（B3 自测沿用）
-- [ ] CP-C1-6 coding / execution / reporting 仍是 `_passthrough`，返回空 dict
-- [ ] CP-C1-7 `_route_after_planning` 三路判定：
+- [x] [2026-06-03] CP-C1-1 `build_graph()` 返回 `CompiledGraph` 实例（沿用 sp1 D1 自测）
+- [x] [2026-06-03] CP-C1-2 图节点集合 = `{paper_intake, paper_analysis, resource_scout, planning, coding, execution, reporting}`（共 7 个）
+- [x] [2026-06-03] CP-C1-3 paper_intake / paper_analysis 仍是 ReAct wrapper（sp1 D1 自测沿用）
+- [x] [2026-06-03] CP-C1-4 resource_scout 是 `_make_react_wrapper` 生成的 callable（B2 自测沿用，graph 集成视角再验证一次）
+- [x] [2026-06-03] CP-C1-5 planning 是手写 callable（B3 自测沿用）
+- [x] [2026-06-03] CP-C1-6 coding / execution / reporting 仍是 `_passthrough`，返回空 dict
+- [x] [2026-06-03] CP-C1-7 `_route_after_planning` 三路判定：
   - state `current_step="cancelled_by_user"` → `"end"`
   - state `reproduction_plan.approved=True` → `"next"`
   - 其它（含未设 plan 或 approved=False） → `"self"`
-- [ ] CP-C1-8 图编译时 `interrupt_before` / `interrupt_after` 均不指定
-- [ ] CP-C1-9 全链路 `graph.invoke(state, config)` 跑到 planning 后**自然暂停**（不需手动 interrupt_after）—— 通过 mock 节点 + mock interrupt 验证
-- [ ] CP-C1-10 cancel 路径：mock state `current_step="cancelled_by_user"` 进入 planning 节点后，路由函数返回 "end"，graph 推进到 END 而不是 coding
+- [x] [2026-06-03] CP-C1-8 图编译时 `interrupt_before` / `interrupt_after` 均不指定
+- [x] [2026-06-03] CP-C1-9 全链路 `graph.invoke(state, config)` 跑到 planning 后**自然暂停**（不需手动 interrupt_after）—— 通过 mock 节点 + mock interrupt 验证
+- [x] [2026-06-03] CP-C1-10 cancel 路径：mock state `current_step="cancelled_by_user"` 进入 planning 节点后，路由函数返回 "end"，graph 推进到 END 而不是 coding
 
 **风险标注**：
 - **中风险**：3 路条件边的边界场景测试（如 plan 缺失 + current_step 已 cancelled）必须明确路由优先级

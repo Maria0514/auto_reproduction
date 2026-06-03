@@ -1,17 +1,18 @@
-"""D1 - core/graph.py LangGraph 主图骨架自测。
+"""D1 - core/graph.py LangGraph 主图骨架自测（Sprint 2 C1 升级后同步更新）。
 
-覆盖 dev-plan.md D1 任务的 6 个自测检查点：
+覆盖 dev-plan.md D1 任务的 6 个自测检查点，并随 Sprint 2 C1 升级调整节点形态断言：
 
 1. build_graph() 返回 CompiledGraph 实例
 2. 图包含 7 个业务节点（节点名集合一致）
-3. paper_intake / paper_analysis 节点使用的是 ReAct wrapper 函数
-   （核心节点引用 == core.nodes.paper_intake.paper_intake / paper_analysis）
-4. 占位节点不修改状态（resource_scout / planning / coding / execution / reporting
-   逐一调用，返回 {}）
+3. paper_intake / paper_analysis / resource_scout 节点是 ReAct wrapper 函数；
+   planning 是手写复合节点（内含 interrupt，非 wrapper）
+4. 仅 coding / execution / reporting 三个占位节点返回 {}
+   （Sprint 2 起 resource_scout / planning 已接入真节点，见 tests/test_sprint2_b2.py /
+   tests/test_sprint2_b3.py / tests/test_sprint2_c1.py）
 5. 可使用 mock checkpointer 编译成功（langgraph.checkpoint.memory.MemorySaver）
 6. 全链路可通过 graph.invoke(state, config) 执行
-   —— 用 unittest.mock.patch 把 ReAct wrapper monkey-patch 成返回固定 dict 的函数，
-   避免触发真实 LLM / SDK 调用
+   —— 用 unittest.mock.patch 把 4 个真节点 monkey-patch 成返回固定 dict 的函数，
+   避免触发真实 LLM / SDK 调用；planning fake 返回 approved plan 使 3 路条件边走 next
 """
 from __future__ import annotations
 
@@ -109,17 +110,32 @@ def test_paper_analysis_is_react_wrapper():
     assert callable(paper_analysis)
 
 
-# ---------- 检查点 4：5 个占位节点返回空字典 ----------
+def test_resource_scout_is_react_wrapper():
+    """Sprint 2 C1：resource_scout 已接入 _make_react_wrapper 生成的 callable。"""
+    assert resource_scout.__name__ == "react_wrapper_resource_scout"
+    assert callable(resource_scout)
+
+
+def test_planning_is_handwritten_node():
+    """Sprint 2 C1：planning 是手写复合节点（含 interrupt），非 ReAct wrapper。"""
+    assert planning.__name__ == "planning"
+    assert callable(planning)
+
+
+# ---------- 检查点 4：3 个占位节点返回空字典（Sprint 2 起仅 coding/execution/reporting）----------
 
 
 @pytest.mark.parametrize(
     "placeholder_fn",
-    [resource_scout, planning, coding, execution, reporting],
-    ids=["resource_scout", "planning", "coding", "execution", "reporting"],
+    [coding, execution, reporting],
+    ids=["coding", "execution", "reporting"],
 )
 def test_placeholder_nodes_return_empty_dict(placeholder_fn):
     """占位节点接受任意 GlobalState（含空 dict），均应返回空 dict —— LangGraph
     merge 语义下空 dict 不会触发任何状态字段更新。
+
+    注意（Sprint 2 C1）：resource_scout / planning 已升级为真节点，不再属于占位集合，
+    其行为分别由 tests/test_sprint2_b2.py / tests/test_sprint2_b3.py 覆盖。
     """
     # 空 state
     assert placeholder_fn({}) == {}
@@ -168,11 +184,12 @@ def test_build_graph_default_checkpointer_lazy_import():
 
 
 def test_full_graph_invoke_with_patched_react_wrappers():
-    """端到端 invoke：用 patch 把 paper_intake / paper_analysis ReAct wrapper 替换
-    为返回固定 dict 的轻量函数，避免触发真实 LLM / SDK 调用，验证 7 节点顺序边连通。
+    """端到端 invoke：用 patch 把 4 个真节点（paper_intake / paper_analysis /
+    resource_scout / planning）替换为返回固定 dict 的轻量函数，避免触发真实 LLM / SDK /
+    interrupt 调用，验证主干顺序边 + planning 3 路条件边（approve -> next -> coding）连通。
 
-    占位节点（resource_scout..reporting）按设计返回 {} 不修改状态，所以最终状态
-    应包含 patched wrapper 写入的字段。
+    planning fake 返回 approved=True 的 reproduction_plan，使 _route_after_planning 走
+    "next" 进入 coding；coding / execution / reporting 占位返回 {} 不修改状态。
     """
 
     def fake_paper_intake(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -210,12 +227,23 @@ def test_full_graph_invoke_with_patched_react_wrappers():
             }
         }
 
-    # patch 必须打在 core.graph 命名空间（graph.py 在 module import 阶段已经把 wrapper
-    # 函数绑定到自己的全局名字 paper_intake / paper_analysis；add_node 注册时存的是
-    # 那两个绑定的引用）。直接 patch 子模块的属性不会影响已经注册到 StateGraph 内部
-    # 的引用，所以这里 patch core.graph 命名空间。
+    def fake_resource_scout(state: Dict[str, Any]) -> Dict[str, Any]:
+        return {"current_step": "resource_scout"}
+
+    def fake_planning(state: Dict[str, Any]) -> Dict[str, Any]:
+        # 返回 approved plan -> _route_after_planning 走 "next"（coding），避免真实 interrupt。
+        return {
+            "reproduction_plan": {"plan_summary": "fake plan", "approved": True},
+            "current_step": "planning",
+        }
+
+    # patch 必须打在 core.graph 命名空间（graph.py 在 module import 阶段已经把节点函数
+    # 绑定到自己的全局名字；add_node 注册时存的是那些绑定的引用）。直接 patch 子模块
+    # 的属性不会影响已经注册到 StateGraph 内部的引用，所以这里 patch core.graph 命名空间。
     with patch.object(graph_module, "paper_intake", fake_paper_intake), patch.object(
         graph_module, "paper_analysis", fake_paper_analysis
+    ), patch.object(graph_module, "resource_scout", fake_resource_scout), patch.object(
+        graph_module, "planning", fake_planning
     ):
         g = build_graph(checkpointer=MemorySaver())
         initial_state: Dict[str, Any] = {
@@ -230,10 +258,12 @@ def test_full_graph_invoke_with_patched_react_wrappers():
             initial_state, {"configurable": {"thread_id": "test-d1-full-invoke"}}
         )
 
-    # 7 个节点全部执行完毕：paper_intake / paper_analysis 写入的字段都在最终状态中
+    # 全链路执行完毕：上游节点写入的字段都在最终状态中
     assert final_state.get("paper_meta", {}).get("arxiv_id") == "2410.21276"
     assert final_state["paper_meta"]["title"] == "Fake Paper"
     assert final_state.get("paper_analysis", {}).get("method_summary") == "fake summary"
     assert final_state["paper_analysis"]["datasets"] == ["fake-dataset"]
+    # planning approve -> 条件边走 coding -> execution -> reporting -> END
+    assert final_state.get("reproduction_plan", {}).get("approved") is True
     # 占位节点没有写入任何字段，原始 user_input 被保留
     assert final_state["user_input"] == "2410.21276"

@@ -180,6 +180,11 @@ class GlobalState(TypedDict):
     execution_mode: ExecutionMode
     sandbox_type: str
     error: Optional[str]
+    # 全局级人类可审核备注（与 PaperAnalysis.analysis_notes 区分：后者是论文分析内嵌字段，
+    # 此处是贯穿流程的顶层追加通道）。resource_scout 的 [SEARCH_LOG]/[QUALITY_WARN]、
+    # planning 的 [CANCELLED]/[PLANNING_FALLBACK] 等标记经 read-modify-write 累加到此通道。
+    # 注意：必须声明为 GlobalState 通道，否则节点写入会被 LangGraph 静默丢弃（B2/B3 实证）。
+    analysis_notes: str
     messages: List[Dict[str, str]]
     node_errors: List[NodeError]
     degraded_nodes: List[str]
@@ -264,6 +269,7 @@ def create_initial_state(
         execution_mode=ExecutionMode.FULL,
         sandbox_type="venv",
         error=None,
+        analysis_notes="",
         messages=[],
         node_errors=[],
         degraded_nodes=[],
