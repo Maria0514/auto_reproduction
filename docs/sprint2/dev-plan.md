@@ -1317,17 +1317,17 @@ def cancel_task(self, thread_id: str) -> None:
 - 根据 `current_page` 路由到 S2-05 / S2-06 / S2-07 三个页面；
 - 顶部侧栏渲染 LLM 配置表单（D1）。
 
-**自测检查点**：
-- [ ] CP-D2-1 `from app import GraphController` 可正常导入；`GraphController()` 可正常实例化
-- [ ] CP-D2-2 `start_task("2405.14831", llm_config_set)` 返回 `thread_id`（字符串，形如 `"task-XXX"`），并启动 worker thread；`is_alive()` 为 True 立刻；invoke 完成后 worker 自然退出（thread.is_alive() == False）
-- [ ] CP-D2-3 主线程 `poll_state(thread_id)` 通过**独立**的 main_checkpointer 读取 state，不阻塞工作线程
-- [ ] CP-D2-4 `is_interrupted(thread_id)` 在 mock graph 跑到 planning interrupt 后返回 True；在 graph 已结束（reproduction_plan.approved=True 推进到 END）后返回 False
-- [ ] CP-D2-5 `resume_with(thread_id, {"decision": "approve"})` **起新工作线程**（不在主线程同步），并完成 graph 推进；新线程独立创建 SqliteSaver 实例
-- [ ] CP-D2-6 工作线程异常：mock graph.invoke 抛 LLMError，`self._worker_errors[thread_id]` 含异常对象；`get_worker_error(thread_id)` 返回该对象
-- [ ] CP-D2-7 `cancel_task(thread_id)` 在 interrupt 状态下走 `resume_with({"decision": "cancel"})` 通道，graph 最终 `current_step="cancelled_by_user"`；非 interrupt 状态下 caplog 含 1 条 WARNING、不抛异常
-- [ ] CP-D2-8 `start_task` 时 `LLMConfigSet.default.api_key` 与 4 个 override 的 api_key 全部刷新到 initial_state（**与表单提交值一致**，不复用任何旧值）
-- [ ] CP-D2-9 同一进程内并发 2 个不同 thread_id 跑 start_task：两个工作线程**独立**创建 SqliteSaver 实例，互不阻塞，最终各自 thread_id 的 checkpoint 在 SQLite 中可独立读回
-- [ ] CP-D2-10 sp1 全量回归 pytest 通过（A3 + C1 之后已验证；D2 仅引入新代码不动 sp1，回归点已在 A3-4/A3-5 守门）
+**自测检查点**（全部通过，2026-06-04 @全栈开发代理；`tests/test_app_controller.py` 15 用例）：
+- [x] CP-D2-1 `from app import GraphController` 可正常导入；`GraphController()` 可正常实例化（真实 GraphController + mock build_graph/get_checkpointer，断言 _main_checkpointer/_main_graph/_workers/_worker_errors 初值）
+- [x] CP-D2-2 `start_task("2405.14831", llm_config_set)` 返回 `task-XXX` thread_id 并启动 worker；用 Event 阻塞 invoke 观察到 `is_alive()==True`，release 后 join 自然退出 `is_alive()==False`；invoke config 经 `_make_config` 注入（真实 controller + FakeGraph）
+- [x] CP-D2-3 `poll_state(thread_id)` 通过独立 main_graph 读 `snapshot.values`；无 snapshot 返回 None（FakeGraph 预置 snapshot）
+- [x] CP-D2-4 `is_interrupted` interrupt 形态（next 非空 + tasks 含 interrupt 元数据）返回 True；END（next=()）返回 False；next 非空但无 interrupt 元数据（普通节点边界）返回 False（3 个子用例，FakeSnapshot/FakeTask 复现 S-1 spike 形态）
+- [x] CP-D2-5 `resume_with({"decision":"approve"})` 起新 daemon worker（不在主线程同步），新线程独立创建 SqliteSaver 实例（created 计数 +1），invoke 收到 `Command(resume=...)` 且 config 经 `_make_config`
+- [x] CP-D2-6 mock graph.invoke 抛 LLMError → `_worker_errors[thread_id]` 含该对象，`get_worker_error` 返回同一对象（start_task + resume_with 两路均验证，100% 崩溃感知）
+- [x] CP-D2-7 cancel_task 两路径：interrupt 状态走 `resume_with({"decision":"cancel"})` 通道、side_effect 模拟 planning 写 `current_step="cancelled_by_user"`、最终 poll_state 反映且 is_interrupted 转 False；非 interrupt 状态 caplog 恰 1 条 WARNING、不抛异常、不起线程
+- [x] CP-D2-8 `start_task` default + 4 个 override 的 api_key 全部刷新到 initial_state（与表单提交值字节一致，截获 worker initial_state 断言）；补充用例验证空 LLMConfig override 被丢弃 + default 非引用复用
+- [x] CP-D2-9 并发 2 thread_id 真实 SqliteSaver（tempfile DB）+ 真实最小 graph：两 worker 互不阻塞、各自 checkpoint 独立回读（done:paperA / done:paperB 不串扰）、created 实例 id 全唯一（main+2worker≥3 个独立实例）
+- [x] CP-D2-10 sp1+sp2 既有基线零退化：`pytest -q -m "not e2e" --ignore=tests/test_paper_intake.py` **374 passed / 27 deselected**（D1 后基线 359 + D2 新增 15 = 374，零退化）；本文件内另留说明性占位用例断言 app 可与既有模块并存导入 + `_make_config` 注入 checkpoint_ns=""
 
 **风险标注**：
 - **高风险**：threading + interrupt + SqliteSaver 三件套交互；S-1 / S-2 spike 验证是 D2 实施的前置守门

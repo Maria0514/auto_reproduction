@@ -16,3 +16,9 @@ tiktoken>=0.5.0
 
 # ---- 开发与测试依赖 ----
 pytest>=8.0
+
+# ---- Sprint 2 新增依赖（UI 层，任务 D1/D2）----
+# streamlit：venv 实测已装 1.58.0（D1 阶段安装），developing-with-streamlit skill 需 >=1.57，
+# 故声明下界 >=1.57（与现状/skill 对齐，高于 dev-plan 初稿 >=1.28.0）。
+streamlit>=1.57
+streamlit-autorefresh>=1.0.0
