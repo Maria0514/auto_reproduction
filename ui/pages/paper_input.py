@@ -1,0 +1,296 @@
+"""S2-05 Streamlit 页面 1：论文输入（Sprint 2 任务 D3）。
+
+架构参考：sprint2/architecture.md §2.9（session_state 字段 / 关键交互流程）。
+dev-plan：sprint2/dev-plan.md 任务 D3（页面布局 / session_state 字段表 / CP-D3-1~6）。
+
+页面职责（架构 §2.9）::
+
+    侧栏：render_llm_config_form()（D1 组件）
+    主区上半：arXiv ID 输入框 + "获取论文信息"按钮 → 即时展示论文卡片
+    主区下半（P1 可选）：关键词搜索框 → reader.search 前 10 条候选
+    底部："开始复现"按钮 → controller.start_task → 跳转 progress 页
+
+页面入口约定（dev-plan CP-D3-1）::
+
+    页面主函数命名为 ``render()``，可 ``from ui.pages.paper_input import render`` 导入。
+    同时导出别名 ``render_paper_input_page = render`` 兼容 D2 app.py 路由 page_map
+    （app.py L283 page_map 用 ("ui.pages.paper_input", "render_paper_input_page") 动态加载）。
+    —— 这是与 D2 已落地路由对齐的唯一适配点，详见交付汇报"上游对接结论"。
+
+关键硬约束（OBS-D1-01，D3 为最终落地点）::
+
+    "开始复现"用的 llm_config_set 必须来自 render_llm_config_form() 的**返回值** cfg，
+    **禁止直接读 st.session_state["llm_config_set"]**：D1 组件校验失败返回 None 时不清
+    该 stale 键，直读会拿到过期配置。落地方式：cfg is None（配置未填全/不合法）或
+    arxiv_id 为空时，**禁用"开始复现"按钮**（disabled=True）；即使被点到也在回调中
+    再校验一次、st.error 提示且不调用 start_task（双保险）。
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Dict, List, Optional, Tuple
+
+import streamlit as st
+
+from core.errors import AutoReproError
+from core.state import LLMConfigSet
+from core.tools.deepxiv_tools import DeepxivTools
+from ui.components.llm_config_form import render_llm_config_form
+
+logger = logging.getLogger(__name__)
+
+__all__ = ["render", "render_paper_input_page"]
+
+
+# session_state 键（架构 §2.9 表 + dev-plan §D3 表，与 D2 app.py 约定一致）。
+_KEY_SELECTED_ARXIV = "selected_arxiv_id"
+_KEY_CURRENT_PAGE = "current_page"
+_KEY_THREAD_ID = "thread_id"
+# 已提交标记：提交后所有控件 disabled=True，避免重复提交（dev-plan §D3「关键交互」3）。
+_KEY_SUBMITTED = "_input_submitted"
+# 已获取的论文卡片数据（brief + head 合并），跨 rerun 暂存供展示与 categories 校验。
+_KEY_PAPER_CARD = "_input_paper_card"
+# 获取论文卡片时的错误信息（跨 rerun 暂存）。
+_KEY_FETCH_ERROR = "_input_fetch_error"
+
+
+def _init_page_state() -> None:
+    """初始化本页用到的 session_state 字段（不覆盖已有值）。"""
+    st.session_state.setdefault(_KEY_SELECTED_ARXIV, "")
+    st.session_state.setdefault(_KEY_CURRENT_PAGE, "input")
+    st.session_state.setdefault(_KEY_THREAD_ID, None)
+    st.session_state.setdefault(_KEY_SUBMITTED, False)
+    st.session_state.setdefault(_KEY_PAPER_CARD, None)
+    st.session_state.setdefault(_KEY_FETCH_ERROR, None)
+
+
+def _get_controller():
+    """从 session_state 取 D2 GraphController 单例（与 app.py::_get_controller 一致）。
+
+    复用 app.py 的惰性单例逻辑，避免每次 rerun 重建（架构 §2.7 风险标注）。
+    """
+    from app import _get_controller as _app_get_controller
+
+    return _app_get_controller()
+
+
+def _is_non_cs(categories: List[str]) -> bool:
+    """判定论文是否**不属于** CS 领域（无任一 ``cs.*`` 分类）。
+
+    与 paper_intake 学科范围校验行为一致（非 CS 仅 WARNING 不阻塞，
+    dev-plan §D3「关键交互」2 / paper_intake._map_intake_result）。
+    """
+    if not categories:
+        # categories 为空无法判定，保守视为"不确定" → 不弹 WARNING（避免误报阻塞体验）。
+        return False
+    return not any(str(c).lower().startswith("cs.") for c in categories)
+
+
+def _fetch_paper_card(arxiv_id: str) -> Tuple[Optional[Dict], Optional[str]]:
+    """调用 deepxiv 即时拉取论文卡片数据，返回 (card | None, error | None)。
+
+    deepxiv ``brief`` 仅返回 title / tldr / github_url / keywords 等快速摘要（reader.py
+    L587-613），**不含 abstract / authors / categories**；后三者来自 ``head``（reader.py
+    L560-585）。D3 卡片需要 title/abstract/authors/tldr/github_url + non-CS 校验需要
+    categories，故合并 brief + head 两路结果（与 paper_intake "brief 为主 + head 补充"
+    同源）。任一路失败时尽量降级展示已拿到的字段，不让整页崩溃。
+
+    所有 deepxiv 异常已由 DeepxivTools 统一映射为 AutoReproError 子类
+    （PermanentError / TransientError），此处捕获后转为 UI 错误文案。
+    """
+    arxiv_id = arxiv_id.strip()
+    if not arxiv_id:
+        return None, "请先输入 arXiv ID"
+
+    tools = DeepxivTools()
+    card: Dict = {"arxiv_id": arxiv_id}
+
+    # --- brief（title / tldr / github_url）---
+    try:
+        brief = tools.get_paper_brief(arxiv_id)
+    except AutoReproError as exc:
+        logger.warning("[paper_input] get_paper_brief 失败: %s", exc)
+        return None, f"获取论文摘要失败：{exc}"
+    except Exception as exc:  # noqa: BLE001 - UI 层兜底，任何异常都转成可读文案
+        logger.exception("[paper_input] get_paper_brief 未预期异常")
+        return None, f"获取论文摘要失败：{exc}"
+
+    card["title"] = brief.get("title") or ""
+    card["tldr"] = brief.get("tldr")
+    card["github_url"] = brief.get("github_url")
+    card["keywords"] = brief.get("keywords") or []
+
+    # --- head（abstract / authors / categories）；head 失败不阻断，降级展示 brief 字段 ---
+    try:
+        head = tools.get_paper_head(arxiv_id)
+    except Exception as exc:  # noqa: BLE001 - head 是补充信息，失败仅降级不报死
+        logger.warning("[paper_input] get_paper_head 失败（降级展示 brief）: %s", exc)
+        head = {}
+
+    if not card["title"]:
+        card["title"] = head.get("title") or ""
+    card["abstract"] = head.get("abstract") or ""
+    card["authors"] = head.get("authors") or []
+    card["categories"] = head.get("categories") or []
+
+    return card, None
+
+
+def _render_paper_card(card: Dict, disabled: bool) -> None:
+    """渲染论文信息卡片（title / authors / categories / abstract / tldr / github_url）。
+
+    non-CS 论文（无 cs.* 分类）显示 WARNING 卡片但不阻塞"开始复现"
+    （dev-plan §D3「关键交互」2 / CP-D3-5）。
+    """
+    title = card.get("title") or "(无标题)"
+    st.subheader(title)
+
+    authors = card.get("authors") or []
+    if authors:
+        st.caption("作者：" + ", ".join(str(a) for a in authors))
+
+    categories = card.get("categories") or []
+    if categories:
+        st.caption("分类：" + ", ".join(str(c) for c in categories))
+
+    if _is_non_cs(categories):
+        # 非 CS 领域：醒目 WARNING，但不阻塞（按钮可点，CP-D3-5）。
+        st.warning(
+            "该论文分类不属于 CS（cs.*）领域，本系统针对 CS 论文复现优化，"
+            "复现效果可能不佳。仍可继续，但请知悉风险。"
+        )
+
+    tldr = card.get("tldr")
+    if tldr:
+        st.markdown(f"**TL;DR**：{tldr}")
+
+    abstract = card.get("abstract")
+    if abstract:
+        with st.expander("摘要（Abstract）", expanded=True):
+            st.write(abstract)
+
+    github_url = card.get("github_url")
+    if github_url:
+        st.markdown(f"**官方代码仓库**：[{github_url}]({github_url})")
+
+
+def _render_search_section(disabled: bool) -> None:
+    """主区下半（P1 可选）：关键词搜索 → reader.search 前 10 条候选。
+
+    时间预算内已实现（reader.search size=10）；点击某条候选可一键填入上方 arXiv ID 框。
+    """
+    with st.expander("按关键词搜索论文（可选）", expanded=False):
+        query = st.text_input(
+            "关键词",
+            key="search_query",
+            placeholder="例如：retrieval augmented generation",
+            disabled=disabled,
+        )
+        do_search = st.button("搜索", key="btn_search", disabled=disabled)
+        if do_search and query.strip():
+            try:
+                tools = DeepxivTools()
+                results = tools.search_papers(query.strip(), size=10)
+            except Exception as exc:  # noqa: BLE001 - UI 层兜底
+                logger.warning("[paper_input] search_papers 失败: %s", exc)
+                st.error(f"搜索失败：{exc}")
+                results = []
+            st.session_state["_input_search_results"] = results
+
+        results = st.session_state.get("_input_search_results") or []
+        for idx, item in enumerate(results[:10]):
+            aid = str(item.get("arxiv_id") or item.get("id") or "")
+            title = item.get("title") or "(无标题)"
+            cols = st.columns([5, 1])
+            cols[0].markdown(f"`{aid}` {title}")
+            if aid and cols[1].button(
+                "选用", key=f"pick_{idx}", disabled=disabled
+            ):
+                st.session_state["arxiv_id_input"] = aid
+                st.session_state[_KEY_SELECTED_ARXIV] = aid
+                st.rerun()
+
+
+def render() -> None:
+    """页面主入口（dev-plan CP-D3-1：``from ui.pages.paper_input import render``）。
+
+    渲染顺序：侧栏 LLM 配置表单 → 主区论文检索/卡片 → 底部"开始复现"按钮。
+    """
+    _init_page_state()
+
+    submitted = bool(st.session_state.get(_KEY_SUBMITTED))
+
+    # --- 侧栏：D1 LLM 配置表单。OBS-D1-01：用返回值 cfg，禁止直读 session_state ---
+    with st.sidebar:
+        prefill = st.session_state.get("llm_config_set")
+        cfg: Optional[LLMConfigSet] = render_llm_config_form(default=prefill)
+
+    st.title("论文自动复现 — 输入论文")
+
+    # --- 主区上半：arXiv ID 输入 + 获取论文信息 ---
+    arxiv_id = st.text_input(
+        "arXiv ID",
+        key="arxiv_id_input",
+        placeholder="例如：2405.14831",
+        value=st.session_state.get(_KEY_SELECTED_ARXIV, ""),
+        disabled=submitted,
+    )
+    st.session_state[_KEY_SELECTED_ARXIV] = arxiv_id
+
+    fetch = st.button("获取论文信息", key="btn_fetch", disabled=submitted)
+    if fetch:
+        card, err = _fetch_paper_card(arxiv_id)
+        st.session_state[_KEY_PAPER_CARD] = card
+        st.session_state[_KEY_FETCH_ERROR] = err
+
+    fetch_error = st.session_state.get(_KEY_FETCH_ERROR)
+    if fetch_error:
+        st.error(fetch_error)
+
+    card = st.session_state.get(_KEY_PAPER_CARD)
+    if card:
+        _render_paper_card(card, disabled=submitted)
+
+    # --- 主区下半（P1 可选）：关键词搜索 ---
+    _render_search_section(disabled=submitted)
+
+    st.divider()
+
+    # --- 底部："开始复现" ---
+    # OBS-D1-01 落地：cfg is None（配置未填全/不合法）或 arxiv_id 为空 → 禁用按钮。
+    can_start = (cfg is not None) and bool(arxiv_id.strip()) and (not submitted)
+
+    if cfg is None and not submitted:
+        st.info("请在左侧侧栏填写有效的 LLM 配置后再开始复现。")
+    if not arxiv_id.strip() and not submitted:
+        st.info("请输入 arXiv ID 后再开始复现。")
+
+    start = st.button(
+        "开始复现",
+        key="btn_start",
+        type="primary",
+        disabled=not can_start,
+    )
+
+    if start:
+        # 双保险：即便按钮被点到（disabled 由前端约束，回调仍再校验一次）。
+        if cfg is None:
+            st.error("LLM 配置无效，请检查侧栏配置后重试。")
+            return
+        if not arxiv_id.strip():
+            st.error("请输入 arXiv ID。")
+            return
+
+        controller = _get_controller()
+        thread_id = controller.start_task(arxiv_id.strip(), cfg)
+
+        st.session_state[_KEY_THREAD_ID] = thread_id
+        st.session_state[_KEY_SUBMITTED] = True
+        st.session_state[_KEY_CURRENT_PAGE] = "progress"
+        st.rerun()
+
+
+# D2 app.py 路由 page_map 期望函数名 render_paper_input_page（app.py L283）。
+# 别名导出，避免改动已落地的 D2 路由（详见交付汇报"上游对接结论"）。
+render_paper_input_page = render
