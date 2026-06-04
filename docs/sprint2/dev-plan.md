@@ -1230,16 +1230,16 @@ def render_llm_config_form(
 - key 命名前缀（如 `default_*` / `override_paper_intake_*` 等）避免 streamlit 同名冲突。
 
 **自测检查点**：
-- [ ] CP-D1-1 `from ui.components.llm_config_form import render_llm_config_form` 可正常导入
-- [ ] CP-D1-2 通过 `streamlit.testing.v1.AppTest` 渲染表单：默认全局 panel 5 字段全空时返回 None（必填校验）
-- [ ] CP-D1-3 全局 panel 5 字段全填合法 + 4 个 override 全空：返回 `LLMConfigSet`，`overrides == {}`（单一全局配置模式）
-- [ ] CP-D1-4 全局 panel 全填 + paper_analysis override 5 字段全填合法：返回 `LLMConfigSet`，`overrides == {"paper_analysis": cfg_B}`
-- [ ] CP-D1-5 paper_analysis override 仅填了 base_url 一个字段（其它空）：视为"开启覆写但校验失败"，返回 None + `st.error` 提示
-- [ ] CP-D1-6 4 个节点全 override 全填合法：返回 `LLMConfigSet` 含 4 个 override 节点
-- [ ] CP-D1-7 `temperature=1.5`（超界）：返回 None + 行内错误提示
-- [ ] CP-D1-8 `max_tokens=100`（小于 256 下界）：返回 None + 行内错误提示
-- [ ] CP-D1-9 提交成功后 `st.session_state["llm_config_set"]` 非空且与返回值一致
-- [ ] CP-D1-10 api_key 字段类型为 password（mask 字符），通过 AppTest 验证 widget type
+- [x] CP-D1-1 `from ui.components.llm_config_form import render_llm_config_form` 可正常导入 (by test-engineer, 见 test-reports/2026-06-04_d1-acceptance.md)
+- [x] CP-D1-2 通过 `streamlit.testing.v1.AppTest` 渲染表单：默认全局 panel 5 字段全空时返回 None（必填校验） (by test-engineer)
+- [x] CP-D1-3 全局 panel 5 字段全填合法 + 4 个 override 全空：返回 `LLMConfigSet`，`overrides == {}`（单一全局配置模式） (by test-engineer, AppTest 真实驱动)
+- [x] CP-D1-4 全局 panel 全填 + paper_analysis override 5 字段全填合法：返回 `LLMConfigSet`，`overrides == {"paper_analysis": cfg_B}` (by test-engineer, AppTest 真实驱动 expander)
+- [x] CP-D1-5 paper_analysis override 仅填了 base_url 一个字段（其它空）：视为"开启覆写但校验失败"，返回 None + `st.error` 提示 (by test-engineer，补强含非 base_url 单字段)
+- [x] CP-D1-6 4 个节点全 override 全填合法：返回 `LLMConfigSet` 含 4 个 override 节点 (by test-engineer, AppTest 真实驱动)
+- [x] CP-D1-7 `temperature=1.5`（超界）：返回 None + 行内错误提示 (by test-engineer, 降级 _validate_panel 直测合理；UI set_value 超界静默回退默认而非 clamp)
+- [x] CP-D1-8 `max_tokens=100`（小于 256 下界）：返回 None + 行内错误提示 (by test-engineer, 同 CP-D1-7)
+- [x] CP-D1-9 提交成功后 `st.session_state["llm_config_set"]` 非空且与返回值一致 (by test-engineer)
+- [x] CP-D1-10 api_key 字段类型为 password（mask 字符），通过 AppTest 验证 widget type (by test-engineer, proto.type==PASSWORD=1 真实锚定 mask)
 
 **风险标注**：
 - **低风险**：streamlit AppTest 对 expander 内部 widget 的测试支持有限，部分场景需手动验证
@@ -1296,6 +1296,7 @@ class GraphController:
 
 - `start_task(arxiv_id, llm_config_set)` 必须把表单提交的 `LLMConfigSet.default.api_key` 与每条 `LLMConfigSet.overrides[node].api_key` **逐条强制刷新**到 `initial_state.llm_config_set`（**不复用任何 SqliteSaver 中旧值**）；
 - `LLMConfigSet.overrides` 字典中只保留用户显式填写的节点 key（防止"空 LLMConfig 但保留 api_key 字段"的悬挂数据）。
+- **[OBS-D1-01 / D1 验收 2026-06-04 转入]** `start_task` 拿到的 `llm_config_set` 必须来自 `render_llm_config_form()` 的**返回值**，**禁止直接读 `st.session_state["llm_config_set"]`**：D1 组件成功时写该键，但校验失败返回 None 时**不清除该 stale 键**（D1 契约内可接受，架构 §2.8.4 规定 GraphController 消费返回值）。若 D2/D3 直接读 session_state 该键，会在用户"先填合法 → 再改成非法"的序列下拿到上一次的过期配置。落地约束：在 paper_input 页（D3）把 `cfg = render_llm_config_form(...)` 的返回值显式传给 `controller.start_task(arxiv_id, cfg)`，并在 `cfg is None` 时禁用"开始复现"按钮。
 
 **5. cancel_task**（架构 §2.7.1 / AC-S2-13）：
 
