@@ -45,6 +45,12 @@ __all__ = ["render", "render_paper_input_page"]
 
 # session_state 键（架构 §2.9 表 + dev-plan §D3 表，与 D2 app.py 约定一致）。
 _KEY_SELECTED_ARXIV = "selected_arxiv_id"
+# arXiv ID 输入框 widget 的 key（唯一权威输入源；不再叠加 value= 双源反模式）。
+_KEY_ARXIV_WIDGET = "arxiv_id_input"
+# 搜索"选用"的待回填中间键（BUG-S2-D3-01）：非 widget 键，承载"选用"结果。
+# 点"选用"时写本键 + st.rerun()；下一次 run 在 arxiv_id_input widget 实例化**之前**
+# 消费本键灌入 widget key（实例化前写 widget key 合法）—— 绝不直写已实例化的 widget key。
+_KEY_PENDING_ARXIV = "_input_pending_arxiv"
 _KEY_CURRENT_PAGE = "current_page"
 _KEY_THREAD_ID = "thread_id"
 # 已提交标记：提交后所有控件 disabled=True，避免重复提交（dev-plan §D3「关键交互」3）。
@@ -58,6 +64,8 @@ _KEY_FETCH_ERROR = "_input_fetch_error"
 def _init_page_state() -> None:
     """初始化本页用到的 session_state 字段（不覆盖已有值）。"""
     st.session_state.setdefault(_KEY_SELECTED_ARXIV, "")
+    # arxiv_id_input widget 初值经 setdefault 注入（单源：仅 key，无 value= 反模式）。
+    st.session_state.setdefault(_KEY_ARXIV_WIDGET, "")
     st.session_state.setdefault(_KEY_CURRENT_PAGE, "input")
     st.session_state.setdefault(_KEY_THREAD_ID, None)
     st.session_state.setdefault(_KEY_SUBMITTED, False)
@@ -207,8 +215,10 @@ def _render_search_section(disabled: bool) -> None:
             if aid and cols[1].button(
                 "选用", key=f"pick_{idx}", disabled=disabled
             ):
-                st.session_state["arxiv_id_input"] = aid
-                st.session_state[_KEY_SELECTED_ARXIV] = aid
+                # BUG-S2-D3-01 修复：禁止直写已实例化的 widget key arxiv_id_input
+                # （Streamlit 抛 StreamlitAPIException）。改写非 widget 的待回填中间键
+                # + rerun；由 render() 在 widget 实例化**之前**消费该键灌入 widget。
+                st.session_state[_KEY_PENDING_ARXIV] = aid
                 st.rerun()
 
 
@@ -229,13 +239,20 @@ def render() -> None:
     st.title("论文自动复现 — 输入论文")
 
     # --- 主区上半：arXiv ID 输入 + 获取论文信息 ---
+    # BUG-S2-D3-01 修复：在 widget 实例化**之前**消费搜索"选用"的待回填中间键。
+    # 此刻 arxiv_id_input widget 尚未实例化，写其 session_state key 合法（作初值）。
+    # 单源治理：text_input 仅用 key（无 value= 双源反模式），权威输入即 widget 自身 state。
+    pending = st.session_state.pop(_KEY_PENDING_ARXIV, None)
+    if pending is not None and not submitted:
+        st.session_state[_KEY_ARXIV_WIDGET] = pending
+
     arxiv_id = st.text_input(
         "arXiv ID",
-        key="arxiv_id_input",
+        key=_KEY_ARXIV_WIDGET,
         placeholder="例如：2405.14831",
-        value=st.session_state.get(_KEY_SELECTED_ARXIV, ""),
         disabled=submitted,
     )
+    # selected_arxiv_id 作为对外暴露镜像（供其它页面 / 测试旁证读取），跟随 widget 当前值。
     st.session_state[_KEY_SELECTED_ARXIV] = arxiv_id
 
     fetch = st.button("获取论文信息", key="btn_fetch", disabled=submitted)

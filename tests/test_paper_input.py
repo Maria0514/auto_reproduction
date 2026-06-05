@@ -23,7 +23,10 @@ from __future__ import annotations
 import importlib
 from unittest.mock import MagicMock, patch
 
+import pytest
 from streamlit.testing.v1 import AppTest
+
+from core.errors import PermanentError, TransientError
 
 
 # --------------------------------------------------------------------------- #
@@ -232,3 +235,250 @@ def _collect_text(at: AppTest) -> str:
     # st.write(abstract) 渲染为 markdown 元素，已被上面 at.markdown 覆盖；
     # expander 内元素同样在主元素树可见（D1 实测 AppTest 可访问 expander 内 widget）。
     return "\n".join(parts)
+
+
+# =========================================================================== #
+# 测试工程师补强用例（2026-06-04 D3 独立验收）
+#
+# 补齐开发 5 用例遗漏的边界/分支：
+#   - OBS-D1-01 stale 序列（cfg 由合法→非法，按钮必须重新禁用、不读 stale 键）
+#   - head 失败降级（展示 brief 不报死）
+#   - brief 失败（致命错误文案 + 不渲染卡片）
+#   - 关键词搜索 selectresults 回填（BUG-S2-D3-01，xfail strict 钉死）
+#   - 别名 render_paper_input_page 可直接 import 且与 render 同对象
+#   - _is_non_cs 边界（空 categories 不误报 / 大小写 / 混合分类含 cs.* 视为 CS）
+#   - 防重复提交：提交后全控件 disabled
+#   - 未获取论文卡片也可直接开始复现（卡片是可选展示，不是开始前置）
+# =========================================================================== #
+
+
+# --------------------------------------------------------------------------- #
+# 补-1（CP-D3-2 强化 / OBS-D1-01 核心）：cfg 由合法→非法的 stale 序列。
+# 这是 OBS-D1-01 最关键的独立裁定点：D1 校验失败返回 None 时不清 session_state
+# 的 stale 键；若 D3 直读该键会拿到上一次合法配置。正确实现必须用返回值 cfg，
+# 故"先填合法（写入 stale 键）→ 改成非法"后按钮必须重新禁用、start_task 不被调用。
+# --------------------------------------------------------------------------- #
+def test_bnd_stale_cfg_legal_then_illegal_disables_button():
+    deepxiv_mock = _make_deepxiv_mock(_BRIEF_CS, _HEAD_CS)
+    controller = _make_controller_mock()
+    with patch("ui.pages.paper_input.DeepxivTools", deepxiv_mock), patch(
+        "app._get_controller", return_value=controller
+    ):
+        at = AppTest.from_string(_APP_SCRIPT)
+        at.run()
+        # 1) 先填合法 cfg + arxiv_id → 按钮可点（D1 此时写入 session_state["llm_config_set"]）
+        _fill_sidebar_llm(at)
+        at.text_input(key="arxiv_id_input").set_value("2405.14831")
+        at.run()
+        assert at.button(key="btn_start").disabled is False
+        # 合法配置已落入 stale 键
+        assert "llm_config_set" in at.session_state
+
+        # 2) 把 model 清空 → cfg 变 None（D1 返回 None 但不清 stale 键）
+        at.text_input(key="default_model").set_value("")
+        at.run()
+        # 关键裁定：按钮必须重新禁用（依据 render_llm_config_form 返回值，不依赖 stale 键）
+        assert at.button(key="btn_start").disabled is True
+        # stale 键确实仍在（证明 D1 不清键，背景成立）
+        assert "llm_config_set" in at.session_state
+
+        # 3) 即便强行点击也不触发 start_task（双保险回调内 cfg is None 校验）
+        at.button(key="btn_start").click().run()
+        controller.start_task.assert_not_called()
+        assert at.session_state["current_page"] == "input"
+
+
+# --------------------------------------------------------------------------- #
+# 补-2（CP-D3-4 分支）：head 失败降级 —— 仅展示 brief 字段，不报死、不写 fetch_error。
+# --------------------------------------------------------------------------- #
+def test_bnd_head_failure_degrades_to_brief():
+    cls = MagicMock()
+    inst = cls.return_value
+    inst.get_paper_brief.return_value = {
+        "arxiv_id": "2405.14831",
+        "title": "HippoRAG",
+        "tldr": "tldr-degraded",
+        "github_url": "https://github.com/x",
+        "keywords": [],
+    }
+    inst.get_paper_head.side_effect = TransientError("head boom")
+    inst.search_papers.return_value = []
+    with patch("ui.pages.paper_input.DeepxivTools", cls), patch(
+        "app._get_controller", return_value=_make_controller_mock()
+    ):
+        at = AppTest.from_string(_APP_SCRIPT)
+        at.run()
+        at.text_input(key="arxiv_id_input").set_value("2405.14831")
+        at.button(key="btn_fetch").click().run()
+
+    # 卡片仍展示（降级展示 brief），fetch_error 不被置位（head 仅补充信息）
+    assert at.session_state["_input_paper_card"] is not None
+    assert at.session_state["_input_fetch_error"] is None
+    all_text = _collect_text(at)
+    assert "HippoRAG" in all_text          # brief.title
+    assert "tldr-degraded" in all_text     # brief.tldr
+    # head 缺失 → abstract/authors 为空，不应崩溃
+    assert at.session_state["_input_paper_card"]["abstract"] == ""
+    assert at.session_state["_input_paper_card"]["authors"] == []
+
+
+# --------------------------------------------------------------------------- #
+# 补-3（CP-D3-4 分支）：brief 失败 —— 致命错误文案 + 不渲染卡片。
+# brief 是卡片主字段来源，失败时 _fetch_paper_card 返回 (None, err)。
+# --------------------------------------------------------------------------- #
+def test_bnd_brief_failure_shows_error_no_card():
+    cls = MagicMock()
+    inst = cls.return_value
+    inst.get_paper_brief.side_effect = PermanentError("paper not found")
+    inst.get_paper_head.return_value = {}
+    inst.search_papers.return_value = []
+    with patch("ui.pages.paper_input.DeepxivTools", cls), patch(
+        "app._get_controller", return_value=_make_controller_mock()
+    ):
+        at = AppTest.from_string(_APP_SCRIPT)
+        at.run()
+        at.text_input(key="arxiv_id_input").set_value("9999.99999")
+        at.button(key="btn_fetch").click().run()
+
+    # 卡片为 None，fetch_error 被置位
+    assert at.session_state["_input_paper_card"] is None
+    assert at.session_state["_input_fetch_error"]
+    assert "获取论文摘要失败" in at.session_state["_input_fetch_error"]
+    # head 不应被调用（brief 先失败已 return）
+    inst.get_paper_head.assert_not_called()
+
+
+# --------------------------------------------------------------------------- #
+# 补-4（CP-D3-3 分支）：未点"获取论文信息"也可直接开始复现。
+# 卡片展示是可选辅助，不是 start 前置；只要 cfg + arxiv_id 齐备按钮即可点。
+# --------------------------------------------------------------------------- #
+def test_bnd_start_without_fetching_card():
+    deepxiv_mock = _make_deepxiv_mock(_BRIEF_CS, _HEAD_CS)
+    controller = _make_controller_mock(thread_id="task-nofetch")
+    with patch("ui.pages.paper_input.DeepxivTools", deepxiv_mock), patch(
+        "app._get_controller", return_value=controller
+    ):
+        at = AppTest.from_string(_APP_SCRIPT)
+        at.run()
+        _fill_sidebar_llm(at)
+        at.text_input(key="arxiv_id_input").set_value("2405.14831")
+        at.run()
+        # 没点 btn_fetch，卡片为空
+        assert at.session_state["_input_paper_card"] is None
+        assert at.button(key="btn_start").disabled is False
+        at.button(key="btn_start").click().run()
+
+    controller.start_task.assert_called_once()
+    assert controller.start_task.call_args.args[0] == "2405.14831"
+    assert at.session_state["current_page"] == "progress"
+    assert at.session_state["thread_id"] == "task-nofetch"
+
+
+# --------------------------------------------------------------------------- #
+# 补-5（CP-D3-1 强化）：别名 render_paper_input_page 可直接 import 且与 render 同对象。
+# D2 app.py page_map 用 render_paper_input_page 动态加载，此为唯一适配点。
+# --------------------------------------------------------------------------- #
+def test_bnd_alias_render_paper_input_page_importable():
+    from ui.pages.paper_input import render, render_paper_input_page
+
+    assert callable(render_paper_input_page)
+    assert render_paper_input_page is render
+    # app.py page_map 声明的 (module, func) 二元组可用 getattr 取到
+    mod = importlib.import_module("ui.pages.paper_input")
+    assert getattr(mod, "render_paper_input_page") is mod.render
+
+
+# --------------------------------------------------------------------------- #
+# 补-6：_is_non_cs 纯函数边界（不经 AppTest，直接单测分类判定逻辑）。
+# --------------------------------------------------------------------------- #
+def test_bnd_is_non_cs_classification_edges():
+    mod = importlib.import_module("ui.pages.paper_input")
+    _is_non_cs = mod._is_non_cs
+
+    # 空 categories → 保守不误报（返回 False，不弹 WARNING）
+    assert _is_non_cs([]) is False
+    # 纯非 CS → True
+    assert _is_non_cs(["math.AP"]) is True
+    assert _is_non_cs(["stat.ML", "math.PR"]) is True
+    # 含任一 cs.* → 视为 CS（False）
+    assert _is_non_cs(["cs.CL"]) is False
+    assert _is_non_cs(["math.AP", "cs.LG"]) is False
+    # 大小写不敏感（startswith 前已 lower）
+    assert _is_non_cs(["CS.CL"]) is False
+
+
+# --------------------------------------------------------------------------- #
+# 补-7（CP-D3-6 强化）：提交后 search section 控件也禁用（防重复提交全控件覆盖）。
+# 开发 CP-D3-6 只断言 btn_start / arxiv_id_input / btn_fetch 三件；这里补 search 区。
+# --------------------------------------------------------------------------- #
+def test_bnd_all_widgets_disabled_after_submit():
+    deepxiv_mock = _make_deepxiv_mock(_BRIEF_CS, _HEAD_CS)
+    controller = _make_controller_mock(thread_id="task-disabled")
+    with patch("ui.pages.paper_input.DeepxivTools", deepxiv_mock), patch(
+        "app._get_controller", return_value=controller
+    ):
+        at = AppTest.from_string(_APP_SCRIPT)
+        at.run()
+        _fill_sidebar_llm(at)
+        at.text_input(key="arxiv_id_input").set_value("2405.14831")
+        at.run()
+        at.button(key="btn_start").click().run()
+
+    assert at.session_state["_input_submitted"] is True
+    # 主区控件
+    assert at.button(key="btn_start").disabled is True
+    assert at.text_input(key="arxiv_id_input").disabled is True
+    assert at.button(key="btn_fetch").disabled is True
+    # search section 控件（防重复提交应一并禁用）
+    assert at.text_input(key="search_query").disabled is True
+    assert at.button(key="btn_search").disabled is True
+
+
+# --------------------------------------------------------------------------- #
+# 补-8（BUG-S2-D3-01 回归，已修复）：关键词搜索 → 点"选用"回填 arXiv ID。
+#
+# 期望：点候选的"选用"按钮应把该 arxiv_id 回填到上方 arXiv ID 输入框（页面
+# docstring + dev-plan §D3「主区下半」明示的 P1 功能）。
+#
+# 历史：原实现 `_render_search_section` 直写已实例化 widget key arxiv_id_input →
+# Streamlit 抛 StreamlitAPIException，真实点"选用"即崩溃（BUG-S2-D3-01）。测试工程师
+# 曾以 xfail(strict=True) 钉死。全栈开发代理已修复（pending 键 _input_pending_arxiv
+# 中转 + st.rerun()，render() 在 text_input 实例化前 pop 灌入 widget key 作初值，绝不
+# 直写已实例化 widget key）。本用例去 xfail 转常规回归：验证"选用→rerun→回填生效且无异常"。
+# --------------------------------------------------------------------------- #
+def test_bug_s2_d3_01_search_pick_backfills_arxiv_id():
+    cls = MagicMock()
+    inst = cls.return_value
+    inst.get_paper_brief.return_value = _BRIEF_CS
+    inst.get_paper_head.return_value = _HEAD_CS
+    inst.search_papers.return_value = [
+        {"arxiv_id": "2401.00001", "title": "Paper A"},
+        {"id": "2402.00002", "title": "Paper B"},
+    ]
+    with patch("ui.pages.paper_input.DeepxivTools", cls), patch(
+        "app._get_controller", return_value=_make_controller_mock()
+    ):
+        at = AppTest.from_string(_APP_SCRIPT)
+        at.run()
+        at.text_input(key="search_query").set_value("rag")
+        at.button(key="btn_search").click().run()
+        # 搜索结果已暂存
+        assert len(at.session_state["_input_search_results"]) == 2
+        # 点"选用"第 0 条 —— 触发 pending 键中转 + st.rerun()，修复后不应崩溃
+        at.button(key="pick_0").click().run()
+
+        # 1) 真实路径无未捕获异常（修复前此处会记到 StreamlitAPIException）。
+        assert not at.exception
+        # 2) 回填生效：widget 当前值 == 选中的 arxiv_id（权威输入源 widget 自身 state）。
+        assert at.text_input(key="arxiv_id_input").value == "2401.00001"
+        # 3) 对外镜像 selected_arxiv_id 跟随 widget 当前值。
+        assert at.session_state["selected_arxiv_id"] == "2401.00001"
+        # 4) pending 中转键消费后已被 pop 清空，不残留污染下一轮 run。
+        assert "_input_pending_arxiv" not in at.session_state
+
+        # 5) 回填后即可基于该 arxiv_id 继续主路径（填 cfg → 开始复现），证明回填值真正可用。
+        _fill_sidebar_llm(at)
+        at.run()
+        assert not at.exception
+        assert at.text_input(key="arxiv_id_input").value == "2401.00001"
+        assert at.button(key="btn_start").disabled is False
