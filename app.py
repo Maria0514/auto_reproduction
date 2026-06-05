@@ -275,8 +275,9 @@ def main() -> None:
     _init_session_state()
     controller = _get_controller()  # noqa: F841 - 单例预热，供页面消费
 
-    # 侧栏 LLM 配置表单；返回值在 D3 论文输入页传给 controller.start_task（OBS-D1-01）。
-    _render_sidebar()
+    # 侧栏由各页面自行渲染（D3/D4/D5 各自调 render_llm_config_form）。
+    # 此处不调 _render_sidebar()——D3 落地后 paper_input.render() 自己渲染侧栏，
+    # main 里重复调用会导致 StreamlitDuplicateElementKey（key='default_base_url'）。
 
     current_page = st.session_state.get("current_page", "input")
     page_map = {
