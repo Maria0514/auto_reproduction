@@ -27,13 +27,26 @@ from __future__ import annotations
 import logging
 import threading
 import uuid
+from pathlib import Path
 from typing import Dict, Optional
 
 from langgraph.types import Command
 
+from config import PROJECT_ROOT
 from core.checkpointer import get_checkpointer
 from core.graph import build_graph
 from core.state import GlobalState, LLMConfigSet, create_initial_state
+
+# 自动加载 .env（与 tests/conftest.py 范式一致，架构 §2.7.2 末条）：
+# 项目根优先 > ~/.env（deepxiv CLI 自动注册写入位置）。已存在的 env 变量不被覆盖。
+# 必须在导入期注入，否则 create_llm 的 api_key 回退取到的 os.environ 无 LLM_API_KEY。
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(PROJECT_ROOT / ".env", override=False)
+    load_dotenv(Path.home() / ".env", override=False)
+except ImportError:
+    pass
 
 logger = logging.getLogger(__name__)
 

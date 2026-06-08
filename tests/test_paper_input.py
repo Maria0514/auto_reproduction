@@ -160,7 +160,12 @@ def test_cp_d3_2_no_cfg_does_not_start():
     ):
         at = AppTest.from_string(_APP_SCRIPT)
         at.run()
-        # 故意不填侧栏 LLM 配置（cfg 为 None）；只填 arxiv_id
+        # D1 增强适配：default panel 现在预填 base_url/model + env 有 LLM_API_KEY，
+        # 故"什么都不填"会产出合法 cfg。要制造 cfg=None（必填失败），需显式清空
+        # 预填的 base_url/model（与补-1 stale 用例清空 model 同源）。
+        at.text_input(key="default_base_url").set_value("")
+        at.text_input(key="default_model").set_value("")
+        # 只填 arxiv_id
         at.text_input(key="arxiv_id_input").set_value("2405.14831")
         at.run()
 

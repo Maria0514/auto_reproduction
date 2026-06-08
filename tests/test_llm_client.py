@@ -197,6 +197,96 @@ def test_create_llm_signature_unchanged():
     assert params[0].name == "config"
 
 
+# ---------- D1 增强：create_llm api_key 回退（方案 A，架构 §2.7.2） ----------
+#
+# 回退点裁定：config["api_key"] strip 后为空 → 回退 get_llm_api_key()（读 .env）；
+# 非空时不回退（用户显式优先）；回退到 None 不在 create_llm 抛错；不回写入参 dict。
+
+
+def _capture_chatopenai(monkeypatch):
+    """patch core.llm_client.ChatOpenAI 为捕获 kwargs 的假类，返回捕获 dict。"""
+    captured: dict = {}
+
+    class _FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    from core import llm_client
+    monkeypatch.setattr(llm_client, "ChatOpenAI", _FakeChatOpenAI)
+    return captured
+
+
+def _base_config(api_key: str) -> dict:
+    return {
+        "base_url": "https://api.x.com/v1",
+        "model": "gpt-4o",
+        "api_key": api_key,
+        "temperature": 0.3,
+        "max_tokens": 8192,
+    }
+
+
+def test_d1e_create_llm_blank_api_key_falls_back_to_env(monkeypatch):
+    """T-D1E-U01：空 api_key（""）→ 回退 get_llm_api_key()。"""
+    from core import llm_client
+    captured = _capture_chatopenai(monkeypatch)
+    monkeypatch.setattr(llm_client, "get_llm_api_key", lambda: "env-key")
+    llm_client.create_llm(_base_config(""))
+    assert captured["api_key"] == "env-key"
+
+
+def test_d1e_create_llm_nonblank_api_key_no_fallback(monkeypatch):
+    """T-D1E-U02：非空 api_key（'sk-user'）→ 不回退，env 值不被采用。"""
+    from core import llm_client
+    captured = _capture_chatopenai(monkeypatch)
+    called = {"n": 0}
+
+    def _spy_get_key():
+        called["n"] += 1
+        return "env-key"
+
+    monkeypatch.setattr(llm_client, "get_llm_api_key", _spy_get_key)
+    llm_client.create_llm(_base_config("sk-user"))
+    assert captured["api_key"] == "sk-user"
+    # 非空时不应采用 env 值（短路：get_llm_api_key 不被调用）。
+    assert called["n"] == 0
+
+
+def test_d1e_create_llm_whitespace_api_key_falls_back(monkeypatch):
+    """T-D1E-U03：纯空白 api_key（'  '）→ strip 后视为空 → 回退 env。"""
+    from core import llm_client
+    captured = _capture_chatopenai(monkeypatch)
+    monkeypatch.setattr(llm_client, "get_llm_api_key", lambda: "env-key")
+    llm_client.create_llm(_base_config("   "))
+    assert captured["api_key"] == "env-key"
+
+
+def test_d1e_create_llm_fallback_to_none_does_not_raise(monkeypatch):
+    """T-D1E-U04：空 api_key 且 get_llm_api_key()→None → 不在 create_llm 抛错，
+    原样传给 ChatOpenAI（错误交后续 invoke 的 LLMError 路径）。"""
+    from core import llm_client
+    captured = _capture_chatopenai(monkeypatch)
+    monkeypatch.setattr(llm_client, "get_llm_api_key", lambda: None)
+    # 不应抛任何异常。
+    llm_client.create_llm(_base_config(""))
+    assert captured["api_key"] is None
+
+
+def test_d1e_create_llm_does_not_mutate_input_config(monkeypatch):
+    """T-D1E-U05：回退值不回写入参 config dict（仅进程内存）。"""
+    import copy
+
+    from core import llm_client
+    _capture_chatopenai(monkeypatch)
+    monkeypatch.setattr(llm_client, "get_llm_api_key", lambda: "env-key")
+    cfg = _base_config("")
+    cfg_before = copy.deepcopy(cfg)
+    llm_client.create_llm(cfg)
+    # 入参 api_key 调用后仍为 ""（回退值不写回 state）。
+    assert cfg["api_key"] == ""
+    assert cfg == cfg_before
+
+
 # ---------- 用例 6：LLM_ENABLE_PROMPT_CACHE 默认与 env 解析 ----------
 
 def test_llm_enable_prompt_cache_default_true(monkeypatch):

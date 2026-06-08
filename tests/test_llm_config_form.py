@@ -68,18 +68,31 @@ def test_cp_d1_1_importable():
 
 
 # --------------------------------------------------------------------------- #
-# CP-D1-2：全局 panel 5 字段全空 → 返回 None（必填校验）
+# CP-D1-2（D1 增强改写）：全局 panel base_url/model 清空 → 返回 None（必填校验）
+#
+# 语义反转说明（架构 §2.8.2 D1 增强）：
+#   - default panel 现在**预填** base_url/model（config getter），故"什么都不填"
+#     不再等于"全空"；要触发必填失败需显式清空 base_url/model。
+#   - api_key 校验已反转为"允许留空"，故必填错误**不再含 api_key 不能为空**。
 # --------------------------------------------------------------------------- #
-def test_cp_d1_2_global_blank_returns_none():
+def test_cp_d1_2_global_base_url_model_blank_returns_none():
     at = _new_app()
+    # 显式清空预填的 base_url/model（api_key 本就空）。
+    at.text_input(key="default_base_url").set_value("")
+    at.text_input(key="default_model").set_value("")
+    at.run()
     assert at.session_state["_test_result"] is None
-    # 行内 st.error 提示存在（base_url/model/api_key 三条非空校验失败）。
+    # 行内 st.error 提示：base_url/model 必填失败；**不应**再含 api_key 不能为空。
     error_msgs = [e.value for e in at.error]
     assert any("base_url" in m for m in error_msgs)
     assert any("model" in m for m in error_msgs)
-    assert any("api_key" in m for m in error_msgs)
-    # 未通过校验时不应写入权威键。
-    assert "llm_config_set" not in at.session_state
+    assert not any("api_key" in m and "不能为空" in m for m in error_msgs), (
+        "校验反转后 api_key 不应再报'不能为空'"
+    )
+    # 注：default panel 预填 base_url/model + env 有 LLM_API_KEY 时，_new_app() 首屏
+    # 即成功写入 llm_config_set；本次清空后失败返回 None 但不清除 stale 键（OBS-D1-01
+    # 已知可接受行为，§2.8.4 明确消费返回值而非直读 session_state）。故只断言权威信号
+    # _test_result is None（上方已断言），不对 stale session_state 强约束。
 
 
 # --------------------------------------------------------------------------- #
@@ -96,7 +109,7 @@ def test_cp_d1_3_global_only_empty_overrides():
     assert res["default"]["model"] == "gpt-4o"
     assert res["default"]["api_key"] == "sk-GLOBAL"
     assert res["default"]["temperature"] == pytest.approx(0.3)
-    assert res["default"]["max_tokens"] == 4096
+    assert res["default"]["max_tokens"] == 8192  # D1 增强：slider 默认改 4096→8192。
     assert not at.error  # 无行内错误。
 
 
@@ -126,8 +139,11 @@ def test_cp_d1_4_single_override_paper_analysis():
 
 
 # --------------------------------------------------------------------------- #
-# CP-D1-5：paper_analysis override 仅填 base_url（其余空）→
-#          视为开启覆写但校验失败 → None + st.error
+# CP-D1-5（D1 增强改写）：paper_analysis override 仅填 base_url（model 留空）→
+#          视为开启覆写但校验失败（model 缺失）→ None + st.error
+#
+# 语义反转说明：api_key 校验已反转为"允许留空"，故只填 base_url 时**只报 model 缺失**，
+# 不再报 api_key 缺失（缺 api_key 不再是失败因子）。
 # --------------------------------------------------------------------------- #
 def test_cp_d1_5_partial_override_fails():
     at = _new_app()
@@ -140,9 +156,11 @@ def test_cp_d1_5_partial_override_fails():
     res = at.session_state["_test_result"]
     assert res is None
     error_msgs = [e.value for e in at.error]
-    # 应针对 paper_analysis 节点报 model / api_key 缺失。
+    # 应针对 paper_analysis 节点报 model 缺失（base_url 已填，触发开启覆写）。
     assert any("paper_analysis" in m and "model" in m for m in error_msgs)
-    assert any("paper_analysis" in m and "api_key" in m for m in error_msgs)
+    # 校验反转：api_key 留空不再报"不能为空"。
+    assert not any("paper_analysis" in m and "api_key" in m and "不能为空" in m
+                   for m in error_msgs), "override api_key 留空不应报缺失"
 
 
 # --------------------------------------------------------------------------- #
@@ -186,15 +204,16 @@ def test_cp_d1_7_temperature_out_of_range():
     assert any("temperature" in m for m in errors)
 
 
-def test_cp_d1_7_temperature_slider_clamped_in_ui():
-    """补充：AppTest 角度——slider 超界 set_value 会被 streamlit clamp，
-    证明 UI 层天然不会产出超界 temperature（与校验内核形成双保险）。"""
+def test_cp_d1_7_temperature_slider_rejected_in_ui():
+    """补充：AppTest 角度——slider 超界 set_value 被 streamlit 静默拒绝回退默认值
+    （OBS-D1-02：非 clamp 到 max，而是值保留为默认 0.3），证明 UI 层天然不会
+    产出超界 temperature（与校验内核形成双保险）。"""
     at = _new_app()
     _fill_global(at)
     at.slider(key="default_temperature").set_value(1.5)
     at.run()
     res = at.session_state["_test_result"]
-    # set_value(1.5) 会被 clamp 到 max=1.0，故仍合法返回。
+    # set_value(1.5) 超界被静默拒绝回退默认 0.3，故仍合法返回且 <=1.0。
     assert res is not None
     assert res["default"]["temperature"] <= 1.0
 
@@ -216,15 +235,17 @@ def test_cp_d1_8_max_tokens_below_lower_bound():
     assert any("max_tokens" in m for m in errors)
 
 
-def test_cp_d1_8_max_tokens_number_input_clamped_in_ui():
-    """补充：AppTest 角度——number_input 低于 min 的 set_value 被 clamp 到 256。"""
+def test_cp_d1_8_max_tokens_slider_rejected_in_ui():
+    """补充：AppTest 角度——max_tokens 现为 slider（D1 增强 number_input→slider）；
+    低于 min(512) 的 set_value 被 streamlit 静默拒绝回退默认 8192（OBS-D1-02），
+    故仍合法返回且 >=512。"""
     at = _new_app()
     _fill_global(at)
-    at.number_input(key="default_max_tokens").set_value(100)
+    at.slider(key="default_max_tokens").set_value(100)
     at.run()
     res = at.session_state["_test_result"]
     assert res is not None
-    assert res["default"]["max_tokens"] >= 256
+    assert res["default"]["max_tokens"] >= 512
 
 
 # --------------------------------------------------------------------------- #
@@ -303,10 +324,11 @@ def test_validate_panel_happy_path():
 
 
 def test_validate_panel_boundaries_inclusive():
-    """边界值含端点：temperature 0.0/1.0、max_tokens 256/16384 均合法。"""
+    """边界值含端点：temperature 0.0/1.0、max_tokens 512/16384 均合法
+    （D1 增强：max_tokens 下界 256→512）。"""
     from ui.components.llm_config_form import _validate_panel
     for temp in (0.0, 1.0):
-        for mt in (256, 16384):
+        for mt in (512, 16384):
             cfg, errors = _validate_panel({
                 "base_url": "u", "model": "m", "api_key": "k",
                 "temperature": temp, "max_tokens": mt,
@@ -397,18 +419,19 @@ def test_strengthen_max_tokens_just_above_upper_rejected():
 
 
 def test_strengthen_max_tokens_just_below_lower_rejected():
-    """max_tokens = 255 恰好越下界（256-1）→ 校验拒绝。"""
+    """max_tokens = 511 恰好越下界（512-1，D1 增强下界 256→512）→ 校验拒绝。"""
     from ui.components.llm_config_form import _validate_panel
     cfg, errors = _validate_panel({
         "base_url": "u", "model": "m", "api_key": "k",
-        "temperature": 0.3, "max_tokens": 255,
+        "temperature": 0.3, "max_tokens": 511,
     }, scope_label="x")
     assert cfg is None
     assert any("max_tokens" in m for m in errors)
 
 
 def test_strengthen_boundaries_exact_endpoints_accepted_with_type_check():
-    """端点 0.0/1.0/256/16384 恰好合法，且组装结果类型正确（float/int）。"""
+    """端点 0.0/1.0/512/16384 恰好合法，且组装结果类型正确（float/int）
+    （D1 增强：max_tokens 下界端点 256→512）。"""
     from ui.components.llm_config_form import _validate_panel
     cfg, errors = _validate_panel({
         "base_url": "u", "model": "m", "api_key": "k",
@@ -420,11 +443,11 @@ def test_strengthen_boundaries_exact_endpoints_accepted_with_type_check():
     assert isinstance(cfg["max_tokens"], int) and cfg["max_tokens"] == 16384
     cfg2, errors2 = _validate_panel({
         "base_url": "u", "model": "m", "api_key": "k",
-        "temperature": 0.0, "max_tokens": 256,
+        "temperature": 0.0, "max_tokens": 512,
     }, scope_label="x")
     assert errors2 == []
     assert cfg2 is not None
-    assert cfg2["temperature"] == 0.0 and cfg2["max_tokens"] == 256
+    assert cfg2["temperature"] == 0.0 and cfg2["max_tokens"] == 512
 
 
 # --- 校验内核独立防线：超界值绕过 UI clamp 仍被拒（adaptation #2b 实证） ---- #
@@ -458,8 +481,11 @@ def test_strengthen_partial_override_single_other_field_fails(filled_field):
     assert any("paper_intake" in m for m in error_msgs)
 
 
-def test_strengthen_partial_override_two_of_three_fails():
-    """override 填了 base_url + model 但缺 api_key → 校验失败 → None。"""
+def test_strengthen_override_base_url_model_filled_blank_api_key_now_valid():
+    """D1 增强（语义反转）：override 填了 base_url + model、api_key 留空 → 现在**合法**
+    （api_key 留空由 create_llm 回退 .env）。该 override 入 overrides 且 api_key 为 ""。
+
+    旧契约下此组合"缺 api_key → 校验失败 → None"，校验反转后改为合法通过。"""
     at = _new_app()
     _fill_global(at)
     at.run()
@@ -467,9 +493,12 @@ def test_strengthen_partial_override_two_of_three_fails():
     at.text_input(key="override_resource_scout_model").set_value("rs-m")
     at.run()
     res = at.session_state["_test_result"]
-    assert res is None
-    error_msgs = [e.value for e in at.error]
-    assert any("resource_scout" in m and "api_key" in m for m in error_msgs)
+    assert res is not None
+    assert "resource_scout" in res["overrides"]
+    assert res["overrides"]["resource_scout"]["base_url"] == "https://rs/v1"
+    assert res["overrides"]["resource_scout"]["model"] == "rs-m"
+    assert res["overrides"]["resource_scout"]["api_key"] == ""  # 留空合法，恒空。
+    assert not at.error
 
 
 # --- 多节点 override 隔离：一个节点失败不污染另一个合法节点的判定 --------- #
@@ -575,23 +604,32 @@ def test_strengthen_assembled_config_field_contract_matches_state():
 
 
 # --- session_state 反向断言：失败时绝不写权威键 --------------------------- #
-def test_strengthen_failed_validation_never_writes_session_key():
-    """全局必填失败 → 权威键 llm_config_set 绝不出现在 session_state（反向断言）。
-    且重跑（修正后）能写入——验证写入是结果驱动而非残留。"""
+def test_strengthen_failed_validation_returns_none_weak_session_contract():
+    """全局必填失败 → 返回值 None（权威信号）；修正后重跑能写入。
+
+    D1 增强适配（OBS-D1-01 + 预填副作用）：default panel 现在预填 base_url/model
+    + 本环境 env 有 LLM_API_KEY，故 _new_app() 首屏即成功写入 llm_config_set；
+    随后清空 base_url 失败时返回 None 但**不清除 stale 键**（OBS-D1-01 已知可接受，
+    §2.8.4 消费返回值而非直读 session_state）。故只断言权威信号——返回 None，
+    不对 stale session_state 强约束（与测试工程师 2026-06-04 OBS-D1-01 处理范式一致）。"""
     at = _new_app()
-    # 第一次：空 → 失败 → 不写。
-    assert "llm_config_set" not in at.session_state
-    # 修正后重跑 → 写入。
+    # 清空预填的 base_url → 必填失败 → 返回 None（权威信号）。
+    at.text_input(key="default_base_url").set_value("")
+    at.run()
+    assert at.session_state["_test_result"] is None
+    # 修正后重跑（填回合法 base_url/model/api_key）→ 成功写入，session_state 与返回值一致。
     _fill_global(at)
     at.run()
+    assert at.session_state["_test_result"] is not None
     assert "llm_config_set" in at.session_state
     assert at.session_state["llm_config_set"] == at.session_state["_test_result"]
 
 
 # --- key 前缀防冲突：15 个 widget key 全部唯一 ----------------------------- #
 def test_strengthen_widget_keys_all_unique_no_collision():
-    """全局(3) + 4 override(各3) = 15 个 text_input key 全部唯一，
-    且 5 个 slider/number_input key 同样唯一（前缀防冲突约束实证）。"""
+    """全局(3) + 4 override(各3) = 15 个 text_input key 全部唯一；
+    temperature + max_tokens 均为 slider（D1 增强：max_tokens number_input→slider），
+    故 10 个 slider key、0 个 number_input，全部唯一（前缀防冲突约束实证）。"""
     at = _new_app()
     _fill_global(at)
     at.run()
@@ -600,8 +638,9 @@ def test_strengthen_widget_keys_all_unique_no_collision():
     assert len(set(text_keys)) == 15, "text_input key 存在冲突"
     slider_keys = [s.key for s in at.slider]
     num_keys = [n.key for n in at.number_input]
-    assert len(set(slider_keys)) == len(slider_keys) == 5
-    assert len(set(num_keys)) == len(num_keys) == 5
+    # 5 panel * 2 slider（temperature + max_tokens）= 10 slider；number_input 已无。
+    assert len(set(slider_keys)) == len(slider_keys) == 10
+    assert len(num_keys) == 0
     all_keys = text_keys + slider_keys + num_keys
     assert len(set(all_keys)) == len(all_keys), "跨控件类型 key 冲突"
 
@@ -654,3 +693,237 @@ st.session_state["_test_result"] = res
     # 找到 planning expander 并确认其默认展开（labels 含 planning）。
     planning_ex = [ex for ex in at.expander if "planning" in ex.label]
     assert len(planning_ex) == 1
+
+
+# =========================================================================== #
+# D1 增强新增用例（2026-06-08，@全栈开发代理）
+# 契约：architecture.md §2.8.2（校验反转 + 兜底纯函数 + slider + Q1 round + 预填）。
+# 维度：D3=校验反转 / D4=预填+OBS-D1-01 / D5=slider。
+# =========================================================================== #
+
+
+# --- D3 校验反转：default api_key 留空合法（_validate_panel 直测） ----------- #
+def test_d1e_validate_panel_blank_api_key_now_valid():
+    """T-D1E-U07：base_url/model 合法、api_key 空 → 校验通过，cfg.api_key=="" 且无
+    'api_key 不能为空' 错误（校验反转，架构 §2.8.2）。"""
+    from ui.components.llm_config_form import _validate_panel
+    cfg, errors = _validate_panel({
+        "base_url": "https://api.x.com/v1", "model": "gpt-4o", "api_key": "",
+        "temperature": 0.3, "max_tokens": 8192,
+    }, scope_label="全局默认")
+    assert cfg is not None
+    assert cfg["api_key"] == ""
+    assert errors == []
+    assert not any("api_key" in m for m in errors)
+
+
+def test_d1e_validate_panel_blank_api_key_still_fails_on_base_url():
+    """T-D1E-U08：api_key 空 + base_url 空 → 仍因 base_url 报错 None；错误**不含** api_key。"""
+    from ui.components.llm_config_form import _validate_panel
+    cfg, errors = _validate_panel({
+        "base_url": "", "model": "gpt-4o", "api_key": "",
+        "temperature": 0.3, "max_tokens": 8192,
+    }, scope_label="x")
+    assert cfg is None
+    assert any("base_url" in m for m in errors)
+    assert not any("api_key" in m for m in errors)
+
+
+def test_d1e_validate_panel_nonblank_api_key_preserved():
+    """T-D1E-U09：api_key 非空 + base_url/model 合法 → 通过且原值保留（不 strip 吃字符）。"""
+    from ui.components.llm_config_form import _validate_panel
+    cfg, errors = _validate_panel({
+        "base_url": "https://api.x.com/v1", "model": "gpt-4o", "api_key": "sk-USER-123",
+        "temperature": 0.3, "max_tokens": 8192,
+    }, scope_label="x")
+    assert errors == []
+    assert cfg["api_key"] == "sk-USER-123"
+
+
+def test_d1e_panel_is_blank_unchanged():
+    """T-D1E-U10（回归）：_panel_is_blank 行为不变——三文本字段全空白 → True。"""
+    from ui.components.llm_config_form import _panel_is_blank
+    assert _panel_is_blank({
+        "base_url": "", "model": "  ", "api_key": "\t",
+        "temperature": 0.3, "max_tokens": 8192,
+    }) is True
+    # api_key 单独填（其余空）→ 仍视为开启覆写（非 blank）。
+    assert _panel_is_blank({
+        "base_url": "", "model": "", "api_key": "k",
+        "temperature": 0.3, "max_tokens": 8192,
+    }) is False
+
+
+# --- D3 兜底纯函数真值表 _should_block_for_missing_api_key ------------------ #
+def test_d1e_should_block_truth_table():
+    """T-D1E-U15：兜底纯函数真值表（架构 §2.8.2 Q2）。
+    空 api_key + env 空 → True；空 + env 有 → False；非空 → False（无论 env）。"""
+    from ui.components.llm_config_form import _should_block_for_missing_api_key
+    # 空 api_key + env 空（None / "" / 纯空白）→ True。
+    assert _should_block_for_missing_api_key({"api_key": ""}, None) is True
+    assert _should_block_for_missing_api_key({"api_key": ""}, "") is True
+    assert _should_block_for_missing_api_key({"api_key": "   "}, "   ") is True
+    # 空 api_key + env 有 → False（create_llm 可回退 .env）。
+    assert _should_block_for_missing_api_key({"api_key": ""}, "env-key") is False
+    assert _should_block_for_missing_api_key({"api_key": "  "}, "env-key") is False
+    # 非空 api_key → False（无论 env 有无，用户显式优先）。
+    assert _should_block_for_missing_api_key({"api_key": "sk-user"}, None) is False
+    assert _should_block_for_missing_api_key({"api_key": "sk-user"}, "env-key") is False
+
+
+def test_d1e_should_block_triggers_st_error_via_apptest(monkeypatch):
+    """T-D1E-U15（AppTest）：default api_key 空 且 get_llm_api_key() 空 → 兜底拦截
+    （st.error + 返回 None）。脚本内 monkeypatch config.get_llm_api_key→空。"""
+    script = """
+import streamlit as st
+import config
+config.get_llm_api_key = lambda: ""  # 模拟 env 无 LLM_API_KEY
+from ui.components.llm_config_form import render_llm_config_form
+# default panel 预填 base_url/model（合法），api_key 留空 → 触发兜底。
+res = render_llm_config_form()
+st.session_state["_test_result"] = res
+"""
+    at = AppTest.from_string(script)
+    at.run()
+    assert at.session_state["_test_result"] is None
+    error_msgs = [e.value for e in at.error]
+    assert any("api_key" in m and "环境变量" in m for m in error_msgs)
+
+
+def test_d1e_blank_api_key_passes_when_env_present():
+    """default api_key 留空但 env 有 LLM_API_KEY（本环境真实）→ 兜底不触发 →
+    成功返回 LLMConfigSet 且 default.api_key 恒为 ""（真实 key 不进表单/session）。"""
+    script = """
+import streamlit as st
+import config
+config.get_llm_api_key = lambda: "env-real-key"  # 模拟 env 有 key
+from ui.components.llm_config_form import render_llm_config_form
+res = render_llm_config_form()
+st.session_state["_test_result"] = res
+"""
+    at = AppTest.from_string(script)
+    at.run()
+    res = at.session_state["_test_result"]
+    assert res is not None
+    # 预填 base_url/model 合法、api_key 留空 → 合法；api_key 恒空（不回写真实 key）。
+    assert res["default"]["api_key"] == ""
+    assert res["default"]["base_url"] == "https://inference-api.nvidia.com/v1"
+    assert res["default"]["model"] == "azure/openai/gpt-5.4"
+
+
+# --- D5 slider：max_tokens 参数 / 默认 / 端点 / 常量锚定 -------------------- #
+def test_d1e_max_tokens_constants():
+    """T-D1E-U11/U12：max_tokens slider 常量 min=512/max=16384/step=512/默认=8192，
+    且 _MAX_TOKENS_DEFAULT 与 config.DEFAULT_LLM_MAX_TOKENS 动态锚定。"""
+    import config as cfg
+    from ui.components import llm_config_form as form
+    assert form._MAX_TOKENS_MIN == 512
+    assert form._MAX_TOKENS_MAX == 16384
+    assert form._MAX_TOKENS_STEP == 512
+    assert form._MAX_TOKENS_DEFAULT == 8192
+    assert form._MAX_TOKENS_DEFAULT == cfg.DEFAULT_LLM_MAX_TOKENS == 8192
+
+
+def test_d1e_max_tokens_is_slider_default_8192():
+    """T-D1E-U11：max_tokens 渲染为 slider（非 number_input），默认 8192。"""
+    at = _new_app()
+    _fill_global(at)
+    at.run()
+    res = at.session_state["_test_result"]
+    assert res is not None
+    assert res["default"]["max_tokens"] == 8192
+    # max_tokens 是 slider：default_max_tokens 应在 slider 列表、不在 number_input。
+    slider_keys = [s.key for s in at.slider]
+    num_keys = [n.key for n in at.number_input]
+    assert "default_max_tokens" in slider_keys
+    assert "default_max_tokens" not in num_keys
+
+
+def test_d1e_max_tokens_slider_endpoints():
+    """T-D1E-U13：slider 端点 512 / 16384 合法且 int 类型。"""
+    at = _new_app()
+    _fill_global(at)
+    at.slider(key="default_max_tokens").set_value(512)
+    at.run()
+    res = at.session_state["_test_result"]
+    assert res is not None
+    assert res["default"]["max_tokens"] == 512
+    assert isinstance(res["default"]["max_tokens"], int)
+    at2 = _new_app()
+    _fill_global(at2)
+    at2.slider(key="default_max_tokens").set_value(16384)
+    at2.run()
+    res2 = at2.session_state["_test_result"]
+    assert res2["default"]["max_tokens"] == 16384
+
+
+# --- D5 Q1：prefill 非 512 整除 round 到最近 step --------------------------- #
+def test_d1e_round_to_step_helper():
+    """T-D1E-U14（Q1 裁定）：_round_to_step 把非 step 整除值 round 到最近 512 整除并
+    clamp 到 [512, 16384]。8000→8192（最近），8100→8192，7800→7680，超界 clamp。"""
+    from ui.components.llm_config_form import _round_to_step
+    assert _round_to_step(8000, 512, 512, 16384) == 8192   # 8000/512=15.6→16*512
+    assert _round_to_step(8100, 512, 512, 16384) == 8192
+    assert _round_to_step(7800, 512, 512, 16384) == 7680   # 7800/512=15.2→15*512
+    assert _round_to_step(4096, 512, 512, 16384) == 4096   # 已整除不变
+    assert _round_to_step(100, 512, 512, 16384) == 512     # 低于下界 clamp
+    assert _round_to_step(20000, 512, 512, 16384) == 16384  # 高于上界 clamp
+
+
+def test_d1e_prefill_non_step_value_rounded_in_slider():
+    """T-D1E-U14（AppTest）：prefill max_tokens=8000（非 512 整除）注入 slider →
+    组件 round 到 8192，slider 初始值落在 step 网格、合法返回。"""
+    prefill = {
+        "default": {
+            "base_url": "https://d/v1", "model": "d-m", "api_key": "sk-D",
+            "temperature": 0.3, "max_tokens": 8000,  # 非 512 整除
+        },
+        "overrides": {},
+    }
+    script = f"""
+import streamlit as st
+from ui.components.llm_config_form import render_llm_config_form
+res = render_llm_config_form(default={prefill!r})
+st.session_state["_test_result"] = res
+"""
+    at = AppTest.from_string(script)
+    at.run()
+    res = at.session_state["_test_result"]
+    assert res is not None
+    # 8000 round 到最近 512 整除 = 8192。
+    assert res["default"]["max_tokens"] == 8192
+
+
+# --- D4 预填：default panel 预填 config getter；override 不预填 ------------- #
+def test_d1e_default_panel_prefills_base_url_model():
+    """T-D1E-S02 单测化：无 prefill 时 default panel base_url/model 预填 config getter。"""
+    at = _new_app()  # 无 prefill。
+    base_url_val = at.text_input(key="default_base_url").value
+    model_val = at.text_input(key="default_model").value
+    assert base_url_val == "https://inference-api.nvidia.com/v1"
+    assert model_val == "azure/openai/gpt-5.4"
+    # override 卡片不预填（保持空，守"全空=不覆写"）。
+    for node in ("paper_intake", "paper_analysis", "resource_scout", "planning"):
+        assert at.text_input(key=f"override_{node}_base_url").value == ""
+        assert at.text_input(key=f"override_{node}_model").value == ""
+
+
+def test_d1e_default_panel_prefill_overrides_config_getter():
+    """有 prefill 时 default panel 用 prefill 值（而非 config getter）。"""
+    prefill = {
+        "default": {
+            "base_url": "https://custom/v1", "model": "custom-m", "api_key": "sk-C",
+            "temperature": 0.3, "max_tokens": 8192,
+        },
+        "overrides": {},
+    }
+    script = f"""
+import streamlit as st
+from ui.components.llm_config_form import render_llm_config_form
+res = render_llm_config_form(default={prefill!r})
+st.session_state["_test_result"] = res
+"""
+    at = AppTest.from_string(script)
+    at.run()
+    assert at.text_input(key="default_base_url").value == "https://custom/v1"
+    assert at.text_input(key="default_model").value == "custom-m"

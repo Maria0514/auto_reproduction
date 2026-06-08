@@ -1246,6 +1246,24 @@ def render_llm_config_form(
 
 ---
 
+#### 任务 D1 增强：LLM 配置表单预填默认值 + max_tokens slider + api_key 留空回退 .env + load_dotenv
+
+- **契约权威源**：架构 §2.7.2（api_key 回退点裁定方案 A，Maria 拍板 2026-06-07）+ §2.8.2（字段/校验反转）+ test plan `2026-06-08_test-plan-d1-enhance.md`
+- **改动 4 文件**：`core/llm_client.py::create_llm`（api_key 回退）/ `ui/components/llm_config_form.py`（预填 + slider + 校验反转 + 兜底纯函数）/ `app.py`（load_dotenv）/ `config.py`（不改，仅引用）
+- **3 裁定落地**：Q1 = prefill max_tokens 非 512 整除时 `_round_to_step` 到最近 step；Q2 = 兜底校验抽纯函数 `_should_block_for_missing_api_key`；Q3 = 同步改写 9 个失效既有用例（CP-D1-2/3/5/7/8 + 4 补强）+ 级联改写 paper_input CP-D3-2
+
+- [x] CP-D1E-1 [2026-06-08] @全栈开发代理 `create_llm` 空 api_key 回退 `get_llm_api_key()`（5 单测：空回退 / 非空不回退 / 纯空白回退 / 回退到 None 不抛 / 不回写入参 + 签名仍 1 参回归）
+- [x] CP-D1E-2 [2026-06-08] @全栈开发代理 `_validate_panel` 移除 api_key "不能为空"分支（校验反转），api_key 空合法、原值保留；`_panel_is_blank` 不变
+- [x] CP-D1E-3 [2026-06-08] @全栈开发代理 兜底纯函数 `_should_block_for_missing_api_key` 真值表（空+env空→True / 空+env有→False / 非空→False）+ AppTest 触发 st.error
+- [x] CP-D1E-4 [2026-06-08] @全栈开发代理 max_tokens number_input→slider（min512/max16384/step512/默认8192）；`_MAX_TOKENS_DEFAULT` 与 `config.DEFAULT_LLM_MAX_TOKENS=8192` 动态锚定；Q1 `_round_to_step`（8000→8192）
+- [x] CP-D1E-5 [2026-06-08] @全栈开发代理 default panel base_url/model 预填 config getter（`is_default=True`），override 不预填；仅 value= 注入不写 session_state（守 OBS-D1-01）
+- [x] CP-D1E-6 [2026-06-08] @全栈开发代理 `app.py` 模块顶部 load_dotenv（PROJECT_ROOT/.env + ~/.env，override=False，try/except ImportError），与 conftest 范式一致
+- [x] CP-D1E-7 [2026-06-08] @全栈开发代理 安全自查：api_key 回退仅在 create_llm；表单层 `get_llm_api_key()` 仅用于判定不写入 cfg；`_refresh_llm_config_set` 不回退（实证 api_key 恒空、回退仅进程内存不回写 state）
+- [x] CP-D1E-8 [2026-06-08] @全栈开发代理 自测：`test_llm_config_form.py` + `test_llm_client.py` + `test_paper_input.py` ×3 连跑 78/78 全绿；非 e2e 全量回归 ×3 连跑 **460 passed**（旧基线 441 → 新基线 460，净增 19 = create_llm 回退 5 + 表单新增 14；改写 9 表单用例 + 1 paper_input 用例数目不变）零退化
+- **L2 集成（checkpoint 实证 key 恒空）/ L3 真机冒烟 / L4 e2e 留测试工程师验收**，不在全栈范围
+
+---
+
 #### 任务 D2：`app.py::GraphController`（S2-08）
 
 - **模块名**：S2-08 Streamlit 应用入口 + 工作线程 + 轮询
@@ -1421,14 +1439,18 @@ st_autorefresh(interval=STREAMLIT_POLL_INTERVAL, key="progress_poll")
 - 工作线程崩溃感知：检测 `controller.get_worker_error(thread_id)` 非空时立即停止轮询、展示 FATAL 错误。
 
 **自测检查点**：
-- [ ] CP-D4-1 `from ui.pages.analysis_progress import render` 可正常导入
-- [ ] CP-D4-2 mock `poll_state` 返回 state 含 `current_step="paper_analysis"`：UI 渲染 paper_intake 已完成 + paper_analysis 运行中
-- [ ] CP-D4-3 mock state 含 `degraded_nodes=["paper_intake"]`：paper_intake 进度条标识"降级完成"（黄色）
-- [ ] CP-D4-4 mock state 含 `paper_meta.title_zh`：UI 卡片显示中文标题；`title_zh=None` 时回退显示英文 title
-- [ ] CP-D4-5 mock `is_interrupted(thread_id)=True`：`st.session_state["current_page"]` 切到 `"review"` 并 `st.rerun()`
-- [ ] CP-D4-6 mock state `error="LLM 不可用"`：UI 停止轮询、展示 FATAL 卡片 + 重试 / 返回按钮
-- [ ] CP-D4-7 mock state `current_step="cancelled_by_user"`：UI 展示"任务已终止"卡片 + "返回输入页"按钮
-- [ ] CP-D4-8 mock `get_worker_error(thread_id)` 非空：UI 立即展示工作线程异常卡片
+- [x] CP-D4-1 `from ui.pages.analysis_progress import render` 可正常导入 ——【2026-06-07 @全栈开发代理】T-D4-01 importlib + 别名 `render_analysis_progress_page is render` + `__all__` 校验
+- [x] CP-D4-2 mock `poll_state` 返回 state 含 `current_step="paper_analysis"`：UI 渲染 paper_intake 已完成 + paper_analysis 运行中 ——【2026-06-07】内核直测 `_segment_status` 4 段（done/running/pending/pending）+ AppTest 断言"运行中"/"已完成"渲染落树
+- [x] CP-D4-3 mock state 含 `degraded_nodes=["paper_intake"]`：paper_intake 进度条标识"降级完成"（黄色）——【2026-06-07】内核直测 degraded 分支 + AppTest "降级完成"文案
+- [x] CP-D4-4 mock state 含 `paper_meta.title_zh`：UI 卡片显示中文标题；`title_zh=None` 时回退显示英文 title ——【2026-06-07】内核直测 `_pick_bilingual` title/tldr/abstract 三组全分支（zh present / None / "" / both missing / meta=None）+ 两个 AppTest（中文展示 / None 回退英文不暴露 "None"）
+- [x] CP-D4-5 mock `is_interrupted(thread_id)=True`：`st.session_state["current_page"]` 切到 `"review"` 并 `st.rerun()` ——【2026-06-07】AppTest 路由脚本（progress→render→case④写 review→rerun→review_stub 跳出循环）验 `current_page=="review"` + autorefresh 未注册（停轮询）
+- [x] CP-D4-6 mock state `error="LLM 不可用"`：UI 停止轮询、展示 FATAL 卡片 + 重试 / 返回按钮 ——【2026-06-07】AppTest 验"致命错误"文案 + btn_retry/btn_error_back 存在 + `st_autorefresh` 未注册（停轮询）
+- [x] CP-D4-7 mock state `current_step="cancelled_by_user"`：UI 展示"任务已终止"卡片 + "返回输入页"按钮 ——【2026-06-07】AppTest 验"任务已终止" + "返回输入页开启新任务"按钮 + **无"终止当前任务"按钮**（只读页约束）+ 停轮询
+- [x] CP-D4-8 mock `get_worker_error(thread_id)` 非空：UI 立即展示工作线程异常卡片 ——【2026-06-07】AppTest 验"工作线程异常" + `str(exc)`="boom" + **poll_state 未被调用**（最高优先级早返回）+ 停轮询
+
+**实现说明（2026-06-07 @全栈开发代理）**：产出 `ui/pages/analysis_progress.py`（主名 `render` + 别名 + `__all__`，对齐 app.py L285 page_map）。模块级纯函数 `_segment_status(current_step, node_name, degraded_nodes) -> Literal[...]`（防御性安全索引：`start`→-1 全 pending / 下游或未知→len(ORDER) 全 done / 绝不裸 `ORDER.index` 防 ValueError）与 `_pick_bilingual(meta, base, zh)`（优先 *_zh，缺失/None/空串回退英文，meta=None 兜底）均可 import 直测。render 顶部**终态优先级链早返回**（worker_error > error > cancelled > interrupted > 正常渲染），`st_autorefresh(interval=STREAMLIT_POLL_INTERVAL, key="progress_poll")` **仅在 case⑤ 正常渲染 + state=None 占位两条非终态路径注册**（终态分支提前 return 即不注册定时器——停轮询正确性根基）。单测 `tests/test_analysis_progress.py` **28 项**（CP-D4-1~8 双轨 + 边界 T-D4-13~22 + 架构师点名的两个终态交叉用例 worker_error∧error / cancelled∧interrupted + autorefresh 注册位置专项 + 无 thread_id 占位）。`pytest tests/test_analysis_progress.py -q` **3 次连跑 28/28 全绿无 flaky**；非 e2e 全量回归 `pytest -q -m "not e2e" --ignore=tests/test_paper_intake.py` **431 passed**（基线 403 + 新增 28，零退化）。**无偏离 §2.10 契约**。L2 集成 / L3 真机冒烟 / L4 e2e 留测试工程师按 test plan 独立验收。改动留工作区未 commit。
+
+**独立验收（2026-06-08 @测试工程师代理，CP-D4-1~8 全部命中，结论 PASS）**：按 4 层 test plan 逐条独立复核（Read 源码 + AST/运行时探针，不依赖开发自报）。CP-D4-1~8 + 架构师契约 6 项全部实证成立——含 ValueError 防御（12 个 current_step 取值域 0 异常）、终态优先级链**四态全交叉**实证（超过开发两两交叉）、autorefresh 停轮询的**真机 component 级双证**（真实 streamlit run+websocket+protobuf 触发 ScriptRunner：normal 注册 autorefresh 组件、4 终态 components=[] 不注册）。补 L2 集成 10 项（新建 `tests/test_analysis_progress_integration.py`，含真实 SqliteSaver(tmp_path) poll_state roundtrip 非桩对接）。L3 真机冒烟做到「真实 ScriptRunner 渲染级」5 场景 0 Exception；**关键发现 D4 完全不渲染侧栏**（S4 跨页侧栏 key 冲突的 D4 自身贡献不存在，真实风险点是多条 node_errors 同 label 详情 expander——真机 8 个 0 崩）。L4 e2e 凭证缺失留 E 阶段。连跑 3 次 38/38 0 flaky；全量非 e2e 回归 441 passed 零退化（431+10）。**0 生产 BUG**。报告：`docs/sprint2/test-reports/2026-06-07_d4-acceptance.md`。
 
 ---
 

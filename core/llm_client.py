@@ -11,6 +11,7 @@ from config import (
     LLM_INITIAL_RETRY_DELAY,
     LLM_MAX_RETRIES,
     LLM_REQUEST_TIMEOUT,
+    get_llm_api_key,
 )
 from core.errors import (
     LLMAuthError,
@@ -26,11 +27,31 @@ logger = logging.getLogger(__name__)
 
 
 def create_llm(config: LLMConfig) -> ChatOpenAI:
-    """根据 LLMConfig 创建 ChatOpenAI 实例，不发起网络请求。"""
+    """根据 LLMConfig 创建 ChatOpenAI 实例，不发起网络请求。
+
+    api_key 回退（方案 A，架构 §2.7.2，Maria 拍板 2026-06-07）：
+        当 ``config["api_key"]`` 为空（strip 后为 ""）时，回退到
+        ``config.get_llm_api_key()``（读 .env 的 LLM_API_KEY）。这是 api_key 回退的
+        **唯一落点**（消费层最末端，紧邻 ChatOpenAI 构造）——绝不在表单层 /
+        ``_refresh_llm_config_set`` 层回退，否则真实 key 会写进 LLMConfigSet →
+        SqliteSaver checkpoint，违背"真实 key 不进 UI/session_state/checkpoint"安全目标。
+
+    约束：
+        - 用户**显式填写**的 api_key（非空）优先，不被 env 覆盖（override 一致规则：
+          无论 resolve_llm_config 命中 default 还是某 override，空 api_key 在此统一
+          回退同一个 .env 源）；
+        - 回退取到 None（env 也无 LLM_API_KEY）时**不在此抛错**，原样传给 ChatOpenAI，
+          错误交由后续 invoke 的 LLMError 路径暴露（兜底校验在表单提交时已早失败拦截）；
+        - 回退值**不回写入参 config dict**，仅用于本次 ChatOpenAI 构造（进程内存）。
+    """
+    api_key = config["api_key"]
+    if not (api_key and api_key.strip()):
+        # 空 / 纯空白 → 回退 .env；非空时此分支不触发（保留用户显式值）。
+        api_key = get_llm_api_key()
     return ChatOpenAI(
         base_url=config["base_url"],
         model=config["model"],
-        api_key=config["api_key"],
+        api_key=api_key,
         temperature=config["temperature"],
         max_tokens=config["max_tokens"],
         timeout=LLM_REQUEST_TIMEOUT,

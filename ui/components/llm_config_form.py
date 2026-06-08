@@ -30,6 +30,7 @@ from typing import Dict, List, Optional, Tuple
 
 import streamlit as st
 
+import config
 from core.state import LLMConfig, LLMConfigSet, NodeName
 
 __all__ = ["render_llm_config_form"]
@@ -48,33 +49,66 @@ _MODEL_PLACEHOLDER = "gpt-4o-mini"
 _TEMPERATURE_DEFAULT = 0.3
 _TEMPERATURE_MIN = 0.0
 _TEMPERATURE_MAX = 1.0
-_MAX_TOKENS_DEFAULT = 4096
-_MAX_TOKENS_MIN = 256
+# max_tokens 改 slider（架构 §2.8.2 D1 增强）：min/max/step/默认值。
+# _MAX_TOKENS_DEFAULT 与 config.DEFAULT_LLM_MAX_TOKENS=8192 对齐（修历史 4096 不一致）。
+_MAX_TOKENS_DEFAULT = 8192
+_MAX_TOKENS_MIN = 512
 _MAX_TOKENS_MAX = 16384
+_MAX_TOKENS_STEP = 512
 
 # 状态键：组装成功的 LLMConfigSet 唯一权威落点（GraphController 据此读取）。
 SESSION_KEY = "llm_config_set"
 
 
+def _round_to_step(value: int, step: int, lo: int, hi: int) -> int:
+    """把 value round 到最近的 step 整除值并 clamp 到 [lo, hi]（架构 §2.8.2 Q1 裁定）。
+
+    slider 的初始 value 来自 prefill 时，若 prefill 的 max_tokens 不在 step 网格上
+    （如老 checkpoint 残值 8000、用户自定义值），streamlit slider 对"value 不在 step
+    网格"的行为未定义（OBS-D1-02：可能静默回退默认）。故组件侧先 round 到最近 step
+    整除值（8000 → 8192），确保 slider 初始 value 必落在 [lo, hi] 的 step 网格上。
+    """
+    rounded = round(value / step) * step
+    return max(lo, min(hi, int(rounded)))
+
+
 def _render_panel_widgets(
     prefix: str,
     prefill: Optional[LLMConfig],
+    is_default: bool = False,
 ) -> Dict[str, object]:
     """渲染单个 LLMConfig 的 5 个控件，返回原始（未校验）输入值。
 
     所有 widget 均带前缀 key，避免 streamlit 同名冲突（架构 §2.8.2 关键约束）。
     为避免 "value 参数 + session_state key 双源冲突" 告警（streamlit
     session-state 最佳实践），prefill 只通过 ``value=`` 注入，不预写 session_state。
+
+    预填策略（架构 §2.8.2 D1 增强 / OBS-D1-01）：
+        - ``is_default=True``（全局默认 panel）：base_url / model 在无 prefill 时用
+          ``config.get_llm_base_url()`` / ``config.get_llm_model()`` 作 ``value=`` 预填；
+        - ``is_default=False``（override 卡片）：**不预填**，保持空（守"全空=不覆写"语义）；
+        - 预填仅通过 ``value=`` 注入，**绝不写 st.session_state**（守 OBS-D1-01）。
     """
+    # base_url / model 预填：仅 default panel 在无 prefill 时回填 config getter。
+    if prefill:
+        base_url_value = prefill.get("base_url", "")
+        model_value = prefill.get("model", "")
+    elif is_default:
+        base_url_value = config.get_llm_base_url()
+        model_value = config.get_llm_model()
+    else:
+        base_url_value = ""
+        model_value = ""
+
     base_url = st.text_input(
         "base_url",
-        value=(prefill or {}).get("base_url", "") if prefill else "",
+        value=base_url_value,
         placeholder=_BASE_URL_PLACEHOLDER,
         key=f"{prefix}_base_url",
     )
     model = st.text_input(
         "model",
-        value=(prefill or {}).get("model", "") if prefill else "",
+        value=model_value,
         placeholder=_MODEL_PLACEHOLDER,
         key=f"{prefix}_model",
     )
@@ -94,14 +128,24 @@ def _render_panel_widgets(
         step=0.05,
         key=f"{prefix}_temperature",
     )
-    max_tokens = st.number_input(
+    # max_tokens 改 slider（架构 §2.8.2 D1 增强）：min=512 / max=16384 / step=512 / 默认=8192。
+    # Q1 裁定：prefill 的 max_tokens 先 round 到最近 step 整除值再作 value=（避免 value
+    # 不在 step 网格上的未定义行为）。
+    if prefill:
+        max_tokens_value = _round_to_step(
+            int(prefill.get("max_tokens", _MAX_TOKENS_DEFAULT)),
+            _MAX_TOKENS_STEP,
+            _MAX_TOKENS_MIN,
+            _MAX_TOKENS_MAX,
+        )
+    else:
+        max_tokens_value = _MAX_TOKENS_DEFAULT
+    max_tokens = st.slider(
         "max_tokens",
         min_value=_MAX_TOKENS_MIN,
         max_value=_MAX_TOKENS_MAX,
-        value=int((prefill or {}).get("max_tokens", _MAX_TOKENS_DEFAULT))
-        if prefill
-        else _MAX_TOKENS_DEFAULT,
-        step=128,
+        value=max_tokens_value,
+        step=_MAX_TOKENS_STEP,
         key=f"{prefix}_max_tokens",
     )
     return {
@@ -116,8 +160,9 @@ def _render_panel_widgets(
 def _validate_panel(raw: Dict[str, object], scope_label: str) -> Tuple[Optional[LLMConfig], List[str]]:
     """校验单条 panel 的原始输入，返回 (LLMConfig | None, 错误信息列表)。
 
-    校验规则（架构 §2.8.2）：base_url / model / api_key 非空（trim 后）；
-    temperature ∈ [0.0, 1.0]；max_tokens ∈ [256, 16384]。
+    校验规则（架构 §2.8.2 D1 增强，校验反转）：base_url / model 非空（trim 后）；
+    **api_key 允许留空**（留空时由 create_llm 消费层回退 .env 的 LLM_API_KEY，故此处
+    不再对 api_key 报"不能为空"）；temperature ∈ [0.0, 1.0]；max_tokens ∈ [512, 16384]。
     任一不合法则返回 (None, [行内错误信息...])。
     """
     errors: List[str] = []
@@ -125,7 +170,7 @@ def _validate_panel(raw: Dict[str, object], scope_label: str) -> Tuple[Optional[
     base_url = str(raw.get("base_url", "")).strip()
     model = str(raw.get("model", "")).strip()
     # api_key 不做 strip（密钥两端理论上不应有空白，但避免把含义性字符吃掉，
-    # 仅判定"是否为空"用 strip 后的结果，存储用原值）。
+    # 仅判定"是否为空"用 strip 后的结果，存储用原值）。allowed 为空（回退 .env）。
     api_key_raw = str(raw.get("api_key", ""))
     api_key = api_key_raw if api_key_raw.strip() else ""
 
@@ -133,8 +178,8 @@ def _validate_panel(raw: Dict[str, object], scope_label: str) -> Tuple[Optional[
         errors.append(f"[{scope_label}] base_url 不能为空")
     if not model:
         errors.append(f"[{scope_label}] model 不能为空")
-    if not api_key:
-        errors.append(f"[{scope_label}] api_key 不能为空")
+    # api_key 允许留空（校验反转，架构 §2.8.2）：不再报"不能为空"——
+    # 留空由 create_llm 回退 .env；连 env 都没有时由提交末端的兜底校验拦截。
 
     try:
         temperature = float(raw.get("temperature", _TEMPERATURE_DEFAULT))
@@ -186,6 +231,26 @@ def _panel_is_blank(raw: Dict[str, object]) -> bool:
     )
 
 
+def _should_block_for_missing_api_key(
+    cfg_default: Dict[str, object],
+    env_key: Optional[str],
+) -> bool:
+    """兜底校验纯函数（架构 §2.8.2 Q2 裁定）：是否应因"无 api_key 可用"而拦截。
+
+    返回 True 当且仅当：全局默认 panel 的 api_key 为空（strip 后为 ""）**且**
+    环境变量 LLM_API_KEY 也为空（``config.get_llm_api_key()`` 返回 None / "" / 纯空白）。
+    此时既无用户显式 key、也无 .env 回退源，提交后 worker 必然 404，故在表单提交成功
+    路径末端早失败拦截。
+
+    抽成纯函数以便不起 AppTest 即可单测真值表（空+env空→True / 空+env有→False /
+    非空→False）。
+    """
+    api_key_raw = str((cfg_default or {}).get("api_key", ""))
+    api_key_present = bool(api_key_raw.strip())
+    env_present = bool((env_key or "").strip())
+    return (not api_key_present) and (not env_present)
+
+
 def render_llm_config_form(
     default: Optional[LLMConfigSet] = None,
 ) -> Optional[LLMConfigSet]:
@@ -204,7 +269,10 @@ def render_llm_config_form(
     # --- 全局默认 panel（必填）---
     st.markdown("**全局默认 LLM 配置（必填）**")
     default_prefill = default.get("default") if default else None
-    raw_default = _render_panel_widgets(prefix="default", prefill=default_prefill)
+    # is_default=True：base_url/model 在无 prefill 时预填 config getter（架构 §2.8.2）。
+    raw_default = _render_panel_widgets(
+        prefix="default", prefill=default_prefill, is_default=True
+    )
     cfg_default, default_errors = _validate_panel(raw_default, scope_label="全局默认")
 
     if cfg_default is None:
@@ -242,6 +310,12 @@ def render_llm_config_form(
             overrides[node_name] = cfg
 
     if override_failed:
+        return None
+
+    # 最终兜底校验（架构 §2.8.2 Q2）：default.api_key 空 且 .env 的 LLM_API_KEY 也空
+    # → 无任何 api_key 可用，提交后 worker 必然 404，故早失败拦截（不写 session_state）。
+    if _should_block_for_missing_api_key(cfg_default, config.get_llm_api_key()):
+        st.error("未提供 api_key 且环境变量 LLM_API_KEY 为空，无法调用 LLM")
         return None
 
     config_set: LLMConfigSet = {"default": cfg_default, "overrides": overrides}
