@@ -1069,11 +1069,21 @@ PRD §5.4 / AC-S2-11 强制约束：
 
 **渲染区块**：
 
-- 顶部论文信息卡片（**优先 `*_zh` 字段**，缺失时回退到英文主字段）；
-- 4 段进度条：paper_intake / paper_analysis / resource_scout / planning，状态根据 `state["current_step"]` 与 `state.get("degraded_nodes")` 判定；
-- 实时日志滚动区：渲染 `state["node_errors"][-10:]`；
-- 跳转条件：`controller.is_interrupted(thread_id) == True` → `current_page = "review"`，`st.rerun()`；
-- 致命错误：`state.get("error")` 非空时停止轮询，展示 FATAL 卡片 + "重试 / 返回输入页"按钮。
+- 论文信息卡片：标题/TLDR/摘要均"优先 `*_zh`，缺失回退英文主字段"，由纯函数 `_pick_bilingual(meta, base_field, zh_field)` 实现；**不重复展示 non-CS categories 警告**（归属 D3 输入页放行前提示）。
+- 4 段进度条：paper_intake / paper_analysis / resource_scout / planning（与 core/graph.py 线性拓扑同序），状态由模块级纯函数 `_segment_status(current_step, node_name, degraded_nodes) -> Literal["pending","running","done","degraded"]` 推断。**契约（align D4）**：
+  - `current_step` 取各节点 `NODE_NAME` 常量，初值 `"start"`（create_initial_state），无独立完成标志位，故用 `ORDER=["paper_intake","paper_analysis","resource_scout","planning"]` 的索引比较；
+  - 判定：节点索引 > 当前 → pending(灰)；== → running(蓝)；< 且 ∈degraded_nodes → degraded(黄)；< 且 ∉ → done(绿)；
+  - **防御（禁止裸 `ORDER.index`，会抛 ValueError）**：`current_step=="start"` → 4 段全 pending；`current_step` 为下游节点（coding/execution/reporting）或未知 → 4 段全 done（哨兵索引 len(ORDER)）；`current_step=="cancelled_by_user"` 由终态层接管，不进段判定；
+  - planning interrupt 时 planning 段仍为 running（不引入第 5 态，因当帧即跳转 review）。
+- 实时日志滚动区：渲染 `state["node_errors"][-10:]`（一句话摘要 error_message + 详情 expander 含 error_detail）；node_errors 为空显"暂无日志"。
+- **终态/跳转优先级链（align D4，render 顶部早返回，命中即 return）**：
+  1. `get_worker_error` 非空 → "工作线程异常" FATAL 卡片（含 `str(exc)`）+ 停轮询；
+  2. `state.error` 非空 → FATAL 卡片 + "重试/返回输入页" + 停轮询；
+  3. `current_step=="cancelled_by_user"` → "任务已终止"卡片 + "返回输入页" + 停轮询（AC-S2-13）；
+  4. `is_interrupted==True` → `current_page="review"` + `st.rerun()`；
+  5. 否则正常渲染并注册 `st_autorefresh`（停轮询=不走到第 5 步即不注册定时器）。
+- `state` 为 None（snapshot 不存在）→ "等待任务启动/加载中"占位，不进段判定、不渲染空卡片。
+- 入口：主名 `render`，别名 `render_analysis_progress_page = render`（对齐 app.py page_map）。
 
 ### 2.11 `ui/pages/plan_review.py`（S2-07）
 
