@@ -700,7 +700,7 @@ def _route_after_planning(state: GlobalState) -> str:
 
 `graph.compile(checkpointer=...)` 编译后的图：
 
-- 首次 `graph.invoke(initial_state, {"configurable": {"thread_id": "..."}})` 跑到 planning interrupt 时自然暂停，state 持久化；
+- 首次 `graph.invoke(initial_state, {"configurable": {"thread_id": "...", "checkpoint_ns": ""}})` 跑到 planning interrupt 时自然暂停，state 持久化（`checkpoint_ns` 为 LangGraph 1.1.10 `SqliteSaver.put` 强制字段，根命名空间取空串，见 §2.7.1 `_make_config` / S-2 spike）；
 - UI 端通过 `graph.invoke(Command(resume=user_decision), config)` 恢复执行；
 - `interrupt()` 的返回值即 `resume` payload；
 - planning 节点根据 payload 内部决定写 `approved=True`（走 `_route_after_planning` 的 `"next"`）、写 revise 字段（走 `"self"` 重新进入 planning，无次数上限）或写 `current_step="cancelled_by_user"`（走 `"end"` 直达 END）。
@@ -826,6 +826,17 @@ class GraphController:
         self._main_checkpointer = get_checkpointer()
         self._main_graph = build_graph(checkpointer=self._main_checkpointer)
 
+    @staticmethod
+    def _make_config(thread_id: str) -> Dict:
+        """构造 LangGraph 调用 config。
+
+        LangGraph 1.1.10 的 SqliteSaver.put 强制要求 checkpoint_ns 字段（S-2
+        spike 实证）。所有直接调 saver / graph.get_state / graph.invoke 的
+        config 都必须经此 helper 注入 thread_id + checkpoint_ns=""（根命名
+        空间），避免散落各处的字面量 dict 漏写 checkpoint_ns。
+        """
+        return {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
+
     def start_task(self, arxiv_id: str, llm_config_set: LLMConfigSet) -> str:
         thread_id = f"task-{uuid.uuid4().hex[:12]}"
         initial_state = create_initial_state(arxiv_id, llm_config_set)
@@ -846,7 +857,7 @@ class GraphController:
         try:
             worker_checkpointer = get_checkpointer()           # 独立实例
             worker_graph = build_graph(checkpointer=worker_checkpointer)
-            config = {"configurable": {"thread_id": thread_id}}
+            config = self._make_config(thread_id)
             worker_graph.invoke(initial_state, config)         # 跑到 interrupt 自然暂停
         except Exception as e:
             logger.exception("[worker:%s] 异常", thread_id)
@@ -854,12 +865,12 @@ class GraphController:
                 self._worker_errors[thread_id] = e
 
     def poll_state(self, thread_id: str) -> Optional[GlobalState]:
-        config = {"configurable": {"thread_id": thread_id}}
+        config = self._make_config(thread_id)
         snapshot = self._main_graph.get_state(config)
         return snapshot.values if snapshot else None
 
     def is_interrupted(self, thread_id: str) -> bool:
-        config = {"configurable": {"thread_id": thread_id}}
+        config = self._make_config(thread_id)
         snapshot = self._main_graph.get_state(config)
         # LangGraph StateSnapshot.next 元组非空且包含的下一节点是 planning 节点
         # 加上 snapshot.tasks 中有 interrupt 元数据即视为暂停
@@ -882,7 +893,7 @@ class GraphController:
         try:
             worker_checkpointer = get_checkpointer()           # 又一个独立实例
             worker_graph = build_graph(checkpointer=worker_checkpointer)
-            config = {"configurable": {"thread_id": thread_id}}
+            config = self._make_config(thread_id)
             worker_graph.invoke(Command(resume=resume_payload), config)
         except Exception as e:
             logger.exception("[resume:%s] 异常", thread_id)
@@ -1048,7 +1059,7 @@ PRD §5.4 / AC-S2-11 强制约束：
 3. （可选）关键词搜索框：调用 `reader.search(query, size=10)`；
 4. "开始复现"按钮：
    - 前置校验（llm_config 非空 + arxiv_id 非空 + 非 CS 论文 WARNING 不阻塞）；
-   - 调用 `GraphController.start_task(arxiv_id, llm_config)` 拿 `thread_id`；
+   - 调用 `GraphController.start_task(arxiv_id, llm_config_set)` 拿 `thread_id`；
    - 写 `st.session_state["thread_id"] = thread_id`、`st.session_state["current_page"] = "progress"`；
    - `st.rerun()`。
 
@@ -1123,7 +1134,7 @@ sequenceDiagram
     participant Ext as 外部服务
 
     U->>Main: 1. 填表+点击"开始复现"
-    Main->>Ctrl: start_task(arxiv_id, llm_config)
+    Main->>Ctrl: start_task(arxiv_id, llm_config_set)
     Ctrl->>Worker: 创建daemon Thread + 独立SqliteSaver
     Worker->>DB: invoke(initial_state) checkpoint
     Worker->>Ext: paper_intake (deepxiv brief/head)
