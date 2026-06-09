@@ -3,3 +3,12 @@
 .claude/.nfs*
 .env
 .env.local
+# 运行时产物（git clone 的仓库 / 日志 / 运行记录）
+workspace/
+
+# 一次性调试探针与脚本
+_probe_*.txt
+scripts/dump_real_plan.py
+
+# LangGraph SqliteSaver 运行时 checkpoint 数据库
+checkpoints.db
