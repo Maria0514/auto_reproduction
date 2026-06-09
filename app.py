@@ -209,6 +209,27 @@ class GraphController:
                 return True
         return False
 
+    def get_interrupt_payload(self, thread_id: str) -> Optional[Dict]:
+        """返回 planning interrupt 的 payload(interrupts[0].value)，无 interrupt 时 None。
+
+        主线程只读，走 self._main_graph.get_state（与 poll_state / is_interrupted 同一
+        读路径，独立 main_checkpointer，不阻塞工作线程）。审核数据(reproduction_plan 等)
+        在 interrupt 暂停时尚未写入 snapshot.values，只存在于 interrupt payload dict 中
+        （C1 e2e 实证），故 plan_review 页须经本方法取审核数据，而非 poll_state（S2-07 / D5）。
+
+        判定与 is_interrupted 一致：snapshot.next 非空且某 task 含 interrupts；命中即返回
+        interrupts[0].value（planning 节点 interrupt(payload) 注入的 dict）。
+        """
+        config = _make_config(thread_id)
+        snapshot = self._main_graph.get_state(config)
+        if not (snapshot and snapshot.next):
+            return None
+        for task in (getattr(snapshot, "tasks", None) or ()):
+            interrupts = getattr(task, "interrupts", None) or ()
+            if interrupts:
+                return interrupts[0].value
+        return None
+
     def get_worker_error(self, thread_id: str) -> Optional[Exception]:
         """返回工作线程捕获的异常对象（无则 None），由 UI 检测展示。"""
         with self._lock:
