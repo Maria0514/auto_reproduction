@@ -7,7 +7,10 @@
 workspace/
 
 # 一次性调试探针与脚本
+_probe_*.py
 _probe_*.txt
+_shot.py
+_shot_theme.py
 scripts/dump_real_plan.py
 
 # LangGraph SqliteSaver 运行时 checkpoint 数据库

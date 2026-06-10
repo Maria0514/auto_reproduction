@@ -1,0 +1,7 @@
+[theme]
+# UI 优化方案(Sprint2)蓝色系主题打底，与 docs/sprint2/ui-optimization-plan.md 色板一致
+primaryColor = "#2563eb"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f8fafc"
+textColor = "#0f172a"
+font = "sans serif"

@@ -34,7 +34,9 @@ from __future__ import annotations
 import logging
 from typing import Dict, List, Literal, Optional
 
+import pandas as pd
 import streamlit as st
+import streamlit_shadcn_ui as ui
 from streamlit_autorefresh import st_autorefresh
 
 from config import STREAMLIT_POLL_INTERVAL
@@ -168,92 +170,158 @@ def _render_paper_card(paper_meta: Optional[Dict]) -> None:
     NoneType subscript（架构 §2.10 / test plan T-D4-22）。
     """
     if not paper_meta:
-        st.info("论文信息加载中…")
+        # §3.2：info 类提示统一用 ui.alert（class_name 模拟 info variant）。
+        ui.alert(
+            title="论文信息加载中…",
+            description="paper_intake 节点尚未完成，稍候自动刷新。",
+            class_name="border-sky-500 bg-sky-50 text-sky-900",
+            key="alert_paper_loading",
+        )
         return
 
-    title = _pick_bilingual(paper_meta, "title", "title_zh")
-    st.subheader(title or "(无标题)")
+    with st.container(border=True):
+        title = _pick_bilingual(paper_meta, "title", "title_zh")
+        st.subheader("📄 " + (title or "(无标题)"))
 
-    arxiv_id = paper_meta.get("arxiv_id")
-    authors = paper_meta.get("authors") or []
-    meta_bits = []
-    if arxiv_id:
-        meta_bits.append(f"arXiv: {arxiv_id}")
-    if authors:
-        meta_bits.append("作者：" + ", ".join(str(a) for a in authors))
-    if meta_bits:
-        st.caption(" ｜ ".join(meta_bits))
+        arxiv_id = paper_meta.get("arxiv_id")
+        authors = paper_meta.get("authors") or []
+        badge_list = []
+        if arxiv_id:
+            badge_list.append((f"arXiv: {arxiv_id}", "default"))
+        if authors:
+            badge_list.append(("作者：" + ", ".join(str(a) for a in authors), "secondary"))
+        if badge_list:
+            ui.badges(badge_list=badge_list, key="b_paper_meta")
 
-    tldr = _pick_bilingual(paper_meta, "tldr", "tldr_zh")
-    if tldr:
-        st.markdown(f"**TL;DR**：{tldr}")
+        tldr = _pick_bilingual(paper_meta, "tldr", "tldr_zh")
+        if tldr:
+            st.markdown(f"**TL;DR**：{tldr}")
 
-    abstract = _pick_bilingual(paper_meta, "abstract", "abstract_zh")
-    if abstract:
-        with st.expander("摘要（Abstract）", expanded=False):
-            st.write(abstract)
+        abstract = _pick_bilingual(paper_meta, "abstract", "abstract_zh")
+        if abstract:
+            with st.expander("摘要（Abstract）", expanded=False):
+                st.write(abstract)
 
 
 def _render_progress_bar(state: Dict) -> None:
     """渲染 4 段进度条（paper_intake / paper_analysis / resource_scout / planning）。
 
     各段状态由纯函数 _segment_status 推断（与 core/graph.py 线性拓扑同序，架构 §2.10）。
+    顶部追加 ui.progress 整体百分比 = done / total（§3.2 设计要求；degraded 也算"已结束"段）。
     """
     current_step = str(state.get("current_step") or "start")
     degraded_nodes = state.get("degraded_nodes") or []
 
-    st.markdown("### 复现进度")
+    st.markdown("### 🚀 复现进度")
+
+    # --- 整体百分比（§3.2 顶部 ui.progress）：done + degraded 视为已完成段 ---
+    done_count = sum(
+        1
+        for n in ORDER
+        if _segment_status(current_step, n, degraded_nodes) in ("done", "degraded")
+    )
+    overall_pct = int(round(done_count * 100 / len(ORDER))) if ORDER else 0
+    # ui.progress 0.1.19 形参是 data（百分比 int 0~100）。
+    ui.progress(data=overall_pct, key="prog_overall")
+    st.caption(f"整体进度：{done_count}/{len(ORDER)} 阶段完成（{overall_pct}%）")
+
     cols = st.columns(len(ORDER))
     for col, node_name in zip(cols, ORDER):
         status = _segment_status(current_step, node_name, degraded_nodes)
         label, emoji = _SEGMENT_LABELS[status]
         display_name = _NODE_DISPLAY_NAMES.get(node_name, node_name)
+        # 每段一张卡片：emoji + 段名 + 状态 badge（Tailwind 上色，绿/蓝/灰区分）。
+        badge_class = {
+            "done": "bg-green-100 text-green-700 border border-green-300",
+            "running": "bg-blue-600 text-white border border-blue-600",
+            "degraded": "bg-red-100 text-red-700 border border-red-300",
+        }.get(status, "bg-slate-100 text-slate-500 border border-slate-300")
         with col:
-            st.markdown(f"{emoji} **{display_name}**")
-            st.caption(label)
+            with st.container(border=True):
+                st.markdown(f"### {emoji}")
+                st.markdown(f"**{display_name}**")
+                ui.badges(
+                    badge_list=[(label, "outline")],
+                    class_name=badge_class,
+                    key=f"b_seg_{node_name}",
+                )
+                # label 同步进主文档（shadcn badge 在 iframe，AppTest 读不到；
+                # caption 作为可见兜底，供测试/无障碍读取）。
+                st.caption(label)
 
 
 def _render_logs(state: Dict) -> None:
     """渲染实时日志滚动区：state["node_errors"][-10:]（架构 §2.10 / dev-plan L1412）。
 
-    一句话摘要（error_message）+ expander 详情（error_detail）；为空显"暂无日志"。
+    迁移到 ui.accordion（§3.2）：每条一个 item，title=节点名+错误类型+摘要+状态徽章 emoji，
+    展开内嵌代码块（detail 用 markdown ``` fence；ui.accordion content 仅支持字符串，
+    streamlit 控件无法嵌入，故采用 markdown code-fence 等价表达）。
     """
-    st.markdown("### 实时日志")
+    st.markdown("### 📋 实时日志")
     node_errors = state.get("node_errors") or []
     if not node_errors:
         st.caption("暂无日志")
         return
 
-    # 仅渲染最后 10 条（架构 §2.10）。
+    # 仅最后 10 条；shadcn accordion 前端是 data.map(r => ...)，期待 list[dict]，
+    # 每个 item 形如 {"title": ..., "content": ...}。Python dict 会让前端 .map 直接抛
+    # "n.map is not a function"。
+    items: List[Dict[str, str]] = []
     for idx, err in enumerate(node_errors[-10:]):
         if not isinstance(err, dict):
             continue
         node_name = err.get("node_name") or "?"
         error_type = err.get("error_type") or ""
         summary = err.get("error_message") or "(无摘要)"
-        st.markdown(f"- `{node_name}`"
-                    + (f" [{error_type}]" if error_type else "")
-                    + f"：{summary}")
+        # 状态徽章用 emoji 在 title 内表达（accordion title 仅字符串，不能嵌组件）。
+        type_part = f" [{error_type}]" if error_type else ""
+        title = f"⚠️ {idx + 1}. {node_name}{type_part} · {summary}"
         detail = err.get("error_detail")
         if detail:
-            # expander key 唯一，避免跨条 / 跨 rerun 重复 key。
-            with st.expander("详情", expanded=False):
-                st.code(str(detail))
+            content = f"**摘要**：{summary}\n\n```\n{detail}\n```"
+        else:
+            content = f"**摘要**：{summary}\n\n_(无 error_detail)_"
+        items.append({"title": title, "content": content})
+
+    if items:
+        ui.accordion(data=items, key="acc_logs")
+    else:
+        st.caption("暂无日志")
 
 
 def _render_fatal_worker_error(exc: Exception) -> None:
-    """case①：工作线程异常 FATAL 卡片（含 str(exc)）+ 返回输入页（停轮询）。"""
-    st.error("工作线程异常：复现任务在后台线程崩溃，已停止。")
+    """case①：工作线程异常 FATAL 卡片（含 str(exc)）+ 返回输入页（停轮询）。
+
+    §3.2：用 ui.alert(destructive) 替代 st.error；按钮用 ui.button(variant='outline')。
+    """
+    # destructive 红色边框 + 浅红底（Tailwind 语义类，shadcn alert 默认无 variant 参数）。
+    ui.alert(
+        title="工作线程异常",
+        description="复现任务在后台线程崩溃，已停止。",
+        class_name="border-red-500 bg-red-50 text-red-900",
+        key="alert_worker_error",
+    )
+    # 详情仍用 st.code（ui.alert description 不支持代码块换行渲染）。
     st.code(str(exc))
     _render_back_to_input_button(key="btn_worker_error_back")
 
 
 def _render_fatal_state_error(error_msg: str) -> None:
-    """case②：state.error FATAL 卡片 + 重试 / 返回输入页（停轮询）。"""
-    st.error(f"任务发生致命错误：{error_msg}")
+    """case②：state.error FATAL 卡片 + 重试 / 返回输入页（停轮询）。
+
+    §3.2：ui.alert(destructive) + ui.button(variant='default' 重试 / 'outline' 返回)；
+    所有 ui.button key 保持原值（btn_retry / btn_error_back）。
+    """
+    ui.alert(
+        title="任务发生致命错误",
+        description=error_msg,
+        class_name="border-red-500 bg-red-50 text-red-900",
+        key="alert_state_error",
+    )
     cols = st.columns(2)
     with cols[0]:
-        if st.button("重试", key="btn_retry"):
+        # variant='default' 蓝色主按钮；ui.button 返回 True 表示被点击。
+        if ui.button(text="重试", key="btn_retry", variant="default"):
             # 返回输入页重新发起（sp2 不提供从 thread_id 原地恢复，Q-S2-05）。
             st.session_state[_KEY_CURRENT_PAGE] = "input"
             st.rerun()
@@ -262,9 +330,16 @@ def _render_fatal_state_error(error_msg: str) -> None:
 
 
 def _render_cancelled_card() -> None:
-    """case③：任务已终止卡片 + 返回输入页（停轮询，AC-S2-13）。"""
-    st.warning("任务已终止：你在计划审核页主动终止了本次复现任务。")
-    st.caption("checkpoint 已保留供后续查询。可返回输入页开启新任务。")
+    """case③：任务已终止卡片 + 返回输入页（停轮询，AC-S2-13）。
+
+    §3.2：ui.alert(warning) 替代 st.warning；按钮走 ui.button(variant='outline')。
+    """
+    ui.alert(
+        title="任务已终止",
+        description="你在计划审核页主动终止了本次复现任务。checkpoint 已保留供后续查询。",
+        class_name="border-amber-500 bg-amber-50 text-amber-900",
+        key="alert_cancelled",
+    )
     _render_back_to_input_button(key="btn_cancelled_back", label="返回输入页开启新任务")
 
 
@@ -272,8 +347,11 @@ def _render_back_to_input_button(
     key: str,
     label: str = "返回输入页",
 ) -> None:
-    """通用"返回输入页"按钮：清提交标记 + 切回 input 页。"""
-    if st.button(label, key=key):
+    """通用"返回输入页"按钮：清提交标记 + 切回 input 页。
+
+    §3.2：ui.button(variant='outline') 替代 st.button；保留原 key（btn_*_back / btn_no_task_back）。
+    """
+    if ui.button(text=label, key=key, variant="outline"):
         st.session_state[_KEY_CURRENT_PAGE] = "input"
         # 清掉输入页提交锁，允许重新发起新任务（D3 _KEY_SUBMITTED）。
         st.session_state["_input_submitted"] = False
@@ -293,7 +371,13 @@ def render() -> None:
     thread_id = st.session_state.get(_KEY_THREAD_ID)
     if not thread_id:
         # 无 thread_id（未从输入页发起任务）→ 占位提示，不进任何判定。
-        st.info("尚未启动任务。请先在输入页填写论文与配置并点击「开始复现」。")
+        # §3.2：用 ui.alert(info) 替代 st.info。
+        ui.alert(
+            title="尚未启动任务",
+            description="请先在输入页填写论文与配置并点击「开始复现」。",
+            class_name="border-sky-500 bg-sky-50 text-sky-900",
+            key="alert_no_task",
+        )
         _render_back_to_input_button(key="btn_no_task_back")
         return
 
@@ -310,7 +394,12 @@ def render() -> None:
     # --- state 为 None（snapshot 不存在）→ 占位，不进段判定、不渲染空卡片 ---
     # （上层守卫：纯函数不接受 None state；此处仍注册 autorefresh 等待 checkpoint 落盘）
     if state is None:
-        st.info("等待任务启动 / 加载中…")
+        ui.alert(
+            title="等待任务启动 / 加载中…",
+            description="正在等待 checkpoint 落盘，页面将自动刷新。",
+            class_name="border-sky-500 bg-sky-50 text-sky-900",
+            key="alert_waiting",
+        )
         st_autorefresh(interval=STREAMLIT_POLL_INTERVAL, key="progress_poll")
         return
 

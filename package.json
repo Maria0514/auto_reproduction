@@ -1,0 +1,13 @@
+{
+  "name": "auto-reproduction",
+  "version": "0.1.0",
+  "private": true,
+  "description": "论文自动复现系统 —— 这里的 npm scripts 仅作为 VSCode 侧边栏一键运行入口，底层调用项目 .venv 里的 Python 工具（streamlit / pytest）。本项目本身是 Python 项目，无 Node 运行时依赖。",
+  "scripts": {
+    "start": ".venv/bin/streamlit run app.py",
+    "test": ".venv/bin/pytest -q -m \"not e2e\"",
+    "test:all": ".venv/bin/pytest -q",
+    "test:e2e": ".venv/bin/pytest -q -m e2e",
+    "test:file": ".venv/bin/pytest -v"
+  }
+}

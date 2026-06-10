@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>论文自动复现 — UI 效果预览</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    background: #f8fafc; color: #0f172a; line-height: 1.6; padding-bottom: 60px; }
+  .mock-bar { background: #fffbeb; border-bottom: 1px solid #fde68a; color: #92400e;
+    text-align: center; padding: 10px; font-size: 14px; }
+  .tabs { display: flex; gap: 4px; background: #fff; border-bottom: 1px solid #e2e8f0;
+    padding: 0 24px; position: sticky; top: 0; z-index: 10; }
+  .tab { padding: 14px 20px; cursor: pointer; border: none; background: none; font-size: 15px;
+    color: #64748b; border-bottom: 2px solid transparent; transition: all .15s; }
+  .tab:hover { color: #2563eb; }
+  .tab.active { color: #2563eb; border-bottom-color: #2563eb; font-weight: 600; }
+  .container { max-width: 860px; margin: 24px auto; padding: 0 20px; }
+  section { display: none; }
+  section.active { display: block; }
+  h1 { font-size: 24px; margin-bottom: 20px; }
+  h2 { font-size: 18px; margin-bottom: 12px; }
+  h3 { font-size: 15px; margin-bottom: 8px; }
+  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06); padding: 20px; margin-bottom: 20px; }
+  .caption { color: #64748b; font-size: 13px; }
+  .muted { color: #64748b; }
+  .badge { display: inline-block; background: #eff6ff; color: #2563eb; border-radius: 6px;
+    padding: 2px 10px; font-size: 12px; font-weight: 500; }
+  input[type=text] { width: 100%; padding: 10px 12px; border: 1px solid #e2e8f0;
+    border-radius: 8px; font-size: 14px; font-family: inherit; }
+  input[type=text]:focus { outline: none; border-color: #2563eb; }
+  .btn { padding: 9px 16px; border-radius: 8px; font-size: 14px; cursor: pointer;
+    border: 1px solid transparent; font-family: inherit; transition: all .15s; }
+  .btn-primary { background: #2563eb; color: #fff; }
+  .btn-primary:hover { background: #1d4ed8; }
+  .btn-secondary { background: #fff; color: #0f172a; border-color: #e2e8f0; }
+  .btn-secondary:hover { background: #f8fafc; border-color: #cbd5e1; }
+  .btn-danger { background: #fff; color: #dc2626; border-color: #fecaca; }
+  .btn-danger:hover { background: #fef2f2; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  details { border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 14px; margin: 12px 0; }
+  details summary { cursor: pointer; font-weight: 500; color: #2563eb; }
+  details[open] summary { margin-bottom: 10px; }
+  a { color: #2563eb; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  pre { background: #f1f5f9; border-radius: 8px; padding: 12px; overflow-x: auto;
+    font-family: ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace; font-size: 13px;
+    line-height: 1.5; color: #334155; }
+  .stages { display: flex; gap: 10px; flex-wrap: wrap; }
+  .stage { flex: 1; min-width: 130px; border: 1px solid #e2e8f0; border-radius: 10px;
+    padding: 14px; text-align: center; background: #fff; }
+  .stage.active { border-color: #2563eb; background: #eff6ff; }
+  .stage .emoji { font-size: 24px; }
+  .stage .name { font-size: 13px; font-weight: 500; margin: 6px 0; }
+  .st-badge { font-size: 12px; padding: 1px 8px; border-radius: 10px; }
+  .st-done { background: #dcfce7; color: #16a34a; }
+  .st-doing { background: #2563eb; color: #fff; }
+  .st-wait { background: #f1f5f9; color: #64748b; }
+  .progress-bar { height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden; margin: 12px 0; }
+  .progress-bar > div { height: 100%; background: #2563eb; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #e2e8f0; }
+  th { color: #64748b; font-weight: 500; background: #f8fafc; }
+  .metrics { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
+  .metric { flex: 1; min-width: 120px; border: 1px solid #e2e8f0; border-radius: 10px;
+    padding: 14px; text-align: center; }
+  .metric .num { font-size: 22px; font-weight: 700; color: #0f172a; }
+  .metric .lbl { font-size: 12px; color: #64748b; }
+  .repo-card.selected { background: #eff6ff; border-left: 4px solid #2563eb; }
+  .info-bar { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; border-radius: 8px;
+    padding: 12px 16px; font-size: 14px; margin: 16px 0; }
+  .modal-mask { display: none; position: fixed; inset: 0; background: rgba(15,23,42,.5);
+    z-index: 100; align-items: center; justify-content: center; }
+  .modal-mask.show { display: flex; }
+  .modal { background: #fff; border-radius: 12px; padding: 24px; max-width: 400px; width: 90%;
+    box-shadow: 0 10px 40px rgba(0,0,0,.2); }
+  .modal h3 { font-size: 18px; }
+  .modal p { color: #64748b; margin: 12px 0 20px; }
+</style>
+</head>
+<body>
+<div class="mock-bar">🎨 这是 UI 优化静态效果预览(mock),非真实功能页</div>
+<div class="tabs">
+  <button class="tab active" onclick="showPage('input', this)">📥 输入论文</button>
+  <button class="tab" onclick="showPage('progress', this)">📊 分析进度</button>
+  <button class="tab" onclick="showPage('review', this)">📋 计划审核</button>
+</div>
+<div class="container">
+  <section id="page-input" class="active">
+    <h1>论文自动复现 — 输入论文</h1>
+    <div class="card">
+      <h3>📄 输入 arXiv 论文链接或 ID</h3>
+      <div class="row" style="margin-top:8px">
+        <input type="text" placeholder="例如:https://arxiv.org/abs/2401.12345 或 2401.12345" style="flex:1">
+        <button class="btn btn-primary">获取论文信息</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="margin:0">《MoE-Lite: 稀疏专家模型的高效训练》</h2>
+        <span class="badge">cs.LG</span>
+      </div>
+      <p class="caption">Zhang et al.</p>
+      <p style="margin-top:10px"><strong>TL;DR：</strong>提出稀疏门控的轻量化 MoE 训练方案,在同等算力下提升收敛速度约 30%。</p>
+      <details>
+        <summary>摘要(Abstract)</summary>
+        <p class="muted">混合专家(Mixture-of-Experts)模型通过条件计算扩展模型容量,但训练开销与路由不稳定限制了其落地。本文提出 MoE-Lite,引入稀疏门控正则与轻量化负载均衡损失,在保持激活参数量不变的前提下显著加速收敛。在多个语言建模基准上,MoE-Lite 相较稠密基线在同等算力预算下取得约 30% 的收敛加速,并在下游任务上保持竞争力。</p>
+      </details>
+      <p style="margin-top:12px">🔗 官方代码仓库:<a href="#">github.com/example/moe-lite</a></p>
+    </div>
+    <details>
+      <summary>🔍 按关键词搜索论文(可选)</summary>
+      <div class="row" style="margin-top:8px">
+        <input type="text" placeholder="输入关键词,例如:sparse mixture of experts" style="flex:1">
+        <button class="btn btn-primary">搜索</button>
+      </div>
+      <div class="card" style="margin-top:12px;margin-bottom:8px">
+        <div class="row" style="justify-content:space-between">
+          <div><strong>Switch Transformers: Scaling to Trillion Parameter Models</strong>
+            <p class="caption">Fedus et al. · 2021 · cs.LG</p></div>
+          <button class="btn btn-secondary">选用</button>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:0">
+        <div class="row" style="justify-content:space-between">
+          <div><strong>GShard: Scaling Giant Models with Conditional Computation</strong>
+            <p class="caption">Lepikhin et al. · 2020 · cs.LG</p></div>
+          <button class="btn btn-secondary">选用</button>
+        </div>
+      </div>
+    </details>
+  </section>
+  <section id="page-progress">
+    <h1>论文自动复现 — 分析进度</h1>
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <h3 style="margin:0">《MoE-Lite: 稀疏专家模型的高效训练》</h3>
+        <span class="badge">cs.LG</span>
+      </div>
+      <p class="caption">Zhang et al. · github.com/example/moe-lite</p>
+    </div>
+    <div class="card">
+      <h2>复现进度</h2>
+      <div class="progress-bar"><div style="width:50%"></div></div>
+      <div class="stages">
+        <div class="stage"><div class="emoji">📄</div><div class="name">解析论文</div><span class="st-badge st-done">✓ 完成</span></div>
+        <div class="stage"><div class="emoji">🔍</div><div class="name">资源侦察</div><span class="st-badge st-done">✓ 完成</span></div>
+        <div class="stage active"><div class="emoji">🧩</div><div class="name">制定计划</div><span class="st-badge st-doing">● 进行中</span></div>
+        <div class="stage"><div class="emoji">⚙️</div><div class="name">执行复现</div><span class="st-badge st-wait">○ 待开始</span></div>
+        <div class="stage"><div class="emoji">📊</div><div class="name">汇总结果</div><span class="st-badge st-wait">○ 待开始</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>实时日志</h2>
+      <details open>
+        <summary><code>paper_parser</code> · 14:02:18</summary>
+        <pre>[paper_parser] 已提取标题、作者、摘要与 12 个关键公式
+[paper_parser] 识别出主要贡献:稀疏门控正则 + 轻量化负载均衡损失</pre>
+      </details>
+      <details>
+        <summary><code>resource_scout</code> · 14:05:43</summary>
+        <pre>[resource_scout] 命中官方仓库 github.com/example/moe-lite
+[resource_scout] Stars=1843 Forks=211 质量分=0.92 → 采纳 use_repo 策略</pre>
+      </details>
+      <details>
+        <summary><code>plan_maker</code> · 14:08:07</summary>
+        <pre>[plan_maker] 正在生成复现步骤草案...
+[plan_maker] 已规划 4 个执行步骤,预估耗时 6~8 小时
+[plan_maker] 等待人工审核中</pre>
+      </details>
+    </div>
+  </section>
+  <section id="page-review">
+    <h1>📋 计划审核</h1>
+    <div class="card">
+      <h2>复现计划</h2>
+      <p class="muted">基于官方仓库 use_repo 策略复现 MoE-Lite 核心训练流程:搭建稀疏门控 MoE 层与轻量化负载均衡损失,在 WikiText-103 上对比稠密基线的收敛速度,验证论文宣称的约 30% 加速。</p>
+      <div class="row" style="margin-top:14px;gap:40px">
+        <div><span class="caption">代码策略</span><br><strong>use_repo</strong></div>
+        <div><span class="caption">预估耗时</span><br><strong>6~8 小时</strong></div>
+      </div>
+      <details>
+        <summary>环境依赖</summary>
+        <pre>{
+  "python": "3.10",
+  "cuda": "12.1",
+  "packages": {
+    "torch": "2.2.0",
+    "transformers": "4.38.0",
+    "datasets": "2.18.0",
+    "accelerate": "0.27.0"
+  },
+  "hardware": "1x A100 80GB"
+}</pre>
+      </details>
+      <h3 style="margin-top:16px">执行步骤</h3>
+      <table>
+        <thead><tr><th>#</th><th>步骤</th><th>预估耗时</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>克隆仓库并搭建 conda 环境、安装依赖</td><td>0.5h</td></tr>
+          <tr><td>2</td><td>下载 WikiText-103 数据集并预处理分词</td><td>1h</td></tr>
+          <tr><td>3</td><td>训练 MoE-Lite 与稠密基线各一组</td><td>5h</td></tr>
+          <tr><td>4</td><td>对比收敛曲线与困惑度,生成复现报告</td><td>1h</td></tr>
+        </tbody>
+      </table>
+      <h3 style="margin-top:16px">交付物</h3>
+      <ul style="margin-left:20px;color:#334155">
+        <li>训练脚本与配置文件</li>
+        <li>收敛曲线对比图(loss / perplexity)</li>
+        <li>复现报告 Markdown(含结论与差异分析)</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h2>候选代码仓库</h2>
+      <div class="card repo-card selected">
+        <div class="row" style="justify-content:space-between">
+          <div><strong>github.com/example/moe-lite</strong> <span class="badge">已选用</span>
+            <p class="caption">官方仓库 · Python · 许可证 Apache-2.0</p></div>
+        </div>
+        <div class="metrics">
+          <div class="metric"><div class="num">⭐ 1843</div><div class="lbl">Stars</div></div>
+          <div class="metric"><div class="num">🍴 211</div><div class="lbl">Forks</div></div>
+          <div class="metric"><div class="num">0.92</div><div class="lbl">质量分</div></div>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:0">
+        <div class="row" style="justify-content:space-between">
+          <div><strong>github.com/community/moe-reproduce</strong>
+            <p class="caption">社区复现 · Python · 质量分 0.71</p></div>
+          <button class="btn btn-secondary">切换到此仓库</button>
+        </div>
+      </div>
+    </div>
+    <div class="info-bar">ℹ️ 已修改 1 轮 ｜ LLM 调用上限 50 次 ｜ 降级节点 resource_scout</div>
+    <div class="card">
+      <h2>决策</h2>
+      <div class="row">
+        <button class="btn btn-primary">✅ 批准计划</button>
+        <button class="btn btn-secondary">📄 仅复现代码</button>
+        <button class="btn btn-secondary">✏️ 修改计划</button>
+        <button class="btn btn-secondary">🔁 切换仓库</button>
+        <button class="btn btn-danger" onclick="openModal()">⛔ 终止任务</button>
+      </div>
+    </div>
+  </section>
+  <div class="modal-mask" id="term-modal">
+    <div class="modal">
+      <h3>⛔ 确认终止任务?</h3>
+      <p>终止后当前复现进度将无法恢复,已生成的中间结果会被保留。确定要终止「MoE-Lite」的复现任务吗?</p>
+      <div class="row" style="justify-content:flex-end">
+        <button class="btn btn-secondary" onclick="closeModal()">取消</button>
+        <button class="btn btn-danger" onclick="closeModal()">确认终止</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+  function showPage(name, el) {
+    document.querySelectorAll('section').forEach(s => s.classList.remove('active'));
+    document.getElementById('page-' + name).classList.add('active');
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+  }
+  function openModal() { document.getElementById('term-modal').classList.add('show'); }
+  function closeModal() { document.getElementById('term-modal').classList.remove('show'); }
+</script>
+</body>
+</html>
