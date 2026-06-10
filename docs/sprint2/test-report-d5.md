@@ -59,3 +59,41 @@
 
 ## 结论
 **可提交（通过）**。新增测试全部覆盖任务要点 1~6，0 failed，未污染既有套件；e2e 凭证门控正确。
+
+---
+
+## 追加：视觉对齐产品经理 mock（docs/sprint2/ui-mockup/index.html）
+
+首版 D5 只做了控件的 shadcn 化（机械替换），未逐项比对目标稿，落地与 mock 存在 7 处偏差。
+本轮打开 mock 渲染对比后逐项补齐：
+
+| # | 偏差项 | mock 目标 | 修复 | 验收 |
+| --- | --- | --- | --- | --- |
+| 1 | 进度段数 | 5 段 | 新增 `DISPLAY_ORDER` 5 段展示层（逻辑层 `ORDER` 仍 4 段，`_segment_status` 单测不变）；第 5 段 `post_review` 合并下游 coding/execution/reporting，Sprint 2 恒 pending | ✅ frame inner_text 命中 5 段 |
+| 2 | 段名 emoji | 每段顶部 emoji | `_NODE_DISPLAY` 映射：解析论文📄 / 分析论文🧠 / 资源侦察🔍 / 制定计划🧩 / 执行复现⚙️ | ✅ 5/5 emoji 命中 |
+| 3 | 运行中整卡高亮 | `.stage.active` 蓝边+浅蓝底 | 进行中段整卡 `border:#2563eb; background:#eff6ff`（原生 `st.container(key=)` + `.st-key-` CSS 注入） | ✅ vision 确认整卡蓝边 |
+| 4 | 论文卡分类徽章 | cs.XX 蓝色 pill | 用 HTML span 画蓝 pill（`#eff6ff` 底 + `#2563eb` 字 + 圆角）；ui.badges 走 Tailwind 在 shadcn iframe 内被 tree-shake 成灰色，故弃用 | ✅ vision 确认蓝色圆角 pill |
+| 5 | Stars/Forks | 数字 | 三 metric_card（质量分/⭐Stars/🍴Forks）渲染就绪。**注：后端 resource_scout 当前未采集 GitHub 元数据，真实数据缺失时显示占位 —— 留 D6 接 GitHub/PWC API** | ⚠️ 组件就位，数据源待 D6 |
+| 6 | 仓库选中态 | `.repo-card.selected` 浅蓝底+左粗蓝边 | 选中仓库 `background:#eff6ff; border-left:4px solid #2563eb` + 徽章「已选用」（原生 container CSS 注入） | ✅ vision 确认选中/未选对比明显 |
+| 7 | 终止按钮 | destructive 红色 | D5 commit 已是 `variant="destructive"`，无需新代码 | ✅ 已实现 |
+
+### 技术债清理
+- `streamlit_extras.stylable_container` 在 streamlit 1.58 已 deprecated（运行时弹黄色警告框污染界面）。
+  两处用法（进度段卡、仓库卡）改用原生 `st.container(key=...)` 生成的 `st-key-<key>` class
+  选择器 + `st.markdown` 注入 CSS。验收确认警告框消失，视觉零变化。
+
+### 验收方法
+- **真实 e2e 流水线**：`streamlit run app.py` + playwright 走 input→progress→review（arxiv 2405.14831 HippoRAG），
+  全程 `errors=[]`，reached_review=True，14 帧截图。frame inner_text 实证 5 段/emoji/cs.CL+cs.AI/已选用/三 metric_card。
+- **demo harness**（注入 fake state 精确验收选中态/运行中态）：
+  `/tmp/d5_demo_progress.py`（进度页）、`/tmp/d5_demo_review.py`（审核页双候选仓库一选一未选）。
+- **视觉验收**：vision_analyze 逐张确认 mock 对齐（注：shadcn 在 iframe 内，full_page 截不全，
+  仓库区靠 demo harness 单页渲染绕开）。
+
+### mock 对齐后回归
+`.venv/bin/python -m pytest tests/test_analysis_progress.py tests/test_plan_review*.py tests/test_paper_input*.py -q`
+→ **37 passed, 20 skipped, 0 failed**（_render_paper_card 渲染逻辑变更未破坏任何既有测试）。
+
+### 已知偏差（转 D6）
+- Stars/Forks 真实数据：后端 `resource_scout` 节点未采集 GitHub 仓库元数据（stars/forks/last_commit），
+  需新接 GitHub API 或 PapersWithCode API，超出 D5 范围。UI 侧 metric_card 组件已就位，接上数据源即生效。

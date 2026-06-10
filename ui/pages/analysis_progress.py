@@ -47,7 +47,21 @@ __all__ = ["render", "render_analysis_progress_page"]
 
 
 # 4 段进度条节点序列，与 core/graph.py 线性拓扑同序（架构 §2.10）。
+# **逻辑序列**：仅这 4 段参与状态推断与单测（_segment_status 不变）。
 ORDER: List[str] = ["paper_intake", "paper_analysis", "resource_scout", "planning"]
+
+# **展示序列**（D5 视觉对齐 mock §3.2，docs/sprint2/ui-mockup/index.html L147-152）：
+# mock 把全流程画成 5 段，第 5 段 ``post_review`` 合并下游 coding/execution/reporting
+# 节点（Sprint 2 占位、Sprint 3 实现）。Sprint 2 阶段第 5 段恒为 pending（review 中断
+# 后才进入下游），与 mock 视觉一致；Sprint 3 落地下游节点后无需改 UI 即可激活。
+# 不并入 ORDER 避免破坏 _segment_status 已通过的单测（degraded/降级语义只对 4 段生效）。
+DISPLAY_ORDER: List[str] = [
+    "paper_intake",
+    "paper_analysis",
+    "resource_scout",
+    "planning",
+    "post_review",  # mock §3.2 第 5 段（执行复现 + 汇总结果合一），Sprint 2 恒 pending
+]
 
 # 进度条各段中文文案 + 颜色 emoji（语义枚举 → 展示映射，纯函数只返回语义枚举）。
 _SEGMENT_LABELS = {
@@ -57,13 +71,18 @@ _SEGMENT_LABELS = {
     "degraded": ("降级完成", "🟡"),
 }
 
-# 节点中文显示名（进度条展示用）。
-_NODE_DISPLAY_NAMES = {
-    "paper_intake": "论文摄取",
-    "paper_analysis": "论文分析",
-    "resource_scout": "资源搜集",
-    "planning": "复现规划",
+# 节点中文显示名 + 阶段图标 emoji（D5 mock §3.2 L148-152 对齐）。
+# (display_name, stage_emoji) — stage_emoji 出现在阶段卡片顶部，区别于状态徽章 emoji。
+_NODE_DISPLAY: Dict[str, tuple] = {
+    "paper_intake": ("解析论文", "📄"),
+    "paper_analysis": ("分析论文", "🧠"),
+    "resource_scout": ("资源侦察", "🔍"),
+    "planning": ("制定计划", "🧩"),
+    "post_review": ("执行复现", "⚙️"),  # mock 第 5 段，Sprint 2 恒 pending
 }
+
+# 兼容旧测试 / 旧引用：保留 _NODE_DISPLAY_NAMES 平面字典（仅中文名）。
+_NODE_DISPLAY_NAMES = {k: v[0] for k, v in _NODE_DISPLAY.items()}
 
 _KEY_THREAD_ID = "thread_id"
 _KEY_CURRENT_PAGE = "current_page"
@@ -185,13 +204,36 @@ def _render_paper_card(paper_meta: Optional[Dict]) -> None:
 
         arxiv_id = paper_meta.get("arxiv_id")
         authors = paper_meta.get("authors") or []
-        badge_list = []
+        categories = paper_meta.get("categories") or []
+
+        # 分类徽章：mock §3.2 L29-30/L140 — cs.XX 为蓝色 pill(#eff6ff 底 + #2563eb 字)。
+        # ui.badges 的 class_name 走 Tailwind，但 shadcn iframe 内 JIT 未打包 bg-blue-* 类
+        # （tree-shake），徽章渲染成灰色。改用主文档原生 HTML span 画蓝色 pill，与 mock
+        # 的 .tag 样式一致，且不受 iframe Tailwind 限制。
+        if categories:
+            pills = "".join(
+                f"<span style='display:inline-block; background:#eff6ff;"
+                f" color:#2563eb; border:1px solid #bfdbfe; border-radius:9999px;"
+                f" padding:2px 10px; margin:0 6px 4px 0; font-size:12px;"
+                f" font-weight:500;'>{str(c)}</span>"
+                for c in categories[:3]
+            )
+            st.markdown(
+                f"<div style='margin:4px 0 8px 0'>{pills}</div>",
+                unsafe_allow_html=True,
+            )
+
+        meta_badges = []
         if arxiv_id:
-            badge_list.append((f"arXiv: {arxiv_id}", "default"))
+            meta_badges.append((f"arXiv: {arxiv_id}", "outline"))
         if authors:
-            badge_list.append(("作者：" + ", ".join(str(a) for a in authors), "secondary"))
-        if badge_list:
-            ui.badges(badge_list=badge_list, key="b_paper_meta")
+            meta_badges.append((
+                "作者：" + ", ".join(str(a) for a in authors[:3])
+                + (f" 等 {len(authors)} 人" if len(authors) > 3 else ""),
+                "secondary",
+            ))
+        if meta_badges:
+            ui.badges(badge_list=meta_badges, key="b_paper_meta")
 
         tldr = _pick_bilingual(paper_meta, "tldr", "tldr_zh")
         if tldr:
@@ -204,49 +246,96 @@ def _render_paper_card(paper_meta: Optional[Dict]) -> None:
 
 
 def _render_progress_bar(state: Dict) -> None:
-    """渲染 4 段进度条（paper_intake / paper_analysis / resource_scout / planning）。
+    """渲染 5 段进度条（D5 视觉对齐 mock §3.2 L147-152）。
 
-    各段状态由纯函数 _segment_status 推断（与 core/graph.py 线性拓扑同序，架构 §2.10）。
-    顶部追加 ui.progress 整体百分比 = done / total（§3.2 设计要求；degraded 也算"已结束"段）。
+    **逻辑层只用 ORDER 4 段**做状态推断（与 core/graph.py 线性拓扑同序，_segment_status
+    单测不变）；**展示层用 DISPLAY_ORDER 5 段**对齐 mock —— 第 5 段 ``post_review``
+    合并下游 coding/execution/reporting 节点（Sprint 2 占位），状态恒为 pending。
+
+    顶部 ui.progress 整体百分比 = 已完成段 / DISPLAY_ORDER 总段数（与 mock 一致：mock
+    完成 2 段时 50%，因总段是 5）。
     """
     current_step = str(state.get("current_step") or "start")
     degraded_nodes = state.get("degraded_nodes") or []
 
     st.markdown("### 🚀 复现进度")
 
-    # --- 整体百分比（§3.2 顶部 ui.progress）：done + degraded 视为已完成段 ---
-    done_count = sum(
-        1
-        for n in ORDER
-        if _segment_status(current_step, n, degraded_nodes) in ("done", "degraded")
-    )
-    overall_pct = int(round(done_count * 100 / len(ORDER))) if ORDER else 0
-    # ui.progress 0.1.19 形参是 data（百分比 int 0~100）。
-    ui.progress(data=overall_pct, key="prog_overall")
-    st.caption(f"整体进度：{done_count}/{len(ORDER)} 阶段完成（{overall_pct}%）")
+    # 逐段计算状态：post_review 不在 ORDER，做特殊处理 ——
+    #   review interrupted 之后(current_step in {coding, execution, reporting,
+    #   reproduction_done})视为 running/done；Sprint 2 永远到不了，恒 pending。
+    def _stage_status(node_name: str):
+        if node_name in ORDER:
+            return _segment_status(current_step, node_name, degraded_nodes)
+        # post_review：Sprint 2 恒 pending；Sprint 3 实现后按 current_step 判断
+        if current_step in {"coding", "execution"}:
+            return "running"
+        if current_step in {"reporting", "reproduction_done", "completed"}:
+            return "done"
+        return "pending"
 
-    cols = st.columns(len(ORDER))
-    for col, node_name in zip(cols, ORDER):
-        status = _segment_status(current_step, node_name, degraded_nodes)
+    # --- 整体百分比：已完成段 / 总展示段数 ---
+    done_count = sum(
+        1 for n in DISPLAY_ORDER if _stage_status(n) in ("done", "degraded")
+    )
+    overall_pct = (
+        int(round(done_count * 100 / len(DISPLAY_ORDER))) if DISPLAY_ORDER else 0
+    )
+    ui.progress(data=overall_pct, key="prog_overall")
+    st.caption(f"整体进度：{done_count}/{len(DISPLAY_ORDER)} 阶段完成（{overall_pct}%）")
+
+    cols = st.columns(len(DISPLAY_ORDER))
+    for col, node_name in zip(cols, DISPLAY_ORDER):
+        status = _stage_status(node_name)
         label, emoji = _SEGMENT_LABELS[status]
-        display_name = _NODE_DISPLAY_NAMES.get(node_name, node_name)
-        # 每段一张卡片：emoji + 段名 + 状态 badge（Tailwind 上色，绿/蓝/灰区分）。
+        display_name, stage_emoji = _NODE_DISPLAY.get(node_name, (node_name, "•"))
+        # 状态徽章 Tailwind 配色（绿/蓝/灰/红）。
         badge_class = {
             "done": "bg-green-100 text-green-700 border border-green-300",
             "running": "bg-blue-600 text-white border border-blue-600",
             "degraded": "bg-red-100 text-red-700 border border-red-300",
         }.get(status, "bg-slate-100 text-slate-500 border border-slate-300")
+
+        # mock §3.2 L54-55：``stage.active`` { border-color: #2563eb; background: #eff6ff }
+        # —— 进行中阶段整卡蓝边 + 浅蓝底；其他阶段普通灰边白底。
+        # st.container(border=True) 边框色固定灰，无法改色；streamlit_extras 的
+        # stylable_container 在 1.58 已 deprecated（会弹黄色警告框污染界面），
+        # 改用原生 st.container(key=...) 生成的 ``st-key-<key>`` class 选择器注入 CSS。
+        if status == "running":
+            card_bg, card_border = "#eff6ff", "#2563eb"
+        else:
+            card_bg, card_border = "#ffffff", "#e2e8f0"
+        card_key = f"stage_{node_name}_{status}"
         with col:
-            with st.container(border=True):
-                st.markdown(f"### {emoji}")
-                st.markdown(f"**{display_name}**")
+            st.markdown(
+                f"""
+                <style>
+                .st-key-{card_key} {{
+                    border: 1px solid {card_border};
+                    background: {card_bg};
+                    border-radius: 10px;
+                    padding: 14px;
+                    text-align: center;
+                }}
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
+            with st.container(key=card_key):
+                # 阶段图标 emoji + 段名（mock L148-150 .stage .emoji + .stage .name）
+                st.markdown(
+                    f"<div style='font-size:24px;text-align:center'>{stage_emoji}</div>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    f"<div style='font-size:13px;font-weight:500;margin:6px 0;text-align:center'>{display_name}</div>",
+                    unsafe_allow_html=True,
+                )
                 ui.badges(
                     badge_list=[(label, "outline")],
                     class_name=badge_class,
                     key=f"b_seg_{node_name}",
                 )
-                # label 同步进主文档（shadcn badge 在 iframe，AppTest 读不到；
-                # caption 作为可见兜底，供测试/无障碍读取）。
+                # caption 兜底（shadcn badge 在 iframe，AppTest 读不到）
                 st.caption(label)
 
 

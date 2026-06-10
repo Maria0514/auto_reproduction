@@ -128,10 +128,33 @@ def _render_repos(resource_info: Dict) -> None:
         repo = repo or {}
         url = repo.get("url") or "(无 URL)"
         is_selected = bool(selected_url) and repo.get("url") == selected_url
-        with st.container(border=True):
+
+        # mock §3.3 L71：``.repo-card.selected`` { background:#eff6ff;
+        # border-left: 4px solid #2563eb } —— 选中态整卡浅蓝底 + 左粗蓝边。
+        # st.container(border=True) 边框固定灰，无法实现 mock 视觉；streamlit_extras 的
+        # stylable_container 在 1.58 已 deprecated（弹黄色警告框污染界面），改用原生
+        # st.container(key=...) 生成的 ``st-key-<key>`` class 选择器注入 CSS。
+        card_key = f"repo_card_{idx}_{('sel' if is_selected else 'unsel')}"
+        if is_selected:
+            card_css = (
+                "background:#eff6ff; border:1px solid #bfdbfe;"
+                " border-left:4px solid #2563eb; border-radius:10px; padding:16px;"
+            )
+        else:
+            card_css = (
+                "background:#ffffff; border:1px solid #e2e8f0;"
+                " border-radius:10px; padding:16px;"
+            )
+        st.markdown(
+            f"<style>.st-key-{card_key} {{ {card_css} }}</style>",
+            unsafe_allow_html=True,
+        )
+
+        with st.container(key=card_key):
             badge_list = []
             if is_selected:
-                badge_list.append(("✅ 已选中", "default"))
+                # mock §3.3 L219 选中态徽章文案"已选用"
+                badge_list.append(("✅ 已选用", "default"))
             else:
                 badge_list.append(("未选中", "outline"))
             badge_list.append(
