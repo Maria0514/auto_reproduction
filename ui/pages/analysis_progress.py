@@ -63,12 +63,14 @@ DISPLAY_ORDER: List[str] = [
     "post_review",  # mock §3.2 第 5 段（执行复现 + 汇总结果合一），Sprint 2 恒 pending
 ]
 
-# 进度条各段中文文案 + 颜色 emoji（语义枚举 → 展示映射，纯函数只返回语义枚举）。
+# 进度条各段状态文案：严格照产品经理 mock(ui-mockup/index.html L148-152)逐字抄。
+# mock: st-done「✓ 完成」/ st-doing「● 进行中」/ st-wait「○ 待开始」。
+# 第二个 tuple 元素保留（历史 emoji，部分旧调用读它），文案以第一个为准。
 _SEGMENT_LABELS = {
-    "pending": ("待执行", "⚪"),
-    "running": ("运行中", "🔵"),
-    "done": ("已完成", "🟢"),
-    "degraded": ("降级完成", "🟡"),
+    "pending": ("○ 待开始", "⚪"),
+    "running": ("● 进行中", "🔵"),
+    "done": ("✓ 完成", "🟢"),
+    "degraded": ("✓ 完成（降级）", "🟡"),
 }
 
 # 节点中文显示名 + 阶段图标 emoji（D5 mock §3.2 L148-152 对齐）。
@@ -280,7 +282,17 @@ def _render_progress_bar(state: Dict) -> None:
     overall_pct = (
         int(round(done_count * 100 / len(DISPLAY_ORDER))) if DISPLAY_ORDER else 0
     )
-    ui.progress(data=overall_pct, key="prog_overall")
+    # 进度条：mock §3.2 L61-62 ``.progress-bar``（8px 高、#e2e8f0 灰底、#2563eb 蓝填充）。
+    # ui.progress 的填充是 shadcn 默认深灰色，与 mock 蓝色不符；改用 HTML 复刻 mock 样式。
+    st.markdown(
+        f"""
+        <div style="height:8px; background:#e2e8f0; border-radius:4px;
+             overflow:hidden; margin:12px 0;">
+            <div style="height:100%; width:{overall_pct}%; background:#2563eb;"></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     st.caption(f"整体进度：{done_count}/{len(DISPLAY_ORDER)} 阶段完成（{overall_pct}%）")
 
     cols = st.columns(len(DISPLAY_ORDER))
@@ -288,12 +300,17 @@ def _render_progress_bar(state: Dict) -> None:
         status = _stage_status(node_name)
         label, emoji = _SEGMENT_LABELS[status]
         display_name, stage_emoji = _NODE_DISPLAY.get(node_name, (node_name, "•"))
-        # 状态徽章 Tailwind 配色（绿/蓝/灰/红）。
-        badge_class = {
-            "done": "bg-green-100 text-green-700 border border-green-300",
-            "running": "bg-blue-600 text-white border border-blue-600",
-            "degraded": "bg-red-100 text-red-700 border border-red-300",
-        }.get(status, "bg-slate-100 text-slate-500 border border-slate-300")
+        # 状态徽章配色：严格照 mock L57-60 写死十六进制（绿/蓝/灰/红）。
+        # 不用 ui.badges + Tailwind class —— shadcn iframe 内 bg-*/text-* 被 JIT
+        # tree-shake 成灰色（与 cs.XX 徽章同坑），故用主文档 HTML span 直接上色。
+        badge_style = {
+            # st-done: bg #dcfce7 / color #16a34a
+            "done": "background:#dcfce7; color:#16a34a;",
+            # st-doing: bg #2563eb 实蓝填充 / color #fff
+            "running": "background:#2563eb; color:#ffffff;",
+            # 降级：复用完成绿系（mock 无此态，沿用 done 视觉）
+            "degraded": "background:#dcfce7; color:#16a34a;",
+        }.get(status, "background:#f1f5f9; color:#64748b;")  # st-wait: bg #f1f5f9 / color #64748b
 
         # mock §3.2 L54-55：``stage.active`` { border-color: #2563eb; background: #eff6ff }
         # —— 进行中阶段整卡蓝边 + 浅蓝底；其他阶段普通灰边白底。
@@ -330,13 +347,14 @@ def _render_progress_bar(state: Dict) -> None:
                     f"<div style='font-size:13px;font-weight:500;margin:6px 0;text-align:center'>{display_name}</div>",
                     unsafe_allow_html=True,
                 )
-                ui.badges(
-                    badge_list=[(label, "outline")],
-                    class_name=badge_class,
-                    key=f"b_seg_{node_name}",
+                # 状态徽章：HTML span 写死颜色（mock .st-badge L57，圆角 pill）。
+                st.markdown(
+                    f"<div style='text-align:center'>"
+                    f"<span style='display:inline-block; {badge_style}"
+                    f" font-size:12px; padding:1px 8px; border-radius:10px;'>"
+                    f"{label}</span></div>",
+                    unsafe_allow_html=True,
                 )
-                # caption 兜底（shadcn badge 在 iframe，AppTest 读不到）
-                st.caption(label)
 
 
 def _render_logs(state: Dict) -> None:

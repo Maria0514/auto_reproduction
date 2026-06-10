@@ -154,14 +154,18 @@ def test_cp_d4_2_segment_status_kernel():
 
 
 def test_cp_d4_2_segment_status_apptest():
-    """T-D4-03（AppTest）：渲染含"运行中"于 analysis 段、intake 显"已完成"。"""
+    """T-D4-03（AppTest）：渲染含"● 进行中"于 analysis 段、intake 显"✓ 完成"。
+
+    文案严格对齐产品经理 mock(ui-mockup/index.html L148-152)：
+    st-done「✓ 完成」/ st-doing「● 进行中」/ st-wait「○ 待开始」。
+    """
     state = _make_state(current_step="paper_analysis")
     at, _ = _run(_make_controller_mock(state=state))
     assert not at.exception
     text = _collect_text(at)
-    assert "运行中" in text  # paper_analysis 段
-    assert "已完成" in text  # paper_intake 段
-    assert "待执行" in text  # resource_scout / planning 段
+    assert "● 进行中" in text  # paper_analysis 段
+    assert "✓ 完成" in text  # paper_intake 段
+    assert "○ 待开始" in text  # resource_scout / planning 段
 
 
 # =========================================================================== #
@@ -177,12 +181,12 @@ def test_cp_d4_3_degraded_kernel():
 
 
 def test_cp_d4_3_degraded_apptest():
-    """T-D4-05（AppTest）：UI 出现 paper_intake "降级完成"标识文案。"""
+    """T-D4-05（AppTest）：UI 出现 paper_intake 降级标识文案"✓ 完成（降级）"。"""
     state = _make_state(current_step="paper_analysis", degraded_nodes=["paper_intake"])
     at, _ = _run(_make_controller_mock(state=state))
     assert not at.exception
     text = _collect_text(at)
-    assert "降级完成" in text
+    assert "✓ 完成（降级）" in text
 
 
 # =========================================================================== #
@@ -322,13 +326,13 @@ def test_d4_13_segment_start_all_pending():
 
 
 def test_d4_13_start_apptest_no_running():
-    """T-D4-13（AppTest 补强）：start 态渲染不出现"运行中"（4 段全待执行）。"""
+    """T-D4-13（AppTest 补强）：start 态渲染不出现"● 进行中"（5 段全待开始）。"""
     state = _make_state(current_step="start")
     at, _ = _run(_make_controller_mock(state=state))
     assert not at.exception
     text = _collect_text(at)
-    assert "运行中" not in text
-    assert "待执行" in text
+    assert "● 进行中" not in text
+    assert "○ 待开始" in text
 
 
 def test_d4_14_segment_planning_running():

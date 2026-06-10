@@ -117,8 +117,8 @@ def test_i1_real_sqlite_saver_poll_state_roundtrip(tmp_path):
         at.run()
     assert not at.exception, at.exception
     text = _collect_text(at)
-    assert "运行中" in text, "paper_analysis 段应运行中（真实 checkpoint 驱动）"
-    assert "已完成" in text, "paper_intake 段应已完成"
+    assert "● 进行中" in text, "paper_analysis 段应运行中（真实 checkpoint 驱动）"
+    assert "✓ 完成" in text, "paper_intake 段应已完成"
     assert "中文标题" in text, "真实 checkpoint 的 title_zh 应渲染"
     ar.assert_called_once()  # 非终态 → 注册轮询
 
@@ -227,7 +227,7 @@ def test_i7_repeated_rerun_idempotent():
             assert not at.exception, "rerun 出现异常（可能重复 widget key）"
             text = _collect_text(at)
             assert "复现进度" in text
-            assert "降级完成" in text
+            assert "✓ 完成（降级）" in text
             if prev_text is not None:
                 assert text == prev_text, "多次 rerun 渲染不一致（state 累积污染）"
             prev_text = text
