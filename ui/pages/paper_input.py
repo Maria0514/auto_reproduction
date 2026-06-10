@@ -312,13 +312,18 @@ def render() -> None:
         # ui-optimization-plan §3.1：'获取论文信息' → ui.button(default 蓝色实心)。
         # ui.button 不支持 disabled；submitted 后会立即跳 progress 页，
         # 实际不会在 disabled 状态下被渲染，故无需退化处理。
+        # FIX BUG-S2-D5-01：btn_fetch 两路径不同 key——
+        # ui.button 写 dict 到 session_state["btn_fetch_go"]，
+        # st.button 写 bool 到 session_state["btn_fetch"]，
+        # 两个状态来回翻不会再串货（dict vs bool 类型冲突 → 'bool' object is not subscriptable）。
         if submitted:
             # 已提交但仍停留本页（极端边界）：退化为 st.button 以保 disabled 语义。
+            # 旧 key "btn_fetch" 留给 disabled 路径（AppTest 看得到，断言/兼容靠它）。
             fetch = st.button("获取论文信息", key="btn_fetch", disabled=True)
         else:
             fetch = ui.button(
                 text="获取论文信息",
-                key="btn_fetch",
+                key="btn_fetch_go",
                 variant="default",
                 class_name="bg-blue-600 hover:bg-blue-700 text-white font-semibold",
             )
@@ -349,9 +354,14 @@ def render() -> None:
     if not arxiv_id.strip() and not submitted:
         st.info("请输入 arXiv ID 后再开始复现。")
 
+    # FIX BUG-S2-D5-01：btn_start 两路径不同 key——
+    # ui.button 写 dict 到 session_state["btn_start_go"]，
+    # st.button 写 bool 到 session_state["btn_start"]，
+    # 两个状态来回翻（侧栏配 LLM / 输入 arxiv_id 触发 can_start 翻 False→True）
+    # 不会再串货（dict vs bool 类型冲突 → 'bool' object is not subscriptable）。
     start = ui.button(
         text="🚀 开始复现",
-        key="btn_start",
+        key="btn_start_go",
         variant="default",
         class_name=(
             "bg-blue-600 hover:bg-blue-700 text-white font-bold "
@@ -360,6 +370,7 @@ def render() -> None:
     ) if can_start else st.button(
         # disabled 路径：ui.button 不支持 disabled 参数；
         # 退化 st.button(disabled=True) 以保 OBS-D1-01 双保险 + AppTest 断言。
+        # 旧 key "btn_start" 保留给 disabled 路径（AppTest 用此 key 断言）。
         "🚀 开始复现",
         key="btn_start",
         type="primary",

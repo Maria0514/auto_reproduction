@@ -165,4 +165,92 @@ def test_fetch_card_full_cs_paper_merges_brief_and_head(monkeypatch):
     assert card["github_url"].endswith("/HippoRAG")
 
 
+# =========================================================================== #
+# BUG-S2-D5-01 回归：btn_start / btn_fetch 双路径不可共享 key
+# =========================================================================== #
+# 病因：can_start False 时走 st.button(disabled=True, key="btn_start") →
+#       session_state["btn_start"] 写 bool；
+#       can_start 翻 True → 走 ui.button(key="btn_start")，shadcn 前端读
+#       session_state["btn_start"] 期待 dict（{"event_id":...}），
+#       拿到 bool 触发 'bool' object is not subscriptable。
+# 修复：active 路径改新 key（btn_start_go / btn_fetch_go），
+#       disabled 路径保留旧 key 给 AppTest 断言。
+# 本测试用源码扫描固化该约束（防回归），不依赖 AppTest / Playwright。
+def test_btn_start_active_and_disabled_use_distinct_keys():
+    """ui.button(can_start=True 路径) 不得与 st.button(disabled 路径) 共享 key。"""
+    import re
+    from pathlib import Path
+
+    src = Path("ui/pages/paper_input.py").read_text(encoding="utf-8")
+
+    # 抓 "🚀 开始复现" 周围两个 button 调用的 key=
+    # 简单做法：找所有 key="btn_start*" 出现位置，断言至少 2 个不同 key。
+    keys_start = set(re.findall(r'key="(btn_start\w*)"', src))
+    assert keys_start == {"btn_start_go", "btn_start"}, (
+        f"btn_start 双路径必须用不同 key（active=btn_start_go, "
+        f"disabled=btn_start），实际：{keys_start}"
+    )
+
+
+def test_btn_fetch_active_and_disabled_use_distinct_keys():
+    """ui.button(非 submitted 路径) 不得与 st.button(submitted disabled 路径) 共享 key。"""
+    import re
+    from pathlib import Path
+
+    src = Path("ui/pages/paper_input.py").read_text(encoding="utf-8")
+    keys_fetch = set(re.findall(r'key="(btn_fetch\w*)"', src))
+    assert keys_fetch == {"btn_fetch_go", "btn_fetch"}, (
+        f"btn_fetch 双路径必须用不同 key（active=btn_fetch_go, "
+        f"disabled=btn_fetch），实际：{keys_fetch}"
+    )
+
+
+def test_disabled_path_session_state_does_not_break_active_render():
+    """直跑 render：先 disabled 让 st.button 写 bool 进 session_state['btn_start']，
+    再翻 active 让 ui.button 走 'btn_start_go' key——前者 bool 不会被后者读到。
+
+    AppTest 看不到 ui.button，所以这里只断言 render 不抛
+    'bool' object is not subscriptable（即 bug 中的崩溃路径不复现）。
+    """
+    from streamlit.testing.v1 import AppTest
+
+    # 第一轮：cfg 留空（侧栏不填）→ can_start False → 走 st.button(disabled, key=btn_start)
+    at = AppTest.from_file("ui/pages/paper_input.py", default_timeout=10)
+    at.run()
+    # disabled 路径渲染过 → session_state['btn_start'] 应为 bool（False）
+    # AppTest session_state 是 SafeSessionState，无 .get；用 in / [] 访问。
+    if "btn_start" in at.session_state:
+        btn_start_val = at.session_state["btn_start"]
+        assert isinstance(btn_start_val, bool), (
+            f"disabled 路径应写 bool，实际类型：{type(btn_start_val).__name__}"
+        )
+    assert not at.exception, f"首轮 render 不应抛异常，实际：{at.exception}"
+
+    # 第二轮：模拟 cfg 配齐 + arxiv 有值 → can_start True → 走 ui.button(key=btn_start_go)
+    # 关键：session_state['btn_start'] 此时仍为上一轮 bool；
+    # 修复前 ui.button 读 session_state['btn_start'] 期待 dict → 'bool' object is not subscriptable；
+    # 修复后 active 路径换 key 'btn_start_go' → 上一轮 bool 不会再被读取。
+    at.session_state["arxiv_id_input"] = "2405.14831"
+    # 直接模拟 cfg 已合法（render_llm_config_form 写 session_state['llm_config_set']）
+    from core.state import LLMConfigSet
+    fake_cfg: LLMConfigSet = {
+        "default": {
+            "base_url": "https://api.example.com/v1",
+            "model": "gpt-4",
+            "api_key": "sk-test",
+            "temperature": 0.3,
+            "max_tokens": 8192,
+        },
+        "overrides": {},
+    }
+    at.session_state["llm_config_set"] = fake_cfg
+    at.run()
+    # 关键断言：第二轮（active 分支）渲染不抛 'bool' object is not subscriptable
+    if at.exception:
+        msgs = [str(e.value) for e in at.exception]
+        assert not any("'bool' object is not subscriptable" in m for m in msgs), (
+            f"BUG-S2-D5-01 复现：active 分支误读了 disabled 路径写入的 bool —— {msgs}"
+        )
+
+
 
