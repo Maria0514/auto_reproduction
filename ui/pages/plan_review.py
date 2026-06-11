@@ -110,7 +110,8 @@ def _render_plan(plan: Dict) -> None:
 def _render_repos(resource_info: Dict) -> None:
     """渲染候选仓库列表，高亮 selected_repo。"""
     resource_info = resource_info or {}
-    st.markdown("### 🗂️ 候选代码仓库")
+    # mock §3.3 L216：卡片标题逐字为「候选代码仓库」(h2)。
+    st.markdown("### 候选代码仓库")
 
     repos = resource_info.get("repos") or []
     strategy = resource_info.get("resource_strategy")
@@ -151,42 +152,61 @@ def _render_repos(resource_info: Dict) -> None:
         )
 
         with st.container(key=card_key):
-            badge_list = []
+            # mock §3.3 L219：选中态徽章文案逐字「已选用」，样式 .badge
+            # { background:#eff6ff; color:#2563eb; border-radius:6px; padding:2px 10px;
+            # font-size:12px }。ui.badges 走 Tailwind class，在 shadcn iframe 内被
+            # JIT tree-shake 成灰色 —— 改用主文档原生 HTML span 写死十六进制（与
+            # analysis_progress.py 分类 pill 同范式），不受 iframe Tailwind 限制。
             if is_selected:
-                # mock §3.3 L219 选中态徽章文案"已选用"
-                badge_list.append(("✅ 已选用", "default"))
+                badge_html = (
+                    "<span style='display:inline-block; background:#eff6ff;"
+                    " color:#2563eb; border-radius:6px; padding:2px 10px;"
+                    " font-size:12px; font-weight:500;'>已选用</span>"
+                )
             else:
-                badge_list.append(("未选中", "outline"))
-            badge_list.append(
-                ("官方仓库" if repo.get("is_official") else "社区仓库", "secondary")
+                # 非选中：灰色描边 pill（mock 无对应态，沿用中性 .muted 配色）。
+                badge_html = (
+                    "<span style='display:inline-block; background:#f8fafc;"
+                    " color:#64748b; border:1px solid #e2e8f0; border-radius:6px;"
+                    " padding:2px 10px; font-size:12px; font-weight:500;'>未选中</span>"
+                )
+            kind = "官方仓库" if repo.get("is_official") else "社区仓库"
+            kind_badge = (
+                "<span style='display:inline-block; background:#f8fafc;"
+                " color:#64748b; border:1px solid #e2e8f0; border-radius:6px;"
+                f" padding:2px 10px; font-size:12px; font-weight:500;"
+                f" margin-left:6px;'>{kind}</span>"
             )
-            if repo.get("source"):
-                badge_list.append((str(repo.get("source")), "outline"))
-            ui.badges(badge_list=badge_list, key=f"b_repo_{idx}")
-            st.markdown(f"**{url}**")
+            st.markdown(
+                f"**{url}** {badge_html}{kind_badge}",
+                unsafe_allow_html=True,
+            )
 
-            mcols = st.columns(3)
-            with mcols[0]:
-                ui.metric_card(
-                    title="质量分",
-                    content=str(repo.get("quality_score") or "—"),
-                    description="综合评估",
-                    key=f"m_quality_{idx}",
-                )
-            with mcols[1]:
-                ui.metric_card(
-                    title="⭐ Stars",
-                    content=str(repo.get("stars") or "—"),
-                    description="GitHub 星标",
-                    key=f"m_stars_{idx}",
-                )
-            with mcols[2]:
-                ui.metric_card(
-                    title="🍴 Forks",
-                    content=str(repo.get("forks") or "—"),
-                    description="GitHub 分叉",
-                    key=f"m_forks_{idx}",
-                )
+            # mock §3.3 L222-225：三个 metric 顺序为 ⭐ Stars / 🍴 Forks / 质量分，
+            # .num{font-size:22px;font-weight:700;color:#0f172a};.lbl{font-size:12px;
+            # color:#64748b}。ui.metric_card 渲染在 iframe 且配色不可控，改用主文档
+            # HTML 写死十六进制，顺序严格照 mock。
+            stars = repo.get("stars")
+            forks = repo.get("forks")
+            quality = repo.get("quality_score")
+            metric_specs = [
+                (f"⭐ {stars}" if stars is not None else "⭐ —", "Stars"),
+                (f"🍴 {forks}" if forks is not None else "🍴 —", "Forks"),
+                (str(quality) if quality is not None else "—", "质量分"),
+            ]
+            metric_cells = "".join(
+                "<div style='flex:1; min-width:120px; border:1px solid #e2e8f0;"
+                " border-radius:10px; padding:14px; text-align:center;'>"
+                f"<div style='font-size:22px; font-weight:700; color:#0f172a;'>{num}</div>"
+                f"<div style='font-size:12px; color:#64748b;'>{lbl}</div>"
+                "</div>"
+                for num, lbl in metric_specs
+            )
+            st.markdown(
+                "<div style='display:flex; gap:12px; flex-wrap:wrap;"
+                f" margin:12px 0;'>{metric_cells}</div>",
+                unsafe_allow_html=True,
+            )
 
             extra = []
             if repo.get("last_commit_date"):
@@ -202,61 +222,94 @@ def _render_repos(resource_info: Dict) -> None:
 
 
 def _render_transparency(payload: Dict) -> None:
-    """渲染透明化卡片：degraded_nodes / node_errors / revise_count + N>=5 软提示。"""
+    """渲染透明化 info-bar：revise_count / LLM 调用上限 / degraded_nodes + N>=5 软提示。"""
     payload = payload or {}
-    with st.container(border=True):
-        st.markdown("### 🔍 透明化信息")
 
-        revise_count = payload.get("revise_count") or 0
-        threshold = payload.get("soft_hint_threshold") or 5
-        max_calls = payload.get("max_total_llm_calls")
-        info_bits = [f"已修改轮次：{revise_count}"]
-        if max_calls is not None:
-            info_bits.append(f"LLM 调用上限：{max_calls}")
-        st.info(" ｜ ".join(info_bits))
+    revise_count = payload.get("revise_count") or 0
+    threshold = payload.get("soft_hint_threshold") or 5
+    max_calls = payload.get("max_total_llm_calls")
+    degraded = payload.get("degraded_nodes") or []
 
-        if revise_count >= threshold:
-            st.warning(
-                "已多次修改计划，建议考虑直接批准或取消，以免耗尽预算。"
-            )
+    # mock §3.3 L236：单条 .info-bar，文案逐字「ℹ️ 已修改 N 轮 ｜ LLM 调用上限 M 次
+    # ｜ 降级节点 X」，样式 .info-bar { background:#eff6ff; border:1px solid #bfdbfe;
+    # color:#1e40af; border-radius:8px; padding:12px 16px }。st.info 是蓝灰默认样式
+    # 且配色不可控 —— 改用主文档原生 HTML div 写死十六进制。
+    info_bits = [f"已修改 {revise_count} 轮"]
+    if max_calls is not None:
+        info_bits.append(f"LLM 调用上限 {max_calls} 次")
+    if degraded:
+        info_bits.append("降级节点 " + ", ".join(str(n) for n in degraded))
+    st.markdown(
+        "<div style='background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af;"
+        " border-radius:8px; padding:12px 16px; font-size:14px; margin:16px 0;'>"
+        f"ℹ️ {' ｜ '.join(info_bits)}</div>",
+        unsafe_allow_html=True,
+    )
 
-        degraded = payload.get("degraded_nodes") or []
-        if degraded:
-            st.warning("降级节点：" + ", ".join(str(n) for n in degraded))
+    if revise_count >= threshold:
+        st.warning(
+            "已多次修改计划，建议考虑直接批准或取消，以免耗尽预算。"
+        )
 
-        node_errors = payload.get("node_errors") or []
-        if node_errors:
-            with st.expander(f"最近错误（{len(node_errors)} 条）", expanded=False):
-                for err in node_errors[-5:]:
-                    if isinstance(err, dict):
-                        node_name = err.get("node_name") or "?"
-                        msg = err.get("error_message") or str(err)
-                        st.markdown(f"- `{node_name}`：{msg}")
-                    else:
-                        st.markdown(f"- {err}")
+    node_errors = payload.get("node_errors") or []
+    if node_errors:
+        with st.expander(f"最近错误（{len(node_errors)} 条）", expanded=False):
+            for err in node_errors[-5:]:
+                if isinstance(err, dict):
+                    node_name = err.get("node_name") or "?"
+                    msg = err.get("error_message") or str(err)
+                    st.markdown(f"- `{node_name}`：{msg}")
+                else:
+                    st.markdown(f"- {err}")
 
 
 def _render_decision_buttons(controller, thread_id: str) -> None:
-    """渲染五个决策按钮，点击后调对应 controller 方法再 st.rerun()。"""
+    """渲染五个决策按钮，点击后调对应 controller 方法再 st.rerun()。
+
+    mock §3.3 L239-244：决策区五个按钮,文案逐字为
+    「✅ 批准计划 / 📄 仅复现代码 / ✏️ 修改计划 / 🔁 切换仓库 / ⛔ 终止任务」。
+    配色照 mock .btn-* : 批准=primary(#2563eb 蓝底白字)、仅复现/修改/切换=secondary
+    (#fff 白底深字灰边)、终止=danger(#fff 白底 #dc2626 红字)。
+    ——shadcn ui.button 的 variant 默认配色恰好对应:default=蓝、outline=白描边、
+    destructive=红。故用 variant 命中颜色,**不再传 class_name**(Tailwind class 在
+    shadcn iframe 内被 JIT tree-shake 成灰色,是本项目反复踩的坑)。
+    修改/切换仍需文本输入,故各自配 expander 收集 feedback,但触发按钮文案/颜色照 mock。
+    """
     st.markdown("### 🎯 决策")
+
+    # mock .btn-primary{background:#2563eb;color:#fff} / .btn-danger{background:#fff;
+    # color:#dc2626;border:#fecaca}。shadcn ui.button 的 variant 默认色不等于 mock
+    # (default=深黑底、destructive=红底白字),class_name 又被 iframe tree-shake。
+    # 故批准/终止改用原生 st.button(key=) + ``.st-key-<key>`` CSS 注入写死十六进制
+    # (原生 button 在主文档,CSS 命中,不进 iframe)。仅复现/修改/切换为白底(mock
+    # .btn-secondary),shadcn outline 默认即白底深字,沿用 ui.button(variant=outline)。
+    st.markdown(
+        """
+        <style>
+        .st-key-btn_approve button {
+            background:#2563eb !important; color:#ffffff !important;
+            border:1px solid #2563eb !important;
+        }
+        .st-key-btn_approve button:hover { background:#1d4ed8 !important; }
+        .st-key-btn_cancel button, .st-key-btn_cancel_confirm button {
+            background:#ffffff !important; color:#dc2626 !important;
+            border:1px solid #fecaca !important;
+        }
+        .st-key-btn_cancel button:hover,
+        .st-key-btn_cancel_confirm button:hover { background:#fef2f2 !important; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
     cols = st.columns(2)
     with cols[0]:
-        if ui.button(
-            "✅ 批准计划",
-            key="btn_approve",
-            variant="default",
-            class_name="bg-blue-600 hover:bg-blue-700 text-white",
-        ):
+        # 批准=mock .btn-primary 蓝底白字（原生 button + CSS 注入）。
+        if st.button("✅ 批准计划", key="btn_approve", use_container_width=True):
             controller.resume_with(thread_id, {"decision": "approve"})
             st.rerun()
     with cols[1]:
-        if ui.button(
-            "📄 仅复现代码",
-            key="btn_code_only",
-            variant="outline",
-            class_name="border-blue-600 text-blue-700 hover:bg-blue-50",
-        ):
+        if ui.button("📄 仅复现代码", key="btn_code_only", variant="outline"):
             controller.resume_with(thread_id, {"decision": "code_only"})
             st.rerun()
 
@@ -267,20 +320,15 @@ def _render_decision_buttons(controller, thread_id: str) -> None:
             key=_KEY_REVISE_FEEDBACK,
             placeholder="请描述你希望如何调整复现计划……",
         )
-        if ui.button(
-            "提交修改",
-            key="btn_revise",
-            variant="outline",
-            class_name="border-blue-600 text-blue-700 hover:bg-blue-50",
-        ):
+        if ui.button("提交修改", key="btn_revise", variant="outline"):
             controller.resume_with(
                 thread_id,
                 {"decision": "revise", "user_feedback": feedback or ""},
             )
             st.rerun()
 
-    # --- 换仓库：feedback + new_repo_url ---
-    with st.expander("🔄 更换仓库", expanded=False):
+    # --- 切换仓库：feedback + new_repo_url（mock 文案逐字「🔁 切换仓库」）---
+    with st.expander("🔁 切换仓库", expanded=False):
         sw_feedback = ui.textarea(
             default_value=st.session_state.get(_KEY_SWITCH_FEEDBACK, ""),
             key=_KEY_SWITCH_FEEDBACK,
@@ -291,12 +339,7 @@ def _render_decision_buttons(controller, thread_id: str) -> None:
             key=_KEY_SWITCH_REPO_URL,
             placeholder="https://github.com/owner/repo",
         )
-        if ui.button(
-            "提交更换",
-            key="btn_switch_repo",
-            variant="outline",
-            class_name="border-blue-600 text-blue-700 hover:bg-blue-50",
-        ):
+        if ui.button("提交切换", key="btn_switch_repo", variant="outline"):
             controller.resume_with(
                 thread_id,
                 {
@@ -307,17 +350,20 @@ def _render_decision_buttons(controller, thread_id: str) -> None:
             )
             st.rerun()
 
-    # --- 取消：二次确认 ---
+    # --- 取消：二次确认（mock 文案逐字「⛔ 终止任务」，.btn-danger 白底红字）---
     st.divider()
     if not st.session_state.get(_KEY_CONFIRM_CANCEL):
-        if ui.button("🛑 终止任务", key="btn_cancel", variant="destructive"):
+        # 原生 st.button + .st-key-btn_cancel CSS 写死 mock .btn-danger 白底红字。
+        if st.button("⛔ 终止任务", key="btn_cancel", use_container_width=True):
             st.session_state[_KEY_CONFIRM_CANCEL] = True
             st.rerun()
     else:
         st.warning("确认终止本次复现任务？此操作不可撤销。")
         ccols = st.columns(2)
         with ccols[0]:
-            if ui.button("确认终止", key="btn_cancel_confirm", variant="destructive"):
+            if st.button(
+                "确认终止", key="btn_cancel_confirm", use_container_width=True
+            ):
                 controller.cancel_task(thread_id)
                 st.session_state[_KEY_CONFIRM_CANCEL] = False
                 st.session_state[_KEY_CURRENT_PAGE] = "progress"
