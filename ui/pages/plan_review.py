@@ -307,16 +307,31 @@ def _render_decision_buttons(controller, thread_id: str) -> None:
         # 批准=mock .btn-primary 蓝底白字（原生 button + CSS 注入）。
         if st.button("✅ 批准计划", key="btn_approve", use_container_width=True):
             controller.resume_with(thread_id, {"decision": "approve"})
+            # 提交后切到 progress 页：resume_with 仅起后台线程恢复图，本页无轮询，
+            # 不切页会停在 review 页「计划尚未就绪」一动不动（"没动静" BUG）。
+            # progress 页有 autorefresh 轮询：继续执行→显示进度；若再 interrupt→自动跳回 review。
+            st.session_state[_KEY_CURRENT_PAGE] = "progress"
             st.rerun()
     with cols[1]:
         if ui.button("📄 仅复现代码", key="btn_code_only", variant="outline"):
             controller.resume_with(thread_id, {"decision": "code_only"})
+            st.session_state[_KEY_CURRENT_PAGE] = "progress"
             st.rerun()
 
     # --- 修改计划：textarea 收集 user_feedback ---
     with st.expander("✏️ 修改计划", expanded=False):
-        feedback = ui.textarea(
-            default_value=st.session_state.get(_KEY_REVISE_FEEDBACK, ""),
+        # 单源治理：反馈框由 shadcn ui.textarea 迁到原生 st.text_area（仅 key、无
+        # default_value）。原 ui.textarea 是双源——default_value 读
+        # session_state[_KEY_REVISE_FEEDBACK] + key 又写同一键——且 shadcn 组件在
+        # iframe 内每敲一个字符就回传值触发 Streamlit rerun，rerun 时把刚写入的值当
+        # React defaultValue 回灌，组件内部状态与回灌值打架 → 光标跳、字符错位、输入
+        # 框抖动（用户报告的就是此框）。与 paper_input 搜索框 L233 / arXiv ID 框 L311
+        # 同款决策。st.text_area 仅在 Enter/失焦时 rerun，无 iframe 逐键 rerun 风暴，
+        # 不抖动；键名 _KEY_REVISE_FEEDBACK 保持不变（AppTest 与 session_state 流转依赖）。
+        # 值读取路径不破：button handler 仍读本函数返回值变量 feedback，st.text_area
+        # 返回当前输入值且同步写 session_state[_KEY_REVISE_FEEDBACK]。
+        feedback = st.text_area(
+            "修改意见",
             key=_KEY_REVISE_FEEDBACK,
             placeholder="请描述你希望如何调整复现计划……",
         )
@@ -325,17 +340,26 @@ def _render_decision_buttons(controller, thread_id: str) -> None:
                 thread_id,
                 {"decision": "revise", "user_feedback": feedback or ""},
             )
+            # 切到 progress 页轮询后台重规划（planning self-loop）；重新 interrupt 后
+            # progress 页自动跳回 review 展示新计划。不切页则停在无轮询的 review 页
+            # 「计划尚未就绪」→ "提交修改后没动静"。
+            st.session_state[_KEY_CURRENT_PAGE] = "progress"
             st.rerun()
 
     # --- 切换仓库：feedback + new_repo_url（mock 文案逐字「🔁 切换仓库」）---
     with st.expander("🔁 切换仓库", expanded=False):
-        sw_feedback = ui.textarea(
-            default_value=st.session_state.get(_KEY_SWITCH_FEEDBACK, ""),
+        # 单源治理（同「修改计划」框）：shadcn ui.textarea/ui.input 迁到原生
+        # st.text_area/st.text_input，仅用 key、删 default_value 双源，规避 iframe
+        # 逐键 rerun 回灌导致的打字抖动。键名 _KEY_SWITCH_FEEDBACK /
+        # _KEY_SWITCH_REPO_URL 保持不变。值读取路径不破：button handler 仍读返回值
+        # 变量 sw_feedback / new_repo_url，原生组件返回当前值并写同名 session_state 键。
+        sw_feedback = st.text_area(
+            "修改意见",
             key=_KEY_SWITCH_FEEDBACK,
             placeholder="说明为何更换仓库（可选）……",
         )
-        new_repo_url = ui.input(
-            default_value=st.session_state.get(_KEY_SWITCH_REPO_URL, ""),
+        new_repo_url = st.text_input(
+            "新仓库 URL",
             key=_KEY_SWITCH_REPO_URL,
             placeholder="https://github.com/owner/repo",
         )
@@ -348,6 +372,8 @@ def _render_decision_buttons(controller, thread_id: str) -> None:
                     "new_repo_url": new_repo_url or "",
                 },
             )
+            # 同 revise：切到 progress 页轮询后台重规划，重新 interrupt 后自动跳回 review。
+            st.session_state[_KEY_CURRENT_PAGE] = "progress"
             st.rerun()
 
     # --- 取消：二次确认（mock 文案逐字「⛔ 终止任务」，.btn-danger 白底红字）---

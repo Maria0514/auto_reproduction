@@ -370,9 +370,10 @@ def _render_logs(state: Dict) -> None:
         st.caption("暂无日志")
         return
 
-    # 仅最后 10 条；shadcn accordion 前端是 data.map(r => ...)，期待 list[dict]，
-    # 每个 item 形如 {"title": ..., "content": ...}。Python dict 会让前端 .map 直接抛
-    # "n.map is not a function"。
+    # 仅最后 10 条；shadcn accordion 前端是 data.map(o => ...)，期待 list[dict]，
+    # 每个 item 形如 {"trigger": ..., "content": ...}——折叠条标题键名必须是 "trigger"
+    # （组件读 o.trigger），写成 "title" 会让折叠条无标题（空白）。Python dict（非 list）
+    # 会让前端 .map 直接抛 "n.map is not a function"。
     items: List[Dict[str, str]] = []
     for idx, err in enumerate(node_errors[-10:]):
         if not isinstance(err, dict):
@@ -380,15 +381,15 @@ def _render_logs(state: Dict) -> None:
         node_name = err.get("node_name") or "?"
         error_type = err.get("error_type") or ""
         summary = err.get("error_message") or "(无摘要)"
-        # 状态徽章用 emoji 在 title 内表达（accordion title 仅字符串，不能嵌组件）。
+        # 状态徽章用 emoji 在折叠条标题内表达（accordion trigger 仅字符串，不能嵌组件）。
         type_part = f" [{error_type}]" if error_type else ""
-        title = f"⚠️ {idx + 1}. {node_name}{type_part} · {summary}"
+        trigger = f"⚠️ {idx + 1}. {node_name}{type_part} · {summary}"
         detail = err.get("error_detail")
         if detail:
             content = f"**摘要**：{summary}\n\n```\n{detail}\n```"
         else:
             content = f"**摘要**：{summary}\n\n_(无 error_detail)_"
-        items.append({"title": title, "content": content})
+        items.append({"trigger": trigger, "content": content})
 
     if items:
         ui.accordion(data=items, key="acc_logs")
@@ -430,7 +431,10 @@ def _render_fatal_state_error(error_msg: str) -> None:
         # variant='default' 蓝色主按钮；ui.button 返回 True 表示被点击。
         if ui.button(text="重试", key="btn_retry", variant="default"):
             # 返回输入页重新发起（sp2 不提供从 thread_id 原地恢复，Q-S2-05）。
-            st.session_state[_KEY_CURRENT_PAGE] = "input"
+            # BUG 修复：必须经 _reset_to_input_page() 解除提交锁——否则回到输入页时
+            # 所有控件仍 disabled=submitted，用户无法交互（这正是 rate-limit 失败后
+            # 点"重试"卡死的根因；原实现只切页未解锁，与"返回输入页"按钮不对称）。
+            _reset_to_input_page()
             st.rerun()
     with cols[1]:
         _render_back_to_input_button(key="btn_error_back")
@@ -450,6 +454,19 @@ def _render_cancelled_card() -> None:
     _render_back_to_input_button(key="btn_cancelled_back", label="返回输入页开启新任务")
 
 
+def _reset_to_input_page() -> None:
+    """切回输入页并解除提交锁，使输入页控件恢复可交互。
+
+    「重试」与「返回输入页」的唯一共享出口：把"切页 + 解锁"绑成一个动作，
+    杜绝再次出现「切页但漏解锁 → 输入页 disabled=submitted 全控件冻结」的
+    不对称 BUG（本次修复点）。调用方负责随后 st.rerun()。
+    """
+    st.session_state[_KEY_CURRENT_PAGE] = "input"
+    # 清掉 D3 输入页提交锁（paper_input._KEY_SUBMITTED = "_input_submitted"），
+    # 否则回到输入页时 arxiv 输入框 / 搜索框 / 各按钮仍 disabled=submitted。
+    st.session_state["_input_submitted"] = False
+
+
 def _render_back_to_input_button(
     key: str,
     label: str = "返回输入页",
@@ -459,9 +476,7 @@ def _render_back_to_input_button(
     §3.2：ui.button(variant='outline') 替代 st.button；保留原 key（btn_*_back / btn_no_task_back）。
     """
     if ui.button(text=label, key=key, variant="outline"):
-        st.session_state[_KEY_CURRENT_PAGE] = "input"
-        # 清掉输入页提交锁，允许重新发起新任务（D3 _KEY_SUBMITTED）。
-        st.session_state["_input_submitted"] = False
+        _reset_to_input_page()
         st.rerun()
 
 

@@ -273,6 +273,24 @@ def test_cp_d4_6_state_error_fatal():
 
 
 # =========================================================================== #
+# BUG 回归：rate-limit 等致命错误后点「重试」必须解除提交锁，否则输入页冻结。
+# 「重试」按钮在 shadcn iframe 内，AppTest 点不到（同 CP-D4-6 skip 原因），故对
+# 「重试」与「返回输入页」共享的唯一出口 _reset_to_input_page() 做内核直测：
+# 必须同时 切页(current_page=input) + 解锁(_input_submitted=False)。
+# 缺解锁即复现 BUG——输入页全控件 disabled=submitted 无法交互。
+# =========================================================================== #
+def test_reset_to_input_page_clears_submit_lock():
+    mod = importlib.import_module("ui.pages.analysis_progress")
+    # 模拟「提交后任务致命失败、停在 progress 页」：提交锁仍为 True。
+    fake_state = {"current_page": "progress", "_input_submitted": True}
+    with patch.object(mod.st, "session_state", fake_state):
+        mod._reset_to_input_page()
+    assert fake_state["current_page"] == "input"
+    # 关键断言：解除提交锁（否则 paper_input 全控件 disabled=submitted 冻结）。
+    assert fake_state["_input_submitted"] is False
+
+
+# =========================================================================== #
 # CP-D4-7：current_step="cancelled_by_user" → 任务已终止卡片 + 返回输入页按钮
 # =========================================================================== #
 @pytest.mark.skip(reason="shadcn 迁移：取消态从 st.warning 改 ui.alert + ui.button(btn_cancelled_back)，AppTest 看不到 iframe。待 e2e")

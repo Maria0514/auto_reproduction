@@ -204,3 +204,41 @@ def test_soft_hint_absent_below_threshold():
     at = _run(controller)
     assert not at.exception
     assert "建议考虑直接批准或取消" not in _collect_text(at)
+
+
+# =========================================================================== #
+# T-06：抖动修复回归保护——3 个反馈/URL 输入框已从 shadcn ui.*（iframe，AppTest
+#       不可见）迁回原生 st.text_area/st.text_input（主文档，AppTest 可见可驱动）。
+#       D5 迁移注释曾断言「AppTest 看不到 iframe 组件」；原生化后本用例真实驱动
+#       这些 widget，既是抖动修复（单源治理：仅 key、无 default_value 双源）的结构性
+#       旁证，也是防止后续回退到 shadcn 双源反模式的回归护栏。键名一个都不能改，
+#       否则 session_state 流转与下游 resume_with 取值会断。
+# =========================================================================== #
+def test_feedback_widgets_are_native_and_appvisible():
+    """3 个输入框原生化后对 AppTest 可见 + 键名严格不变（抖动修复结构性旁证）。
+
+    D5 迁 shadcn 时这些框渲染在 iframe，AppTest 不可见（迁移注释 L5-7 明确断言）；
+    本次单源治理迁回原生 st.text_area/st.text_input 后，它们出现在主文档元素树，
+    AppTest 即可查询到。本用例断言「可见 + 键名快照」，是防止后续回退到 shadcn
+    双源反模式（抖动源）的回归护栏；至于「填值→点提交→断言 resume_with payload」
+    的完整链路，因 AppTest 不维护 expander 展开状态、二次 run 后 expander 内 widget
+    会从查询树消失（AppTest 框架对 expander 的已知限制），仍归 Playwright e2e
+    （tests/test_plan_review_e2e.py::test_e2e_revise_carries_feedback 等）。
+    """
+    controller = _make_controller_mock(payload=_make_payload())
+    at = _run(controller)
+    assert not at.exception, at.exception
+
+    # 键名快照：迁原生后 widget 必须仍按这三个 key 暴露（AppTest 与下游取值依赖）。
+    # 任何键名变动都会断掉 session_state 流转与 resume_with 取值——此处守住。
+    ta_keys = {ta.key for ta in at.text_area}
+    ti_keys = {ti.key for ti in at.text_input}
+    assert "_review_revise_feedback" in ta_keys, (
+        "revise 反馈框应为原生 st.text_area 且键名不变（shadcn iframe 时 AppTest 不可见）"
+    )
+    assert "_review_switch_feedback" in ta_keys, (
+        "switch 反馈框应为原生 st.text_area 且键名不变"
+    )
+    assert "_review_switch_repo_url" in ti_keys, (
+        "switch 仓库 URL 框应为原生 st.text_input 且键名不变"
+    )

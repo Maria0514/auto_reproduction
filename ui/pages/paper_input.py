@@ -193,10 +193,11 @@ def _render_paper_card(card: Dict, disabled: bool) -> None:
 
         if abstract:
             # ui-optimization-plan §3.1：摘要从 st.expander 改为 ui.accordion（默认收起）。
-            # 前端是 data.map(r=>...)，期待 list[{"title","content"}]，传 dict 会抛
-            # "n.map is not a function"。
+            # 前端是 data.map(o=>...)，期待 list[{"trigger","content"}]——折叠条标题键名
+            # 必须是 "trigger"（组件读 o.trigger），写成 "title" 会让折叠条无标题（空白）；
+            # 传 dict 而非 list 会抛 "n.map is not a function"。
             ui.accordion(
-                data=[{"title": "摘要（Abstract）", "content": abstract}],
+                data=[{"trigger": "摘要（Abstract）", "content": abstract}],
                 key="acc_abstract",
             )
 
@@ -221,13 +222,20 @@ def _render_search_section(disabled: bool) -> None:
     # 等子组件（streamlit-shadcn-ui 0.1.19 的 React 组件实现限制）。
     # TODO(ui-opt): 如未来 ui.accordion 支持嵌入子组件，再迁外层；当前保留 st.expander。
     with st.expander("🔍 按关键词搜索论文（可选）", expanded=False):
-        # ui.input 不支持 disabled 参数；submitted 后会立即跳 progress 页，
-        # 实际 paper_input 不会在 disabled 状态下被渲染，故无需退化处理。
-        query = ui.input(
-            default_value=st.session_state.get("search_query", ""),
+        # 单源治理：搜索框用 st.text_input（仅 key、无 default_value）。
+        # 原 ui.input 是双源——default_value 读 session_state["search_query"] +
+        # key 又写同一键——且 shadcn ui.input 每敲一个字符就回传值触发 Streamlit
+        # rerun，rerun 时把刚写入的值当 React defaultValue 回灌，组件内部状态与
+        # 回灌值打架 → 光标跳、字符错位、输入框抖动。与上方 arXiv ID 框 L296-303
+        # 同款决策（ui.input 在 session_state 双源下不可靠，改用原生 st.text_input）。
+        # st.text_input 仅在 Enter/失焦时 rerun，无 iframe 逐键 rerun 风暴，不抖动；
+        # 且支持 disabled（ui.input 不支持），顺带补上防重复提交一致性。
+        query = st.text_input(
+            "关键词",
             key="search_query",
             placeholder="例如：retrieval augmented generation",
-        ) or ""
+            disabled=disabled,
+        )
         do_search = ui.button(
             text="搜索",
             key="btn_search",
@@ -316,17 +324,25 @@ def render() -> None:
         # ui.button 写 dict 到 session_state["btn_fetch_go"]，
         # st.button 写 bool 到 session_state["btn_fetch"]，
         # 两个状态来回翻不会再串货（dict vs bool 类型冲突 → 'bool' object is not subscriptable）。
-        if submitted:
-            # 已提交但仍停留本页（极端边界）：退化为 st.button 以保 disabled 语义。
-            # 旧 key "btn_fetch" 留给 disabled 路径（AppTest 看得到，断言/兼容靠它）。
-            fetch = st.button("获取论文信息", key="btn_fetch", disabled=True)
-        else:
-            fetch = ui.button(
-                text="获取论文信息",
-                key="btn_fetch_go",
-                variant="default",
-                class_name="bg-blue-600 hover:bg-blue-700 text-white font-semibold",
-            )
+        # 居中：放进 3 列布局的中列（中列填满 → 居中块），字体用 text-sm 缩小。
+        _fl, fmid, _fr = st.columns([1, 2, 1])
+        with fmid:
+            if submitted:
+                # 已提交但仍停留本页（极端边界）：退化为 st.button 以保 disabled 语义。
+                # 旧 key "btn_fetch" 留给 disabled 路径（AppTest 看得到，断言/兼容靠它）。
+                fetch = st.button(
+                    "获取论文信息", key="btn_fetch", disabled=True, width="stretch"
+                )
+            else:
+                fetch = ui.button(
+                    text="获取论文信息",
+                    key="btn_fetch_go",
+                    variant="default",
+                    class_name=(
+                        "bg-blue-600 hover:bg-blue-700 text-white text-sm "
+                        "font-medium w-full"
+                    ),
+                )
         if fetch:
             card, err = _fetch_paper_card(arxiv_id)
             st.session_state[_KEY_PAPER_CARD] = card
@@ -359,23 +375,28 @@ def render() -> None:
     # st.button 写 bool 到 session_state["btn_start"]，
     # 两个状态来回翻（侧栏配 LLM / 输入 arxiv_id 触发 can_start 翻 False→True）
     # 不会再串货（dict vs bool 类型冲突 → 'bool' object is not subscriptable）。
-    start = ui.button(
-        text="🚀 开始复现",
-        key="btn_start_go",
-        variant="default",
-        class_name=(
-            "bg-blue-600 hover:bg-blue-700 text-white font-bold "
-            "px-6 py-3 text-base"
-        ),
-    ) if can_start else st.button(
-        # disabled 路径：ui.button 不支持 disabled 参数；
-        # 退化 st.button(disabled=True) 以保 OBS-D1-01 双保险 + AppTest 断言。
-        # 旧 key "btn_start" 保留给 disabled 路径（AppTest 用此 key 断言）。
-        "🚀 开始复现",
-        key="btn_start",
-        type="primary",
-        disabled=True,
-    )
+    # 居中：放进 3 列布局的中列（中列填满 → 居中块），字体用 text-sm 缩小、
+    # 去掉 px-6 py-3 大内边距，按钮更紧凑。
+    _sl, smid, _sr = st.columns([1, 2, 1])
+    with smid:
+        start = ui.button(
+            text="🚀 开始复现",
+            key="btn_start_go",
+            variant="default",
+            class_name=(
+                "bg-blue-600 hover:bg-blue-700 text-white text-sm "
+                "font-semibold w-full"
+            ),
+        ) if can_start else st.button(
+            # disabled 路径：ui.button 不支持 disabled 参数；
+            # 退化 st.button(disabled=True) 以保 OBS-D1-01 双保险 + AppTest 断言。
+            # 旧 key "btn_start" 保留给 disabled 路径（AppTest 用此 key 断言）。
+            "🚀 开始复现",
+            key="btn_start",
+            type="primary",
+            disabled=True,
+            width="stretch",
+        )
 
     if start:
         # 双保险：即便按钮被点到（disabled 由前端约束，回调仍再校验一次）。
