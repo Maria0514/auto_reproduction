@@ -21,6 +21,9 @@ from typing import Dict, List, Optional
 import pandas as pd
 import streamlit as st
 import streamlit_shadcn_ui as ui
+from streamlit_autorefresh import st_autorefresh
+
+from config import STREAMLIT_POLL_INTERVAL
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +38,62 @@ _KEY_CONFIRM_CANCEL = "_review_confirm_cancel"
 _KEY_REVISE_FEEDBACK = "_review_revise_feedback"
 _KEY_SWITCH_FEEDBACK = "_review_switch_feedback"
 _KEY_SWITCH_REPO_URL = "_review_switch_repo_url"
+# 决策提交后的"等待图推进"态：resume_with 只是起后台线程，本页无轮询会僵在静态页
+# （"提交修改后没动静 / 一直在计划尚未就绪"的根因）。awaiting 期间 render() 走轮询分支，
+# 直到状态明确转移再路由——避免读到残留旧 interrupt 误判。
+_KEY_AWAITING = "_review_awaiting"
+_KEY_AWAIT_KIND = "_review_await_kind"
+_KEY_AWAIT_BASELINE = "_review_await_baseline"
+# 这两类决策完成后返回 review 展示"重新生成的新计划"（靠 revise_count 前进判定）；
+# 其余（approve / code_only / cancel）完成后去 progress 看执行/终态（靠 interrupt 被消费判定）。
+_AWAIT_RETURN_KINDS = ("revise", "switch_repo")
+
+
+def _safe_int(value: object, default: int = -1) -> int:
+    """容错转 int（payload.revise_count 可能缺失/非数）。"""
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def _await_phase(
+    kind: str,
+    payload: Optional[Dict],
+    baseline: int,
+    has_worker_error: bool,
+    is_interrupted: bool,
+) -> str:
+    """决策提交后的等待阶段判定（纯函数，模块级可直测）。
+
+    返回 "error" | "to_review" | "to_progress" | "waiting"：
+    - 任意时刻 worker 崩 → "error"（去 progress 看致命卡）。
+    - 修改/换仓库（_AWAIT_RETURN_KINDS）：payload.revise_count 超过提交时基线 → 新计划
+      已生成 → "to_review"（天然忽略尚未消费的旧 interrupt：其 revise_count==baseline）。
+    - 批准/仅代码/取消：planning interrupt 已被消费（不再 is_interrupted）→ "to_progress"。
+    - 其余 → "waiting"（继续轮询）。
+    """
+    if has_worker_error:
+        return "error"
+    if kind in _AWAIT_RETURN_KINDS:
+        if payload is not None and _safe_int(payload.get("revise_count")) > baseline:
+            return "to_review"
+        return "waiting"
+    return "waiting" if is_interrupted else "to_progress"
+
+
+def _begin_awaiting(kind: str, payload: Optional[Dict]) -> None:
+    """提交决策后进入 awaiting 轮询态：记录决策类型 + 当前 revise_count 基线。"""
+    st.session_state[_KEY_AWAITING] = True
+    st.session_state[_KEY_AWAIT_KIND] = kind
+    st.session_state[_KEY_AWAIT_BASELINE] = _safe_int(
+        (payload or {}).get("revise_count"), default=0
+    )
+
+
+def _clear_awaiting() -> None:
+    st.session_state[_KEY_AWAITING] = False
+    st.session_state[_KEY_AWAIT_KIND] = ""
 
 
 def _get_controller():
@@ -52,6 +111,9 @@ def _init_page_state() -> None:
     st.session_state.setdefault(_KEY_REVISE_FEEDBACK, "")
     st.session_state.setdefault(_KEY_SWITCH_FEEDBACK, "")
     st.session_state.setdefault(_KEY_SWITCH_REPO_URL, "")
+    st.session_state.setdefault(_KEY_AWAITING, False)
+    st.session_state.setdefault(_KEY_AWAIT_KIND, "")
+    st.session_state.setdefault(_KEY_AWAIT_BASELINE, 0)
 
 
 def _render_plan(plan: Dict) -> None:
@@ -263,8 +325,11 @@ def _render_transparency(payload: Dict) -> None:
                     st.markdown(f"- {err}")
 
 
-def _render_decision_buttons(controller, thread_id: str) -> None:
-    """渲染五个决策按钮，点击后调对应 controller 方法再 st.rerun()。
+def _render_decision_buttons(controller, thread_id: str, payload: Dict) -> None:
+    """渲染五个决策按钮，点击后调对应 controller 方法 + 进入 awaiting 轮询态再 st.rerun()。
+
+    payload：当前 interrupt 的审核数据，用于记录提交时的 revise_count 基线（_begin_awaiting）。
+
 
     mock §3.3 L239-244：决策区五个按钮,文案逐字为
     「✅ 批准计划 / 📄 仅复现代码 / ✏️ 修改计划 / 🔁 切换仓库 / ⛔ 终止任务」。
@@ -307,15 +372,15 @@ def _render_decision_buttons(controller, thread_id: str) -> None:
         # 批准=mock .btn-primary 蓝底白字（原生 button + CSS 注入）。
         if st.button("✅ 批准计划", key="btn_approve", use_container_width=True):
             controller.resume_with(thread_id, {"decision": "approve"})
-            # 提交后切到 progress 页：resume_with 仅起后台线程恢复图，本页无轮询，
-            # 不切页会停在 review 页「计划尚未就绪」一动不动（"没动静" BUG）。
-            # progress 页有 autorefresh 轮询：继续执行→显示进度；若再 interrupt→自动跳回 review。
-            st.session_state[_KEY_CURRENT_PAGE] = "progress"
+            # 进入 awaiting：本页轮询直到旧 interrupt 被消费，再去 progress 看执行/终态。
+            # 不能直接切 progress——resume 异步，切过去时旧 interrupt 常未消费，progress
+            # 读到残留 interrupt 会立刻把用户弹回 review（"提交后没动静"误判根因）。
+            _begin_awaiting("approve", payload)
             st.rerun()
     with cols[1]:
         if ui.button("📄 仅复现代码", key="btn_code_only", variant="outline"):
             controller.resume_with(thread_id, {"decision": "code_only"})
-            st.session_state[_KEY_CURRENT_PAGE] = "progress"
+            _begin_awaiting("code_only", payload)
             st.rerun()
 
     # --- 修改计划：textarea 收集 user_feedback ---
@@ -340,10 +405,10 @@ def _render_decision_buttons(controller, thread_id: str) -> None:
                 thread_id,
                 {"decision": "revise", "user_feedback": feedback or ""},
             )
-            # 切到 progress 页轮询后台重规划（planning self-loop）；重新 interrupt 后
-            # progress 页自动跳回 review 展示新计划。不切页则停在无轮询的 review 页
-            # 「计划尚未就绪」→ "提交修改后没动静"。
-            st.session_state[_KEY_CURRENT_PAGE] = "progress"
+            # 进入 awaiting：留在本页轮询后台重规划（planning self-loop），直到
+            # revise_count 超过基线（= 新计划真的生成）再展示新计划。靠 revise_count
+            # 区分新旧 interrupt，天然忽略尚未消费的旧 interrupt，不再死在"计划尚未就绪"。
+            _begin_awaiting("revise", payload)
             st.rerun()
 
     # --- 切换仓库：feedback + new_repo_url（mock 文案逐字「🔁 切换仓库」）---
@@ -372,8 +437,8 @@ def _render_decision_buttons(controller, thread_id: str) -> None:
                     "new_repo_url": new_repo_url or "",
                 },
             )
-            # 同 revise：切到 progress 页轮询后台重规划，重新 interrupt 后自动跳回 review。
-            st.session_state[_KEY_CURRENT_PAGE] = "progress"
+            # 同 revise：留在本页轮询，靠 revise_count 前进判定新计划就绪再展示。
+            _begin_awaiting("switch_repo", payload)
             st.rerun()
 
     # --- 取消：二次确认（mock 文案逐字「⛔ 终止任务」，.btn-danger 白底红字）---
@@ -392,7 +457,9 @@ def _render_decision_buttons(controller, thread_id: str) -> None:
             ):
                 controller.cancel_task(thread_id)
                 st.session_state[_KEY_CONFIRM_CANCEL] = False
-                st.session_state[_KEY_CURRENT_PAGE] = "progress"
+                # 进入 awaiting：轮询直到 interrupt 被消费（图走到 cancelled_by_user→END），
+                # 再去 progress 看"任务已终止"卡。避免 cancel 后停在残留 interrupt 的旧计划页。
+                _begin_awaiting("cancel", payload)
                 st.rerun()
         with ccols[1]:
             if ui.button("再想想", key="btn_cancel_abort", variant="outline"):
@@ -417,8 +484,40 @@ def render() -> None:
     controller = _get_controller()
 
     payload = controller.get_interrupt_payload(thread_id)
+
+    # --- 决策提交后：等待图推进（轮询自愈，避免停在静态页"没动静"）---
+    if st.session_state.get(_KEY_AWAITING):
+        kind = st.session_state.get(_KEY_AWAIT_KIND, "")
+        baseline = _safe_int(st.session_state.get(_KEY_AWAIT_BASELINE), default=0)
+        phase = _await_phase(
+            kind=kind,
+            payload=payload,
+            baseline=baseline,
+            has_worker_error=controller.get_worker_error(thread_id) is not None,
+            is_interrupted=controller.is_interrupted(thread_id),
+        )
+        if phase == "to_review":
+            # 修改/换仓库：新计划已生成（revise_count 前进）→ 清 awaiting，落到下方渲染新计划。
+            _clear_awaiting()
+        elif phase in ("to_progress", "error"):
+            # 批准/仅代码/取消已离开 planning 暂停，或后台 worker 崩 → 去 progress 看执行/终态/致命卡。
+            _clear_awaiting()
+            st.session_state[_KEY_CURRENT_PAGE] = "progress"
+            st.rerun()
+        else:  # waiting：继续轮询
+            msg = (
+                "正在根据你的修改意见重新生成计划……"
+                if kind in _AWAIT_RETURN_KINDS
+                else "正在处理你的决策……"
+            )
+            st.info(f"⏳ {msg}（页面会自动刷新，请稍候）")
+            st_autorefresh(interval=STREAMLIT_POLL_INTERVAL, key="review_await_poll")
+            return
+
     if payload is None:
+        # 安全网：非 awaiting 的 None（如初次还没到 planning interrupt）也轮询，绝不死页。
         st.info("计划尚未就绪，请稍候……")
+        st_autorefresh(interval=STREAMLIT_POLL_INTERVAL, key="review_idle_poll")
         return
 
     _render_plan(payload.get("reproduction_plan") or {})
@@ -433,7 +532,7 @@ def render() -> None:
     st.divider()
     _render_transparency(payload)
     st.divider()
-    _render_decision_buttons(controller, thread_id)
+    _render_decision_buttons(controller, thread_id, payload)
 
 
 # app.py page_map 期望 render_plan_review_page（沿用 D3/D4 先例）。

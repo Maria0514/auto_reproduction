@@ -242,3 +242,59 @@ def test_feedback_widgets_are_native_and_appvisible():
     assert "_review_switch_repo_url" in ti_keys, (
         "switch 仓库 URL 框应为原生 st.text_input 且键名不变"
     )
+
+
+# =========================================================================== #
+# _await_phase / _safe_int 纯函数直测（决策提交后"等待图推进"状态机）
+#
+# 背景：resume_with 异步起后台线程，本页若不轮询会停在静态页"没动静"；且切页瞬间
+# 旧 interrupt 常未消费，直接按 is_interrupted 路由会误弹。_await_phase 用 revise_count
+# 基线（修改类）/ interrupt 是否消费（批准/取消类）判定何时、往哪儿路由。
+# =========================================================================== #
+def _phase(**kw):
+    mod = importlib.import_module("ui.pages.plan_review")
+    base = dict(kind="revise", payload=None, baseline=0,
+                has_worker_error=False, is_interrupted=False)
+    base.update(kw)
+    return mod._await_phase(**base)
+
+
+def test_safe_int_tolerant():
+    mod = importlib.import_module("ui.pages.plan_review")
+    assert mod._safe_int(3) == 3
+    assert mod._safe_int("2") == 2
+    assert mod._safe_int(None, default=0) == 0
+    assert mod._safe_int("x", default=-1) == -1
+    assert mod._safe_int({}, default=0) == 0
+
+
+def test_await_phase_worker_error_overrides_all():
+    # worker 崩 → error，无论哪种 kind / 是否 interrupted。
+    assert _phase(kind="revise", has_worker_error=True) == "error"
+    assert _phase(kind="approve", has_worker_error=True, is_interrupted=True) == "error"
+
+
+def test_await_phase_revise_waits_until_revise_count_advances():
+    # 提交瞬间：payload 仍是旧 interrupt（revise_count==baseline）→ 必须 waiting，不误判。
+    assert _phase(kind="revise", payload={"revise_count": 0}, baseline=0) == "waiting"
+    # 重规划中：payload 暂为 None → waiting。
+    assert _phase(kind="revise", payload=None, baseline=0) == "waiting"
+    # 新计划生成：revise_count 前进 → to_review。
+    assert _phase(kind="revise", payload={"revise_count": 1}, baseline=0) == "to_review"
+    # switch_repo 同理（baseline 非 0）。
+    assert _phase(kind="switch_repo", payload={"revise_count": 2}, baseline=1) == "to_review"
+    assert _phase(kind="switch_repo", payload={"revise_count": 1}, baseline=1) == "waiting"
+    # revise_count 缺失/非数 → _safe_int 兜底 -1，不会误判 to_review。
+    assert _phase(kind="revise", payload={}, baseline=0) == "waiting"
+    assert _phase(kind="revise", payload={"revise_count": "x"}, baseline=0) == "waiting"
+
+
+def test_await_phase_approve_cancel_wait_until_interrupt_consumed():
+    # 批准/仅代码/取消：旧 interrupt 未消费（is_interrupted True，含切页瞬间的残留）→ waiting。
+    for kind in ("approve", "code_only", "cancel"):
+        assert _phase(kind=kind, is_interrupted=True) == "waiting"
+        # interrupt 已消费（图离开 planning 暂停）→ 去 progress。
+        assert _phase(kind=kind, is_interrupted=False) == "to_progress"
+    # 这些 kind 不看 revise_count（即便 payload 还在也不返回 to_review）。
+    assert _phase(kind="approve", payload={"revise_count": 9}, baseline=0,
+                  is_interrupted=True) == "waiting"
