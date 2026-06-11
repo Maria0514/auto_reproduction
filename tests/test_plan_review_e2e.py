@@ -6,7 +6,7 @@ ui/pages/plan_review.py 已迁到 streamlit-shadcn-ui，决策按钮渲染在 if
 ``streamlit.testing.v1.AppTest`` 看不到 iframe 组件、点击不回写 session_state，
 故「点击决策按钮 → 断言 controller 被以正确 payload 调用」类用例只能用真实浏览器跑。
 
-落盘断言范式（照搬项目根 _e2e_app.py，已亲自跑通）
+落盘断言范式（harness：tests/e2e_harnesses/_e2e_app.py，已亲自跑通）
 --------------------------------------------------
 harness app 用 mock controller ``RecCtrl``：
 - get_interrupt_payload 返回固定 _PAYLOAD；
@@ -40,7 +40,7 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-HARNESS_APP = PROJECT_ROOT / "_e2e_app.py"
+HARNESS_APP = PROJECT_ROOT / "tests" / "e2e_harnesses" / "_e2e_app.py"
 
 # thread_id 与 _e2e_app.py harness 一致（harness 用 "tid-e2e"）。
 TID = "tid-e2e"

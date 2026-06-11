@@ -38,7 +38,7 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-HARNESS_APP = PROJECT_ROOT / "_e2e_progress_app.py"
+HARNESS_APP = PROJECT_ROOT / "tests" / "e2e_harnesses" / "_e2e_progress_app.py"
 
 pytestmark = pytest.mark.browser
 
