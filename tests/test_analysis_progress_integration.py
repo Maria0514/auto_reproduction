@@ -181,7 +181,8 @@ def test_i3_current_page_transition_across_reruns():
                 reason="shadcn 迁移：error 致命态从 st.error 改 ui.alert（_render_fatal_state_error），"
                        "'致命错误' 文案落在 iframe 内的 ui.alert title，AppTest 看不到 iframe。"
                        "停轮询（ar.assert_not_called）由 I6_interrupted + L1 logic 测试覆盖；"
-                       "iframe 文本断言待 e2e（Playwright + monkeypatch ui.alert）。"
+                       "iframe 文本断言已迁移到 "
+                       "tests/test_analysis_progress_e2e.py::test_e2e_state_error_shows_fatal_text。"
             ),
             id="I4_error",
         ),
@@ -190,7 +191,8 @@ def test_i3_current_page_transition_across_reruns():
             marks=pytest.mark.skip(
                 reason="shadcn 迁移：取消终态从 st.warning 改 ui.alert（_render_cancelled_card），"
                        "'任务已终止' 文案落在 iframe 内的 ui.alert title，AppTest 看不到 iframe。"
-                       "停轮询由 I6_interrupted + L1 logic 测试覆盖；iframe 文本断言待 e2e。"
+                       "停轮询由 I6_interrupted + L1 logic 测试覆盖；iframe 文本断言已迁移到 "
+                       "tests/test_analysis_progress_e2e.py::test_e2e_cancelled_shows_terminated_text。"
             ),
             id="I5_cancelled",
         ),
@@ -274,7 +276,8 @@ def _run_chain(controller):
     reason="shadcn 迁移：worker 异常 FATAL 卡片从 st.error 改 ui.alert（_render_fatal_worker_error），"
            "'工作线程异常' 文案落在 iframe 内的 ui.alert title，AppTest 看不到 iframe。"
            "链首短路（poll_state/is_interrupted 不被调用、停轮询）已由 L1 logic 测试覆盖；"
-           "iframe 文本断言待 e2e（Playwright + monkeypatch ui.alert）。"
+           "iframe 文本断言已迁移到 "
+           "tests/test_analysis_progress_e2e.py::test_e2e_worker_error_shows_fatal_card。"
 )
 def test_priority_all_four_terminal_true_picks_worker_error():
     """四态全为真（worker_error∧error∧cancelled∧interrupted）→ 严格命中最高优先 worker_error。
@@ -301,7 +304,8 @@ def test_priority_all_four_terminal_true_picks_worker_error():
     reason="shadcn 迁移：state.error 致命态从 st.error 改 ui.alert（_render_fatal_state_error），"
            "'致命错误' / 'STATE-ERR' 文案落在 iframe 内的 ui.alert title/description，AppTest 看不到 iframe。"
            "error > cancelled > interrupted 优先级（is_interrupted 不被调用、停轮询）已由 L1 logic 测试覆盖；"
-           "iframe 文本断言待 e2e。"
+           "iframe 文本断言已迁移到 "
+           "tests/test_analysis_progress_e2e.py::test_e2e_state_error_shows_fatal_text。"
 )
 def test_priority_error_over_cancelled_and_interrupted():
     """error∧cancelled∧interrupted（无 worker_error）→ 命中 error；is_interrupted 不应被调用。"""
@@ -324,7 +328,8 @@ def test_priority_error_over_cancelled_and_interrupted():
 @pytest.mark.skip(
     reason="shadcn 迁移：实时日志从 st.expander+st.code 改 ui.accordion(data=list)（_render_logs），"
            "日志条目渲染在 iframe 内的 ui.accordion，不再产生 st.expander 元素（at.expander 恒为空），"
-           "AppTest 看不到 iframe。重复 element id 守门 + [-10:] 截断逻辑待 e2e（L3 真机已实证不崩）。"
+           "AppTest 看不到 iframe。重复 element id 守门 + [-10:] 截断逻辑已迁移到 "
+           "tests/test_analysis_progress_e2e.py::test_e2e_many_errors_no_python_traceback（L3 真机已实证不崩）。"
 )
 def test_many_same_label_detail_expanders_no_exception():
     """8 条 node_errors 均含 error_detail → 8 个同 label '详情' expander，AppTest 不抛异常。

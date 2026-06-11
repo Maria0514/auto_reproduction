@@ -180,6 +180,26 @@ def _wait_app_ready(pg) -> None:
     time.sleep(3.0)
 
 
+def _click_in_main(pg, text: str, timeout: float = 15.0) -> bool:
+    """在主文档（非 iframe）点含 text 的按钮。
+
+    D5 后续：批准计划 / 终止任务 / 确认终止 三个按钮为命中 mock 配色（.btn-primary
+    蓝底白字、.btn-danger 白底红字）改用原生 st.button + .st-key CSS 注入,渲染在
+    主文档而非 shadcn iframe。故这些按钮要在 main_frame 里用 button 角色点击,
+    不能走 _click_in_frame（它专门跳过 main_frame）。用 role=button + name 精确匹配,
+    避免命中顶部 st.caption 指引文案里的同名子串。
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            btn = pg.get_by_role("button", name=text, exact=False).first
+            btn.click(timeout=3000)
+            return True
+        except Exception:
+            time.sleep(0.5)
+    return False
+
+
 def _click_in_frame(pg, text: str, timeout: float = 15.0) -> bool:
     """遍历 page.frames 找 inner_text 含 text 的 iframe，点其中含该文案的元素。
 
@@ -253,8 +273,11 @@ def _expand_streamlit_expander(pg, label: str) -> None:
 # 决策点击 e2e（5 决策 + 二次确认）
 # =========================================================================== #
 def test_e2e_approve(page, rec_file):
-    """点「✅ 批准计划」→ REC 出现 resume_with，decision={"decision":"approve"}。"""
-    assert _click_in_frame(page, "批准计划"), "未找到/点不到「批准计划」按钮"
+    """点「✅ 批准计划」→ REC 出现 resume_with，decision={"decision":"approve"}。
+
+    批准按钮 D5 后改原生 st.button（主文档），用 _click_in_main 点。
+    """
+    assert _click_in_main(page, "批准计划"), "未找到/点不到「批准计划」按钮"
     rec = _wait_rec(
         rec_file,
         lambda r: r.get("m") == "resume_with"
@@ -295,10 +318,10 @@ def test_e2e_revise_carries_feedback(page, rec_file):
 
 
 def test_e2e_switch_repo_carries_feedback_and_url(page, rec_file):
-    """展开「🔄 更换仓库」→ 填原因+URL → 点「提交更换」→ decision=switch_repo 带三字段。"""
+    """展开「🔁 切换仓库」→ 填原因+URL → 点「提交切换」→ decision=switch_repo 带三字段。"""
     reason = "官方仓库缺训练脚本"
     new_url = "https://github.com/alt/HippoRAG-repro"
-    _expand_streamlit_expander(page, "🔄 更换仓库")
+    _expand_streamlit_expander(page, "🔁 切换仓库")
     # 该 expander 内含一个 textarea（feedback）和一个 input（url）。
     filled_ta = False
     filled_input = False
@@ -334,7 +357,7 @@ def test_e2e_switch_repo_carries_feedback_and_url(page, rec_file):
     assert filled_ta, "未能填 switch feedback textarea"
     assert filled_input, "未能填 switch repo url input"
     time.sleep(1.0)
-    assert _click_in_frame(page, "提交更换"), "未找到/点不到「提交更换」按钮"
+    assert _click_in_frame(page, "提交切换"), "未找到/点不到「提交切换」按钮"
     rec = _wait_rec(
         rec_file,
         lambda r: r.get("m") == "resume_with"
@@ -348,8 +371,11 @@ def test_e2e_switch_repo_carries_feedback_and_url(page, rec_file):
 
 
 def test_e2e_cancel_first_click_no_cancel_task(page, rec_file):
-    """首点「🛑 终止任务」→ 不调 cancel_task（REC 无记录）、页面出现「确认终止」warning。"""
-    assert _click_in_frame(page, "终止任务"), "未找到/点不到「终止任务」按钮"
+    """首点「⛔ 终止任务」→ 不调 cancel_task（REC 无记录）、页面出现「确认终止」warning。
+
+    终止按钮 D5 后改原生 st.button（主文档），用 _click_in_main 点。
+    """
+    assert _click_in_main(page, "终止任务"), "未找到/点不到「终止任务」按钮"
     # 给足时间让 rerun + 可能的落盘 flush
     time.sleep(4.0)
     recs = _read_rec(rec_file)
@@ -362,13 +388,16 @@ def test_e2e_cancel_first_click_no_cancel_task(page, rec_file):
 
 
 def test_e2e_cancel_confirm_calls_cancel_task(page, rec_file):
-    """首点「🛑 终止任务」→ 再点「确认终止」→ REC 出现 cancel_task。"""
-    assert _click_in_frame(page, "终止任务"), "未找到/点不到「终止任务」按钮"
+    """首点「⛔ 终止任务」→ 再点「确认终止」→ REC 出现 cancel_task。
+
+    终止/确认终止 D5 后均改原生 st.button（主文档），用 _click_in_main 点。
+    """
+    assert _click_in_main(page, "终止任务"), "未找到/点不到「终止任务」按钮"
     time.sleep(3.0)
     page.wait_for_load_state("networkidle")
     assert "确认终止" in page.inner_text("body"), "首点后未进入二次确认态"
-    # 点「确认终止」（注意排除 "🛑 终止任务"——用更精确文案）
-    assert _click_in_frame(page, "确认终止"), "未找到/点不到「确认终止」按钮"
+    # 点「确认终止」（精确文案，避免命中「⛔ 终止任务」）
+    assert _click_in_main(page, "确认终止"), "未找到/点不到「确认终止」按钮"
     rec = _wait_rec(rec_file, lambda r: r.get("m") == "cancel_task")
     assert rec is not None, f"确认后未捕获 cancel_task，REC={_read_rec(rec_file)}"
     assert rec["tid"] == TID
