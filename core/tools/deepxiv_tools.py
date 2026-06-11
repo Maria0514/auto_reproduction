@@ -22,7 +22,7 @@ from deepxiv_sdk import (
 from langchain_core.tools import tool, BaseTool
 
 from config import get_deepxiv_token, TOOL_RESULT_MAX_LENGTH
-from core.errors import PermanentError, TransientError
+from core.errors import PermanentError, TransientError, DeepxivDailyLimitError
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +50,20 @@ class DeepxivTools:
         if isinstance(e, BadRequestError):
             raise PermanentError(f"{operation}: bad request", detail) from e
         if isinstance(e, RateLimitError):
-            raise TransientError(f"{operation}: rate limit exceeded (SDK already retried)", detail) from e
+            # deepxiv 429 = 当天「日配额」耗尽（非瞬时限流）：SDK 对 429 不重试、当天
+            # 重试也必再 429。故归 DeepxivDailyLimitError(PermanentError)，避免上层把它
+            # 当瞬态去退避/修复循环里反复重试，白白消耗剩余配额。
+            raise DeepxivDailyLimitError(
+                f"{operation}: deepxiv 日配额已耗尽（HTTP 429，当天不可重试）", detail
+            ) from e
         if isinstance(e, ServerError):
-            raise TransientError(f"{operation}: server error (SDK already retried)", detail) from e
+            # 5xx：服务端瞬时故障。SDK 对 5xx 不重试（立即抛），但稍后重试可能成功，
+            # 故归瞬态可重试（修正旧注释「SDK already retried」——SDK 并未对 5xx 重试）。
+            raise TransientError(f"{operation}: server error (5xx)", detail) from e
         if isinstance(e, APIError):
-            raise TransientError(f"{operation}: API error (SDK already retried)", detail) from e
+            # 兜底 API 错误：含 SDK 对 timeout/connection 退避重试耗尽后抛出的 APIError，
+            # 也含未单独归类的其它情形；统一归瞬态可重试。
+            raise TransientError(f"{operation}: API error", detail) from e
         if isinstance(e, ValueError):
             raise PermanentError(f"{operation}: invalid input — {e}", detail) from e
 

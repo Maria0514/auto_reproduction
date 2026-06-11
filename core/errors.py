@@ -99,6 +99,23 @@ class LLMOutputError(LLMError, TransientError):
     pass
 
 
+# --- deepxiv（论文读取数据服务）相关异常 ---
+
+class DeepxivDailyLimitError(PermanentError):
+    """deepxiv 数据服务日使用配额耗尽（HTTP 429）。
+
+    触发场景：当前 token 当天的请求数已达上限——服务端按「天」计的配额，
+    而非瞬时频率限流。
+
+    处理方式：归 **永久错误**，当天不可重试（重试必再 429，纯浪费配额），
+    不进退避循环；需等次日配额重置，或到 data.rag.ac.cn/register 注册更高额度。
+
+    注意：与 LLMRateLimitError（瞬时限流，TransientError 可退避重试）语义相反——
+    deepxiv 的 429 是日配额，故继承 PermanentError 而非 TransientError。
+    """
+    pass
+
+
 # --- 沙箱相关异常（Sprint 1 仅定义，Sprint 3 使用）---
 
 class SandboxError(AutoReproError):
