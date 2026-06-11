@@ -625,3 +625,296 @@ render()
     assert not at.exception, at.exception
     text = _collect_text(at)
     assert "本轮对话已消耗 2 次调用" in text
+
+
+# =========================================================================== #
+# S2-12 验收补强（测试工程师独立验收 2026-06-11）——针对开发可能漏的角，
+# 全部「先 python 探针验证实现真行为，再写断言」（与本项目既有范式一致）。
+#
+# 覆盖缺口（现有用例未触达）：
+# - _history_to_messages 异常输入鲁棒性（非 dict / 缺 role / content None）；
+# - _handle_chat_turn 助手 content 非字符串时的 str() 兜底；
+# - _apply_chat_revision 总结返回「空白串（非异常）」时的退化拼接；
+# - _apply_chat_revision 完全空对话时不落定 + st.error（按钮 disabled 后的纵深兜底）；
+# - AC-S2-17 强化：多轮对话期间 controller 零写（resume_with / cancel_task 均不调）；
+# - AC-S2-18 强化：兜底输入框走 revise 的逻辑层断言（AppTest 原生 widget，不依赖浏览器）；
+# - N≥5 chat_calls 软提示触发 / N=4 不触发对照；info-bar 同列 revise_count 与 chat_calls。
+# =========================================================================== #
+
+
+# --- _history_to_messages 异常输入鲁棒性（探针实证：非 dict 项被跳过）---------- #
+def test_history_to_messages_robust_against_malformed_items():
+    """非 dict 项跳过；缺 role / 未知 role → HumanMessage；content=None → 空串，不抛。"""
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    mod = _plan_review_mod()
+    history = [
+        {"role": "assistant", "content": "答"},
+        {"role": "unknown_role", "content": "未知角色"},  # 非 user/assistant
+        {"content": "缺 role"},                           # 缺 role 键
+        "not-a-dict",                                      # 非 dict 项（应被跳过）
+        {"role": "user", "content": None},                 # content None → 空串
+    ]
+    msgs = mod._history_to_messages(history)
+    # 非 dict 项被跳过 → 共 4 条
+    assert len(msgs) == 4
+    assert isinstance(msgs[0], AIMessage) and msgs[0].content == "答"
+    # 未知 role / 缺 role 均归 HumanMessage
+    assert isinstance(msgs[1], HumanMessage) and msgs[1].content == "未知角色"
+    assert isinstance(msgs[2], HumanMessage) and msgs[2].content == "缺 role"
+    # content None → 空串（str(... or "")）
+    assert isinstance(msgs[3], HumanMessage) and msgs[3].content == ""
+
+
+def test_history_to_messages_none_and_empty():
+    """None / 空列表 → 空消息序列，不抛。"""
+    mod = _plan_review_mod()
+    assert mod._history_to_messages(None) == []
+    assert mod._history_to_messages([]) == []
+
+
+# --- _handle_chat_turn 助手 content 非字符串兜底（探针实证：int → str）-------- #
+def test_handle_chat_turn_non_str_content_coerced():
+    """模型返回 content 为非字符串（如 int）→ str() 兜底为字符串，append 不抛。"""
+    import streamlit as st
+
+    mod = _plan_review_mod()
+    st.session_state["_review_chat_messages"] = []
+    st.session_state["_review_chat_calls"] = 0
+
+    fake_llm = MagicMock()
+    fake_resp = MagicMock()
+    fake_resp.content = 12345  # 非字符串
+    fake_llm.invoke.return_value = fake_resp
+
+    with patch.object(mod, "_build_planning_chat_llm", return_value=fake_llm):
+        mod._handle_chat_turn("hi", _make_payload(), _LLM_CONFIG_SET)
+
+    hist = st.session_state["_review_chat_messages"]
+    assert hist[1]["role"] == "assistant"
+    assert isinstance(hist[1]["content"], str)
+    assert hist[1]["content"] == "12345"
+    assert st.session_state["_review_chat_calls"] == 1
+
+
+# --- AC-S2-17 强化：对话期间 controller 零写（不 resume / 不 cancel）----------- #
+def test_chat_turns_never_touch_controller_until_apply():
+    """连续多轮对话（AC-S2-15/17）：controller.resume_with / cancel_task 均零次调用，
+    awaiting 不变（对话不直接落计划，graph 不发生 resume）。"""
+    import streamlit as st
+
+    mod = _plan_review_mod()
+    st.session_state["_review_chat_messages"] = []
+    st.session_state["_review_chat_calls"] = 0
+    st.session_state["_review_awaiting"] = False
+
+    controller = MagicMock()
+    fake_llm = MagicMock()
+    fake_resp = MagicMock()
+    fake_resp.content = "模型回复"
+    fake_llm.invoke.return_value = fake_resp
+
+    with patch.object(mod, "_build_planning_chat_llm", return_value=fake_llm):
+        for i in range(3):
+            mod._handle_chat_turn(f"第 {i} 轮意见", _make_payload(), _LLM_CONFIG_SET)
+
+    # 多轮消息正确追加（user/assistant 交替，共 6 条）。
+    hist = st.session_state["_review_chat_messages"]
+    assert len(hist) == 6
+    assert [t["role"] for t in hist] == ["user", "assistant"] * 3
+    assert st.session_state["_review_chat_calls"] == 3
+    # 关键负向断言：对话阶段 graph 写路径零触达。
+    controller.resume_with.assert_not_called()
+    controller.cancel_task.assert_not_called()
+    # awaiting 未被对话改动（仍 False = 未进入重规划轮询态）。
+    assert st.session_state["_review_awaiting"] is False
+
+
+# --- _apply_chat_revision 总结返回「空白串（非异常）」→ 退化拼接（探针实证）---- #
+def test_apply_chat_revision_blank_summary_falls_back_to_concat():
+    """模型总结返回纯空白（非抛错）→ feedback 为空 → 退化拼接用户发言，仍 resume_with 一次。"""
+    import streamlit as st
+
+    mod = _plan_review_mod()
+    st.session_state["_review_chat_messages"] = [
+        {"role": "user", "content": "把模型换成 BERT"},
+        {"role": "assistant", "content": "好"},
+    ]
+    st.session_state["_review_chat_calls"] = 1
+    st.session_state["_review_awaiting"] = False
+
+    fake_llm = MagicMock()
+    fake_resp = MagicMock()
+    fake_resp.content = "   "  # 纯空白（strip 后空）
+    fake_llm.invoke.return_value = fake_resp
+
+    controller = MagicMock()
+    with patch.object(mod, "_build_planning_chat_llm", return_value=fake_llm), \
+            patch.object(mod.st, "rerun"):
+        mod._apply_chat_revision(controller, "tid-blank", _make_payload(), _LLM_CONFIG_SET)
+
+    controller.resume_with.assert_called_once()
+    args, _ = controller.resume_with.call_args
+    decision = args[1]
+    assert decision["decision"] == "revise"
+    assert decision["user_feedback"] == "把模型换成 BERT"  # 退化拼接用户发言
+    assert st.session_state["_review_awaiting"] is True
+
+
+def test_apply_chat_revision_no_content_does_not_resume():
+    """完全空对话 + 总结失败 → 无可用内容 → 不 resume_with（不空跑）+ st.error 提示，不崩。
+
+    纵深兜底：按钮在空对话时已 disabled（test_apply_button_disabled_on_empty_chat），
+    本用例验证即便绕过 UI 直接调函数，也不会用空 feedback 触发无意义重规划。
+    """
+    import streamlit as st
+
+    mod = _plan_review_mod()
+    st.session_state["_review_chat_messages"] = []  # 完全空
+
+    fake_llm = MagicMock()
+    fake_llm.invoke.side_effect = RuntimeError("summary boom")
+
+    controller = MagicMock()
+    with patch.object(mod, "_build_planning_chat_llm", return_value=fake_llm), \
+            patch.object(mod.st, "error") as mock_error, \
+            patch.object(mod.st, "rerun"):
+        mod._apply_chat_revision(controller, "tid-empty", _make_payload(), _LLM_CONFIG_SET)
+
+    controller.resume_with.assert_not_called()
+    assert mock_error.called
+
+
+# --- AC-S2-18 强化：兜底输入框走 revise（AppTest 原生 widget，不依赖浏览器）---- #
+def test_fallback_input_triggers_revise_via_apptest():
+    """兜底输入框填一句方向 + 点「直接用这句话重新生成计划」→ resume_with(revise) 一次，
+    user_feedback 为兜底原文（不经模型总结）；进入 awaiting。"""
+    fb = "把数据集换成 2WikiMultiHopQA"
+    script = f"""
+import streamlit as st
+st.session_state.setdefault("thread_id", "task-review-fb")
+st.session_state["_review_chat_thread"] = "task-review-fb"
+st.session_state["_review_fallback_feedback"] = {fb!r}
+from ui.pages.plan_review import render
+render()
+"""
+    controller = _make_controller_mock(payload=_make_payload())
+    with patch("app._get_controller", return_value=controller):
+        at = AppTest.from_string(script)
+        at.run()
+        assert not at.exception, at.exception
+        # 兜底按钮为原生 st.button（AppTest 可见、可点）。
+        fb_btns = [b for b in at.button if b.key == "btn_fallback_revise"]
+        assert len(fb_btns) == 1, "应渲染兜底「直接用这句话重新生成计划」按钮"
+        fb_btns[0].click().run()
+
+    controller.resume_with.assert_called_once_with(
+        "task-review-fb", {"decision": "revise", "user_feedback": fb}
+    )
+
+
+def test_fallback_input_empty_warns_no_revise():
+    """兜底输入框为空时点重新生成 → 不 resume_with，仅 warning 提示先填写。"""
+    script = """
+import streamlit as st
+st.session_state.setdefault("thread_id", "task-review-fb2")
+st.session_state["_review_chat_thread"] = "task-review-fb2"
+st.session_state["_review_fallback_feedback"] = "   "
+from ui.pages.plan_review import render
+render()
+"""
+    controller = _make_controller_mock(payload=_make_payload())
+    with patch("app._get_controller", return_value=controller):
+        at = AppTest.from_string(script)
+        at.run()
+        fb_btns = [b for b in at.button if b.key == "btn_fallback_revise"]
+        assert len(fb_btns) == 1
+        fb_btns[0].click().run()
+    controller.resume_with.assert_not_called()
+    assert any("请先填写" in w.value for w in at.warning)
+
+
+# --- N≥5 chat_calls 软提示触发 / N=4 不触发对照（AC-S2-06 精神，对话口径）------ #
+def _run_with_chat_calls(chat_calls: int, revise_count: int = 0) -> AppTest:
+    """以指定 chat_calls / revise_count 渲染 review 页，返回 AppTest。"""
+    script = f"""
+import streamlit as st
+st.session_state.setdefault("thread_id", "task-review-hint")
+st.session_state["_review_chat_thread"] = "task-review-hint"
+st.session_state["_review_chat_calls"] = {chat_calls}
+from ui.pages.plan_review import render
+render()
+"""
+    controller = _make_controller_mock(
+        payload=_make_payload(revise_count=revise_count, soft_hint_threshold=5)
+    )
+    with patch("app._get_controller", return_value=controller):
+        at = AppTest.from_string(script)
+        at.run()
+    return at
+
+
+def test_chat_calls_soft_hint_at_threshold():
+    """chat_calls == 5（== PLANNING_SOFT_HINT_THRESHOLD）→ 出对话软提示 warning。"""
+    at = _run_with_chat_calls(5, revise_count=0)
+    assert not at.exception, at.exception
+    text = _collect_text(at)
+    assert "本轮对话已消耗 5 次 LLM 调用" in text
+    # revise_count=0（< 阈值）→ revise 软提示不应触发（与对话软提示独立）。
+    assert "建议考虑直接批准或取消" not in text
+
+
+def test_chat_calls_soft_hint_absent_below_threshold():
+    """chat_calls == 4（< 5）→ 不出对话软提示（边界对照，防 off-by-one）。"""
+    at = _run_with_chat_calls(4, revise_count=0)
+    assert not at.exception, at.exception
+    text = _collect_text(at)
+    # info-bar 仍显示消耗次数，但不应出现软提示 warning 文案。
+    assert "本轮对话已消耗 4 次调用" in text
+    warns = "\n".join(str(w.value) for w in at.warning)
+    assert "建议尽快敲定方向" not in warns
+
+
+def test_info_bar_shows_both_revise_and_chat_counts():
+    """info-bar 同列「已修改 N 轮」与「本轮对话已消耗 X 次调用」（透明化两口径并存）。"""
+    at = _run_with_chat_calls(3, revise_count=2)
+    assert not at.exception, at.exception
+    text = _collect_text(at)
+    assert "已修改 2 轮" in text
+    assert "本轮对话已消耗 3 次调用" in text
+    assert "LLM 调用上限 50 次" in text
+
+
+# --- AC-S2-16 强化：_apply_chat_revision 计数 +1（总结调用计入对话计数）-------- #
+def test_apply_chat_revision_increments_chat_calls_on_success():
+    """敲定方向成功路径：总结调用使 chat_calls +1（计入对话口径），随后清零（落定后重置）。"""
+    import streamlit as st
+
+    mod = _plan_review_mod()
+    st.session_state["_review_chat_messages"] = [
+        {"role": "user", "content": "换数据集"},
+        {"role": "assistant", "content": "好的"},
+    ]
+    st.session_state["_review_chat_calls"] = 2
+
+    fake_llm = MagicMock()
+    fake_resp = MagicMock()
+    fake_resp.content = "修改方向纪要：更换数据集为 2WikiMultiHopQA。"
+    fake_llm.invoke.return_value = fake_resp
+
+    # 用旁路计数器验证 +1 发生在清零之前：拦截 resume_with 时读取当时计数。
+    seen_calls = {}
+    controller = MagicMock()
+    controller.resume_with.side_effect = lambda *a, **k: seen_calls.setdefault(
+        "at_resume", st.session_state["_review_chat_calls"]
+    )
+
+    with patch.object(mod, "_build_planning_chat_llm", return_value=fake_llm), \
+            patch.object(mod.st, "rerun"):
+        mod._apply_chat_revision(controller, "tid-cnt", _make_payload(), _LLM_CONFIG_SET)
+
+    # 总结调用使计数从 2 → 3（在 resume_with 触发时刻已 +1）。
+    assert seen_calls["at_resume"] == 3
+    # 落定后清零（与历史一并重置）。
+    assert st.session_state["_review_chat_calls"] == 0
+    assert st.session_state["_review_chat_messages"] == []
