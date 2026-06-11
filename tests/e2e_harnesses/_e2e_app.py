@@ -16,9 +16,21 @@ _PAYLOAD = {
     "revise_count": 0, "soft_hint_threshold": 5,
 }
 
+# S2-12：新 render() 会调 controller.poll_state(tid) 取 planning 节点的 llm_config_set
+# 供对话面板构造模型。harness 必须提供合法 llm_config_set，否则 AttributeError 全组崩。
+_LLM_CONFIG = {
+    "base_url": "https://example.test/v1", "model": "gpt-test",
+    "api_key": "", "temperature": 0.3, "max_tokens": 4096,
+}
+_LLM_CONFIG_SET = {"default": _LLM_CONFIG, "overrides": {}}
+
+
 class RecCtrl:
     def get_interrupt_payload(self, tid):
         return _PAYLOAD
+    def poll_state(self, tid):
+        # 含合法 llm_config_set 的 state（对话面板 resolve_llm_config 依赖）。
+        return {"llm_config_set": _LLM_CONFIG_SET}
     def resume_with(self, tid, decision):
         with open(REC, "a") as f:
             f.write(json.dumps({"m": "resume_with", "tid": tid, "decision": decision}) + "\n")

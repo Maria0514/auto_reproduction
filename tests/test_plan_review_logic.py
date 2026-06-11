@@ -85,10 +85,21 @@ def _make_payload(
     }
 
 
+# S2-12：新 render() 会调 controller.poll_state(tid) 取 planning 节点 llm_config_set
+# 供对话面板构造模型。mock 必须给 poll_state 返回含合法 llm_config_set 的 dict。
+_LLM_CONFIG = {
+    "base_url": "https://example.test/v1", "model": "gpt-test",
+    "api_key": "", "temperature": 0.3, "max_tokens": 4096,
+}
+_LLM_CONFIG_SET = {"default": _LLM_CONFIG, "overrides": {}}
+
+
 def _make_controller_mock(payload: Optional[Dict]) -> MagicMock:
-    """构造 GraphController mock：脚本化 get_interrupt_payload，其余为桩。"""
+    """构造 GraphController mock：脚本化 get_interrupt_payload / poll_state，其余为桩。"""
     controller = MagicMock()
     controller.get_interrupt_payload.return_value = payload
+    # poll_state 返回含合法 llm_config_set 的 state（新 render() 依赖）。
+    controller.poll_state.return_value = {"llm_config_set": _LLM_CONFIG_SET}
     return controller
 
 
@@ -207,40 +218,35 @@ def test_soft_hint_absent_below_threshold():
 
 
 # =========================================================================== #
-# T-06：抖动修复回归保护——3 个反馈/URL 输入框已从 shadcn ui.*（iframe，AppTest
-#       不可见）迁回原生 st.text_area/st.text_input（主文档，AppTest 可见可驱动）。
-#       D5 迁移注释曾断言「AppTest 看不到 iframe 组件」；原生化后本用例真实驱动
-#       这些 widget，既是抖动修复（单源治理：仅 key、无 default_value 双源）的结构性
-#       旁证，也是防止后续回退到 shadcn 双源反模式的回归护栏。键名一个都不能改，
-#       否则 session_state 流转与下游 resume_with 取值会断。
+# T-06：S2-12 后 revise 交互形态——一次性「修改计划」textarea 已替换为多轮对话面板
+#       （st.chat_input + st.chat_message + 原生按钮，AppTest 可见）。switch_repo 两个
+#       原生输入框（feedback / url）保留。本用例断言：
+#       1. 对话输入框 at.chat_input 非空（对话面板已挂载）；
+#       2. switch_repo 两个原生输入框键名不变（resume_with 取值依赖，不能改）；
+#       3. 旧 revise textarea 键名 _review_revise_feedback 已彻底删除（防回退）。
 # =========================================================================== #
 def test_feedback_widgets_are_native_and_appvisible():
-    """3 个输入框原生化后对 AppTest 可见 + 键名严格不变（抖动修复结构性旁证）。
-
-    D5 迁 shadcn 时这些框渲染在 iframe，AppTest 不可见（迁移注释 L5-7 明确断言）；
-    本次单源治理迁回原生 st.text_area/st.text_input 后，它们出现在主文档元素树，
-    AppTest 即可查询到。本用例断言「可见 + 键名快照」，是防止后续回退到 shadcn
-    双源反模式（抖动源）的回归护栏；至于「填值→点提交→断言 resume_with payload」
-    的完整链路，因 AppTest 不维护 expander 展开状态、二次 run 后 expander 内 widget
-    会从查询树消失（AppTest 框架对 expander 的已知限制），仍归 Playwright e2e
-    （tests/test_plan_review_e2e.py::test_e2e_revise_carries_feedback 等）。
-    """
+    """S2-12：对话面板 chat_input 可见 + switch_repo 键名快照 + 旧 revise 框已删。"""
     controller = _make_controller_mock(payload=_make_payload())
     at = _run(controller)
     assert not at.exception, at.exception
 
-    # 键名快照：迁原生后 widget 必须仍按这三个 key 暴露（AppTest 与下游取值依赖）。
-    # 任何键名变动都会断掉 session_state 流转与 resume_with 取值——此处守住。
+    # 1. 对话面板已挂载：st.chat_input 非空（AppTest 可见，避开 shadcn iframe 坑）。
+    assert len(at.chat_input) >= 1, "S2-12 对话面板的 st.chat_input 应可见且非空"
+
+    # 2. switch_repo 两个原生输入框键名不变（下游 resume_with 取值依赖）。
     ta_keys = {ta.key for ta in at.text_area}
     ti_keys = {ti.key for ti in at.text_input}
-    assert "_review_revise_feedback" in ta_keys, (
-        "revise 反馈框应为原生 st.text_area 且键名不变（shadcn iframe 时 AppTest 不可见）"
-    )
     assert "_review_switch_feedback" in ta_keys, (
         "switch 反馈框应为原生 st.text_area 且键名不变"
     )
     assert "_review_switch_repo_url" in ti_keys, (
         "switch 仓库 URL 框应为原生 st.text_input 且键名不变"
+    )
+
+    # 3. 旧 revise 一次性 textarea 已彻底删除（防回退到一次性提交反模式）。
+    assert "_review_revise_feedback" not in ta_keys, (
+        "S2-12 已删除一次性 revise textarea，不应再出现 _review_revise_feedback 键"
     )
 
 
@@ -298,3 +304,324 @@ def test_await_phase_approve_cancel_wait_until_interrupt_consumed():
     # 这些 kind 不看 revise_count（即便 payload 还在也不返回 to_review）。
     assert _phase(kind="approve", payload={"revise_count": 9}, baseline=0,
                   is_interrupted=True) == "waiting"
+
+
+# =========================================================================== #
+# S2-12：与规划模型多轮对话敲定修改方向 —— 纯函数直测 + AppTest 行为断言
+# =========================================================================== #
+def _plan_review_mod():
+    """用 importlib 取模块（避免 __init__ 显式 export 遮蔽子模块的已知坑）。"""
+    return importlib.import_module("ui.pages.plan_review")
+
+
+# --- 纯函数：_format_plan_context（满 / 空 / partial payload 不抛）------------- #
+def test_format_plan_context_full_payload():
+    """完整 payload → 返回字符串含三类 grounding 字段名，可被 json 解析。"""
+    import json as _json
+
+    mod = _plan_review_mod()
+    text = mod._format_plan_context(_make_payload())
+    assert isinstance(text, str)
+    parsed = _json.loads(text)
+    assert set(parsed.keys()) == {
+        "reproduction_plan", "paper_analysis_summary", "resource_info"
+    }
+    # grounding 子串：计划摘要 / 候选仓库 URL 应出现在序列化文本里。
+    assert "复现 HippoRAG" in text
+    assert "HippoRAG" in text
+
+
+def test_format_plan_context_none_and_partial_no_raise():
+    """None / 空 dict / partial payload 均不抛，且键齐全（防御式 .get）。"""
+    import json as _json
+
+    mod = _plan_review_mod()
+    for payload in (None, {}, {"reproduction_plan": {"plan_summary": "x"}}):
+        text = mod._format_plan_context(payload)
+        parsed = _json.loads(text)
+        assert set(parsed.keys()) == {
+            "reproduction_plan", "paper_analysis_summary", "resource_info"
+        }
+
+
+def test_format_plan_context_stable_for_same_payload():
+    """同一 payload 两次渲染字节级一致（sort_keys 保证，便于直测与缓存友好）。"""
+    mod = _plan_review_mod()
+    p = _make_payload()
+    assert mod._format_plan_context(p) == mod._format_plan_context(p)
+
+
+# --- 纯函数：_build_chat_system_prompt（含边界语 + grounding 子串）------------- #
+def test_build_chat_system_prompt_has_boundary_and_grounding():
+    """system prompt 含明确边界语（不要现在就重写完整计划/输出大段 JSON）+ grounding 子串。"""
+    mod = _plan_review_mod()
+    sp = mod._build_chat_system_prompt(_make_payload())
+    # 角色
+    assert "讨论助手" in sp
+    # 边界语（硬约束：对话不直接落计划）
+    assert "不要" in sp and ("完整复现计划" in sp or "完整计划" in sp)
+    assert "JSON" in sp or "代码" in sp
+    # grounding 注入：计划上下文段落 + 实际计划内容子串
+    assert "当前计划上下文" in sp
+    assert "复现 HippoRAG" in sp
+
+
+# --- 纯函数：_build_chat_messages（首条 SystemMessage + role↔类型）------------- #
+def test_build_chat_messages_shape_and_roles():
+    """首条 SystemMessage；历史 role==assistant→AIMessage、其余→HumanMessage。"""
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
+    mod = _plan_review_mod()
+    history = [
+        {"role": "user", "content": "把数据集换掉"},
+        {"role": "assistant", "content": "好的，换成哪个？"},
+        {"role": "user", "content": "2WikiMultiHopQA"},
+    ]
+    msgs = mod._build_chat_messages(_make_payload(), history)
+    assert isinstance(msgs[0], SystemMessage)
+    assert isinstance(msgs[1], HumanMessage) and msgs[1].content == "把数据集换掉"
+    assert isinstance(msgs[2], AIMessage) and msgs[2].content == "好的，换成哪个？"
+    assert isinstance(msgs[3], HumanMessage)
+    assert len(msgs) == 4
+
+
+def test_build_chat_messages_empty_history():
+    """空历史 → 仅一条 SystemMessage。"""
+    from langchain_core.messages import SystemMessage
+
+    mod = _plan_review_mod()
+    msgs = mod._build_chat_messages(_make_payload(), [])
+    assert len(msgs) == 1 and isinstance(msgs[0], SystemMessage)
+
+
+# --- 纯函数：_build_summary_messages（形态：System + 历史 + 末条 Human 指令）---- #
+def test_build_summary_messages_shape():
+    """总结消息：首条 SystemMessage、末条 HumanMessage（含「修改方向纪要」总结指令）。"""
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    mod = _plan_review_mod()
+    history = [
+        {"role": "user", "content": "把数据集换成 2WikiMultiHopQA"},
+        {"role": "assistant", "content": "明白"},
+    ]
+    msgs = mod._build_summary_messages(_make_payload(), history)
+    assert isinstance(msgs[0], SystemMessage)
+    assert isinstance(msgs[-1], HumanMessage)
+    assert "修改方向纪要" in msgs[-1].content
+    # 历史在中间被携带（System + 2 历史 + 1 指令 = 4）。
+    assert len(msgs) == 4
+
+
+# --- 纯函数：_sync_chat_thread（变 / 不变）------------------------------------- #
+def test_sync_chat_thread_clears_on_change():
+    """thread 变更 → 清空对话历史与计数；不变 → 保留。"""
+    import streamlit as st
+
+    mod = _plan_review_mod()
+    # 预置一段历史 + 计数，绑定 thread A
+    st.session_state["_review_chat_messages"] = [{"role": "user", "content": "x"}]
+    st.session_state["_review_chat_calls"] = 3
+    st.session_state["_review_chat_thread"] = "A"
+
+    # 同 thread → 不清空
+    mod._sync_chat_thread("A")
+    assert st.session_state["_review_chat_messages"] == [{"role": "user", "content": "x"}]
+    assert st.session_state["_review_chat_calls"] == 3
+
+    # 切到 thread B → 清空
+    mod._sync_chat_thread("B")
+    assert st.session_state["_review_chat_messages"] == []
+    assert st.session_state["_review_chat_calls"] == 0
+    assert st.session_state["_review_chat_thread"] == "B"
+
+
+# --- 副作用：_handle_chat_turn（patch llm，成功 append / 失败不污染）----------- #
+def test_handle_chat_turn_success_appends():
+    """成功路径：append user + assistant，计数 +1。"""
+    import streamlit as st
+
+    mod = _plan_review_mod()
+    st.session_state["_review_chat_messages"] = []
+    st.session_state["_review_chat_calls"] = 0
+
+    fake_llm = MagicMock()
+    fake_resp = MagicMock()
+    fake_resp.content = "我建议把数据集换成 2WikiMultiHopQA"
+    fake_llm.invoke.return_value = fake_resp
+
+    with patch.object(mod, "_build_planning_chat_llm", return_value=fake_llm):
+        mod._handle_chat_turn("换数据集", _make_payload(), _LLM_CONFIG_SET)
+
+    hist = st.session_state["_review_chat_messages"]
+    assert hist[0] == {"role": "user", "content": "换数据集"}
+    assert hist[1]["role"] == "assistant"
+    assert "2WikiMultiHopQA" in hist[1]["content"]
+    assert st.session_state["_review_chat_calls"] == 1
+
+
+def test_handle_chat_turn_failure_no_pollution():
+    """失败路径（invoke 抛错）：保留 user 输入、不追加坏 assistant、计数不变、不崩。"""
+    import streamlit as st
+
+    mod = _plan_review_mod()
+    st.session_state["_review_chat_messages"] = []
+    st.session_state["_review_chat_calls"] = 0
+
+    fake_llm = MagicMock()
+    fake_llm.invoke.side_effect = RuntimeError("LLM down")
+
+    with patch.object(mod, "_build_planning_chat_llm", return_value=fake_llm), \
+            patch.object(mod.st, "error") as mock_error:
+        mod._handle_chat_turn("换数据集", _make_payload(), _LLM_CONFIG_SET)
+
+    hist = st.session_state["_review_chat_messages"]
+    # user 输入仍在（可重试），但无 assistant 追加，计数不变。
+    assert hist == [{"role": "user", "content": "换数据集"}]
+    assert st.session_state["_review_chat_calls"] == 0
+    # 降级文案已展示（含「下一步」指引）。
+    assert mock_error.called
+
+
+def test_handle_chat_turn_empty_input_noop():
+    """空白输入 → 直接 return，不调 llm、不追加。"""
+    import streamlit as st
+
+    mod = _plan_review_mod()
+    st.session_state["_review_chat_messages"] = []
+    with patch.object(mod, "_build_planning_chat_llm") as mock_build:
+        mod._handle_chat_turn("   ", _make_payload(), _LLM_CONFIG_SET)
+    assert st.session_state["_review_chat_messages"] == []
+    mock_build.assert_not_called()
+
+
+# --- 副作用：_apply_chat_revision（patch llm，断言 resume_with + 清空 + awaiting）- #
+def test_apply_chat_revision_resumes_with_summary():
+    """敲定方向：模型产出纪要 → resume_with({"decision":"revise","user_feedback":纪要}) 一次
+    + 历史清空 + _KEY_AWAITING 置 True。"""
+    import streamlit as st
+
+    mod = _plan_review_mod()
+    st.session_state["_review_chat_messages"] = [
+        {"role": "user", "content": "把数据集换成 2WikiMultiHopQA"},
+        {"role": "assistant", "content": "好的"},
+    ]
+    st.session_state["_review_chat_calls"] = 1
+    st.session_state["_review_awaiting"] = False
+
+    summary_text = "修改方向：将数据集从 MuSiQue 更换为 2WikiMultiHopQA，并同步调整建图步骤。"
+    fake_llm = MagicMock()
+    fake_resp = MagicMock()
+    fake_resp.content = summary_text
+    fake_llm.invoke.return_value = fake_resp
+
+    controller = MagicMock()
+    with patch.object(mod, "_build_planning_chat_llm", return_value=fake_llm), \
+            patch.object(mod.st, "rerun"):
+        mod._apply_chat_revision(controller, "tid-1", _make_payload(), _LLM_CONFIG_SET)
+
+    # resume_with 恰好一次，payload 为 revise + 模型纪要。
+    controller.resume_with.assert_called_once_with(
+        "tid-1", {"decision": "revise", "user_feedback": summary_text}
+    )
+    # 历史清空 + awaiting 置 True。
+    assert st.session_state["_review_chat_messages"] == []
+    assert st.session_state["_review_chat_calls"] == 0
+    assert st.session_state["_review_awaiting"] is True
+    assert st.session_state["_review_await_kind"] == "revise"
+
+
+def test_apply_chat_revision_summary_failure_falls_back_to_concat():
+    """总结失败 → 退化用拼接用户发言作 user_feedback，仍 resume_with 一次、不崩。"""
+    import streamlit as st
+
+    mod = _plan_review_mod()
+    st.session_state["_review_chat_messages"] = [
+        {"role": "user", "content": "第一条意见"},
+        {"role": "assistant", "content": "好的"},
+        {"role": "user", "content": "第二条意见"},
+    ]
+    st.session_state["_review_awaiting"] = False
+
+    fake_llm = MagicMock()
+    fake_llm.invoke.side_effect = RuntimeError("summary boom")
+
+    controller = MagicMock()
+    with patch.object(mod, "_build_planning_chat_llm", return_value=fake_llm), \
+            patch.object(mod.st, "rerun"):
+        mod._apply_chat_revision(controller, "tid-2", _make_payload(), _LLM_CONFIG_SET)
+
+    controller.resume_with.assert_called_once()
+    args, _ = controller.resume_with.call_args
+    assert args[0] == "tid-2"
+    decision = args[1]
+    assert decision["decision"] == "revise"
+    # 退化拼接了两条用户发言。
+    assert "第一条意见" in decision["user_feedback"]
+    assert "第二条意见" in decision["user_feedback"]
+    assert st.session_state["_review_awaiting"] is True
+
+
+# --- AppTest：对话面板「确定方案」按钮空对话 disabled、有历史 enabled ----------- #
+_APP_SCRIPT_CHAT = """
+import streamlit as st
+st.session_state.setdefault("thread_id", "task-review-chat")
+st.session_state.setdefault("current_page", "review")
+from ui.pages.plan_review import render
+render()
+"""
+
+
+def test_apply_button_disabled_on_empty_chat():
+    """空对话 → 「确定方案并重新生成计划」按钮 disabled is True。"""
+    controller = _make_controller_mock(payload=_make_payload())
+    with patch("app._get_controller", return_value=controller):
+        at = AppTest.from_string(_APP_SCRIPT_CHAT)
+        at.run()
+    assert not at.exception, at.exception
+    apply_btns = [b for b in at.button if b.key == "btn_apply_chat_revision"]
+    assert len(apply_btns) == 1, "应渲染「确定方案并重新生成计划」按钮"
+    assert apply_btns[0].disabled is True, "空对话时该按钮必须 disabled"
+
+
+def test_apply_button_enabled_with_history():
+    """预置对话历史 → 按钮 enabled（disabled is False）。"""
+    script = """
+import streamlit as st
+st.session_state.setdefault("thread_id", "task-review-chat")
+st.session_state.setdefault("current_page", "review")
+st.session_state["_review_chat_messages"] = [
+    {"role": "user", "content": "换数据集"},
+    {"role": "assistant", "content": "好的"},
+]
+st.session_state["_review_chat_thread"] = "task-review-chat"
+from ui.pages.plan_review import render
+render()
+"""
+    controller = _make_controller_mock(payload=_make_payload())
+    with patch("app._get_controller", return_value=controller):
+        at = AppTest.from_string(script)
+        at.run()
+    assert not at.exception, at.exception
+    apply_btns = [b for b in at.button if b.key == "btn_apply_chat_revision"]
+    assert len(apply_btns) == 1
+    assert apply_btns[0].disabled is False, "预置对话历史后该按钮应 enabled"
+
+
+def test_chat_calls_shown_in_info_bar():
+    """info-bar 增列「本轮对话已消耗 X 次调用」（session 计数器）。"""
+    script = """
+import streamlit as st
+st.session_state.setdefault("thread_id", "task-review-chat")
+st.session_state.setdefault("current_page", "review")
+st.session_state["_review_chat_thread"] = "task-review-chat"
+st.session_state["_review_chat_calls"] = 2
+from ui.pages.plan_review import render
+render()
+"""
+    controller = _make_controller_mock(payload=_make_payload())
+    with patch("app._get_controller", return_value=controller):
+        at = AppTest.from_string(script)
+        at.run()
+    assert not at.exception, at.exception
+    text = _collect_text(at)
+    assert "本轮对话已消耗 2 次调用" in text

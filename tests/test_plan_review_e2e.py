@@ -300,13 +300,36 @@ def test_e2e_code_only(page, rec_file):
     assert rec["decision"] == {"decision": "code_only"}
 
 
-def test_e2e_revise_carries_feedback(page, rec_file):
-    """展开「✏️ 修改计划」→ textarea 填字 → 点「提交修改」→ decision=revise 带 user_feedback。"""
+def test_e2e_revise_via_fallback_input(page, rec_file):
+    """S2-12：原「✏️ 修改计划」一次性 textarea 已替换为多轮对话面板（_render_revise_chat）。
+
+    对话轮次会真实调 planning 模型（harness 无凭证、会失败降级），故 e2e 走面板内的
+    **轻量兜底输入框**（直接填一句方向 → resume_with，不经模型，路径确定可断言）：
+    填「一句话修改方向（兜底）」原生 text_input → 点原生「直接用这句话重新生成计划」按钮
+    → decision=revise 带 user_feedback。这条同时覆盖 AC-S2-18 的兜底 revise 能力。
+    """
     fb = "请把数据集换成 2WikiMultiHopQA"
-    _expand_streamlit_expander(page, "✏️ 修改计划")
-    assert _fill_textarea_in_frames(page, fb), "未能在任何 frame 填入 revise textarea"
+    # 对话面板 expander 默认展开（expanded=True），兜底输入框为原生 text_input（主文档）。
+    # 用主文档 input 角色填值（兜底框 placeholder 含「2WikiMultiHopQA」示例，按 label 定位）。
+    filled = False
+    deadline = time.time() + 15.0
+    while time.time() < deadline and not filled:
+        try:
+            box = page.get_by_role("textbox", name="一句话修改方向（兜底）").first
+            box.fill(fb, timeout=3000)
+            filled = True
+        except Exception:
+            # 兜底：主文档里第一个文本输入框（chat_input 是 textarea，不会被这里命中）。
+            try:
+                inp = page.main_frame.query_selector_all("input[type='text']")
+                if inp:
+                    inp[-1].fill(fb)
+                    filled = True
+            except Exception:
+                time.sleep(0.5)
+    assert filled, "未能在主文档填入兜底修改方向输入框"
     time.sleep(1.0)
-    assert _click_in_frame(page, "提交修改"), "未找到/点不到「提交修改」按钮"
+    assert _click_in_main(page, "直接用这句话重新生成计划"), "未找到/点不到兜底重新生成按钮"
     rec = _wait_rec(
         rec_file,
         lambda r: r.get("m") == "resume_with"
@@ -322,38 +345,53 @@ def test_e2e_switch_repo_carries_feedback_and_url(page, rec_file):
     reason = "官方仓库缺训练脚本"
     new_url = "https://github.com/alt/HippoRAG-repro"
     _expand_streamlit_expander(page, "🔁 切换仓库")
-    # 该 expander 内含一个 textarea（feedback）和一个 input（url）。
+    # 该 expander 内含一个 textarea（feedback，原生 st.text_area，aria-label「修改意见」）
+    # 和一个 input（url）。S2-12 后主文档还多了一个 st.chat_input 的 textarea（对话面板），
+    # 故不能再用「第一个空 textarea」粗暴定位——必须按 label「修改意见」精确命中 switch
+    # 反馈框，否则会误填到 chat_input。
     filled_ta = False
     filled_input = False
-    for fr in page.frames:
-        try:
-            tas = fr.query_selector_all("textarea")
-        except Exception:
-            tas = []
-        for ta in tas:
+    try:
+        ta = page.get_by_role("textbox", name="修改意见").first
+        ta.fill(reason, timeout=5000)
+        filled_ta = True
+    except Exception:
+        # 兜底：遍历 frame 找含「修改意见」label 的 textarea（仍排除 chat_input）。
+        for fr in page.frames:
             try:
-                if (ta.input_value() or "") == "":
+                tas = fr.query_selector_all("textarea[aria-label='修改意见']")
+            except Exception:
+                tas = []
+            for ta in tas:
+                try:
                     ta.fill(reason)
                     filled_ta = True
                     break
-            except Exception:
-                continue
-        if filled_ta:
-            break
-    for fr in page.frames:
-        try:
-            inputs = fr.query_selector_all("input[type='text'], input:not([type])")
-        except Exception:
-            inputs = []
-        for inp in inputs:
-            try:
-                inp.fill(new_url)
-                filled_input = True
+                except Exception:
+                    continue
+            if filled_ta:
                 break
+    # URL 框按 label「新仓库 URL」精确命中——S2-12 后主文档另有兜底输入框
+    # 「一句话修改方向（兜底）」，不能再用「第一个 text input」粗暴定位。
+    try:
+        url_box = page.get_by_role("textbox", name="新仓库 URL").first
+        url_box.fill(new_url, timeout=5000)
+        filled_input = True
+    except Exception:
+        for fr in page.frames:
+            try:
+                inputs = fr.query_selector_all("input[aria-label='新仓库 URL']")
             except Exception:
-                continue
-        if filled_input:
-            break
+                inputs = []
+            for inp in inputs:
+                try:
+                    inp.fill(new_url)
+                    filled_input = True
+                    break
+                except Exception:
+                    continue
+            if filled_input:
+                break
     assert filled_ta, "未能填 switch feedback textarea"
     assert filled_input, "未能填 switch repo url input"
     time.sleep(1.0)
