@@ -1161,6 +1161,285 @@ if st.session_state.get("_review_cancel_confirm"):
 
 ---
 
+### 2.13 `core/nodes/planning.py` 用户提供仓库统一抓取分析通道（S2-13）
+
+**文件路径**：`core/nodes/planning.py`（主体改造）+ `core/nodes/_repo_scoring.py`（新增，评分口径共享）+ `ui/pages/plan_review.py`（switch_repo 表单失败重填）
+**变更类型**：planning ReAct 工具集 +1（`git_clone_and_analyze`）；`switch_repo` 决策分支改为「记录待抓取 URL → self-loop 重入 → ReAct 内抓取打分」；新增 `_planning_pending_repo_url` / `_planning_switch_failed` 两个内部 state 通道；评分权重段落抽成共享常量。
+**全局架构参考**：PRD §2.13 / AC-S2-20~26 / Q-S2-06~11；本架构 §2.2（git_tools）、§2.3（resource_scout 评分口径）、§2.4（planning 节点）、§4.5（Prompt Cache）、§4.9（节点级 LLM 路由）。
+
+#### 2.13.1 统一通道总体设计（裁定：两入口归并为同一条 ReAct 重规划通道）
+
+**问题**：两入口缺陷同源（用户提供的仓库没走真正 clone+本地分析+同口径打分），但二者当前的工程形态完全不同：
+
+- 入口 a（对话/revise 贴链接）：本就走 `revise` → self-loop 重入 planning → ReAct 子图重规划（已有重 IO 容器）；
+- 入口 b（switch_repo）：当前是 `planning()` resume 路由里的**同步纯函数分支** `_switch_selected_repo`（planning.py:409-457），只做内存级 RepoInfo 构造，零 IO。
+
+若把入口 b 的真实抓取分析（clone 可能 60s + 一次模型打分）塞回 resume 路由分支同步执行，会让 `planning()` 节点函数体在「interrupt 返回后、return 前」直接阻塞 60s+，破坏 §4.3 已确立的「工作线程跑完一次 invoke 即退出、resume 起新 worker」的轻量生命周期模型，且与 ReAct 子图共用的同口径打分逻辑无法复用（resume 路由分支拿不到 ReAct 上下文）。
+
+**裁定（推荐方案 A：归并为同一条 ReAct 重规划通道）**：
+
+`switch_repo` 决策分支**不再**在 resume 路由里同步抓取，改为与 `revise` 完全对称——只「记录用户指定的待抓取 URL」到 state，然后走 self-loop 重入 planning，由**带 `git_clone_and_analyze` 工具的 ReAct agent 在重规划过程中统一处理 clone + 本地分析 + 同口径打分**。两入口最终都收敛到同一处「ReAct 子图内 git_clone_and_analyze → `_map_planning_result` 合并进 repos」逻辑。
+
+| 方案 | 描述 | 优点 | 缺点 | 裁定 |
+|---|---|---|---|---|
+| **A. switch_repo 也走 self-loop 重入 ReAct（推荐）** | resume 路由分支只写 `_planning_pending_repo_url`，不抓取；重 IO 全部发生在重入后的 ReAct 子图内（与 revise 同一容器） | 两入口真正共用一条通道；重 IO 不进 resume 路由分支、不阻塞 `planning()` 返回；同口径打分天然复用 ReAct + 共享评分常量；clone 耗时落在已有 awaiting 轮询态内（PRD §2.13 / AC-S2-26 明确要求复用）；switch_repo 已有的「重规划后旧讨论失效」清理逻辑（plan_review.py:738-740）不变 | switch_repo 从「确定性命中既有候选」变成「交模型在 prompt 里被强引导抓取」，需 system prompt 对 pending_url 给强指令（见 2.13.3）；模型可能不服从 → 节点层 backfill 兜底（见 2.13.4） | **采纳** |
+| B. switch_repo 仍走独立同步抓取路径 | resume 路由分支内直接调 `git_clone_and_analyze` 原子函数 + 独立打分 | 抓取行为确定（不依赖模型服从度） | `planning()` 节点函数体阻塞 clone 60s+；需在节点层再实现一份打分（与 ReAct 内打分口径易漂移，违背 Q-S2-09「同一逻辑」）；resume 分支拿不到 LLM 评分上下文，要么退化为确定性公式（与 Maria 拍板「模型主观打分」冲突），要么额外起一次裸 LLM 调用 | 否决 |
+| C. 入口 a 走 ReAct、入口 b 走独立路径（不归并） | 维持两套 | 改动面小 | 直接违反 Q-S2-06 产品裁定「归并为同一通道，两入口对同一 URL 处理结果一致」 | 否决 |
+
+**A 方案数据流（两入口收敛）**：
+
+```
+入口 a（对话/revise 贴链接）                入口 b（🔁 切换仓库填 URL）
+  UI: resume({decision:revise,              UI: resume({decision:switch_repo,
+       user_feedback:含URL纪要})                  new_repo_url:URL, user_feedback})
+        |                                          |
+        v                                          v
+  planning() resume 路由                     planning() resume 路由
+  revise 分支：                              switch_repo 分支（改造后）：
+    _planning_user_feedback = 纪要             _planning_user_feedback = feedback
+    _planning_revise_count += 1                _planning_revise_count += 1
+                                               _planning_pending_repo_url = URL  ← 新增
+        |                                          |
+        +--------------------+---------------------+
+                             v
+                graph self-loop 重入 planning 节点
+                             v
+                _planning_react(state) 跑 ReAct 子图
+                  - build_context 把 user_feedback + pending_repo_url 注入 HumanMessage
+                  - system prompt 引导：feedback 含链接 / 存在 pending_url → 调
+                    git_clone_and_analyze(url) 抓取分析 → 给同口径 quality_score
+                             v
+                _map_planning_result(result, state, react_messages)
+                  - 合并用户提供仓库进 resource_info.repos（去重 + 默认选中）  ← 新增
+                  - 工具历史 backfill 兜底（模型漏写 repos 时）              ← 新增
+                  - clone 失败：不入候选 + node_errors(degraded) + 标记       ← 新增
+                             v
+                interrupt(payload) 回审核页（含真实 quality_score / 失败重填标记）
+```
+
+**关键边界**：本改造**只在 `revise` / `switch_repo` 两个既有分支内增强**，不新增决策类型、不动 interrupt/resume 契约、不动 `_route_after_planning` 三路条件边（revise/switch_repo 仍走 `"self"`）。
+
+#### 2.13.2 planning 节点工具集扩展 + Prompt Cache 影响评估
+
+**接入方式**（§2.4.2 `_planning_react` 的 `get_tools` lambda 增项）：
+
+```python
+from core.tools.git_tools import (
+    make_check_url_reachable_tool,
+    make_git_clone_and_analyze_tool,   # S2-13 新增导入
+)
+
+_planning_react = _make_react_wrapper(
+    node_name=NODE_NAME,
+    ...
+    get_tools=lambda state: [
+        read_section_tool(),
+        get_paper_structure_tool(),
+        web_search_tool(),
+        make_check_url_reachable_tool(),
+        make_git_clone_and_analyze_tool(),   # S2-13 新增（resource_scout 同款工厂）
+    ],
+    ...
+)
+```
+
+**Prompt Cache 前缀字节稳定影响评估（裁定：无破坏）**：
+
+- §4.5 已确立的字节级幂等约束保护对象是 **message 序列前缀字节**（SystemMessage 主体 `_PLANNING_SYSTEM_PROMPT_BODY` + HumanMessage 上下文）。工具 schema 是否进 prompt 前缀取决于 `react_base._make_react_wrapper` 把工具列表绑定到 LLM 的方式：LangChain `bind_tools` 把工具 schema 放进 OpenAI 请求 body 的独立 `tools` 字段，**不拼进 message 文本前缀**——这与 §4.9 已论证的「model 字段走 body 独立字段、不影响 prefix bytes」同理。
+- 即便某些 provider 把 tools 纳入 cache key 计算，本工具集对**所有论文、所有 revise 轮次字节级一致**（工厂函数无参、schema 静态），跨论文/跨轮次幂等不破坏；resource_scout 已带此工具且 sp2 已通过 AC-S2-08 回归，可直接参照。
+- **唯一需要在 system prompt 主体追加的引导措辞**（见 2.13.3）会改变 `_PLANNING_SYSTEM_PROMPT_BODY` 字节。**这是一次性 breaking**：按 §4.8 冻结纪律，该常量改定后即重新进入冻结期；改动后必须按 §5.3 / AC-S2-08 跑一次 planning 维度的 cache 回归对照（固定 arxiv_id 连跑 planning 重规划 ×3，对照改动前后），归档 `docs/sprint2/test-reports/`。**落地约束：新增引导段落必须是 module-level 静态字节，不含任何 pending_url / feedback 动态变量**（动态部分一律走 HumanMessage 通道，见 2.13.3）。
+
+#### 2.13.3 Q-S2-09 评分实现细节（裁定：ReAct 内随计划自然产出打分 + 评分口径抽共享常量）
+
+**裁定 (a)：在 planning ReAct 内让模型对该仓库自然产出 `quality_score`（随重规划一起出），不做独立的「单仓库打分」LLM 调用。**
+
+| 候选 | 描述 | 裁定 |
+|---|---|---|
+| **(a) ReAct 内随计划产出打分（推荐）** | 模型调 `git_clone_and_analyze` 拿到本地指标后，在同一次 ReAct 输出的 `<result>.repos[]` 中给该仓库 `quality_score`（与 resource_scout 完全相同的产出形态） | **采纳**：零额外 LLM 调用（不加 token 负担、不叠加 MAX_TOTAL_LLM_CALLS 压力）；与 resource_scout「模型选候选时打分」字面同构（Q-S2-09「同一逻辑」最直接落地）；评分上下文（本地指标 + is_official 判定）在 ReAct 内天然齐备 |
+| (b) 独立一次「单仓库打分」LLM 调用 | 抓取后另起一次裸 LLM 调用专门打分 | 否决：多一次 LLM 调用、口径需另写一份 prompt（易与 resource_scout 漂移）、与 §4.9 节点级路由不自然耦合 |
+
+**裁定 (b)：把 resource_scout 的评分权重段落抽成共享常量，供两节点复用，保证口径字节级一致。**
+
+新建 `core/nodes/_repo_scoring.py`（节点层共享 helper，避免 planning ↔ resource_scout 互相 import 造成环依赖）：
+
+```python
+# core/nodes/_repo_scoring.py（S2-13 新增）
+"""仓库质量评分口径的单一事实源（Q-S2-09：planning 与 resource_scout 同口径）。
+
+只放「评分 prompt 段落 + 权重」这一份共享常量，不放节点业务逻辑，避免
+planning <-> resource_scout 互相 import 形成环依赖（两节点都只依赖本模块）。
+"""
+
+# 同口径质量评分段落。**module-level 静态常量，禁止动态拼接**
+# （Prompt Cache 字节冻结约束，§4.5 / §4.8）。
+REPO_QUALITY_SCORING_SECTION = """【质量评分（给每个克隆成功的仓库打 0.0~1.0 分，写入 RepoInfo.quality_score）】
+权重建议（最终自由判断）：
+- is_official（owner 与 paper_meta.authors 重叠则判定 True）-- 权重 0.35
+- last_commit_date（近半年；为 None 表示读不到数据，按缺失处理不加分，勿当最旧）-- 权重 0.20
+- commit_count_recent（>=10 加分；为 None 表示读不到数据，用 is None 判缺失，勿当 0 活跃）-- 权重 0.15
+- has_readme + has_requirements -- 权重 0.15
+- dir_structure 含 src/ models/ train.py 等 ML 标准目录 -- 权重 0.15
+"""
+```
+
+落地：
+- `resource_scout.py` 把 `_RESOURCE_SCOUT_SYSTEM_PROMPT_BODY` 中评分文字（L98-104）**替换为引用** `REPO_QUALITY_SCORING_SECTION`（拼接仍在 module-level，保持静态常量；若字节有微调则按 §4.8 跑回归）。
+- `planning.py` 的 `_PLANNING_SYSTEM_PROMPT_BODY` 在 code_strategy 章节后追加一段「用户提供仓库的处理 + 同口径打分」引导，复用同一 `REPO_QUALITY_SCORING_SECTION`：
+
+```
+【用户提供的仓库（来自修改意见 / 切换仓库）】
+- 若 user_feedback 中出现仓库链接，或上下文 pending_repo_url 字段非空：
+  先用 check_url_reachable_tool 校验，再用 git_clone_and_analyze(url) 克隆并分析；
+- 对成功克隆的用户提供仓库，按下方【质量评分】同一套权重给出 quality_score，
+  作为一条候选放进 <result>.repos（与自动候选同列，可比较），并据其更新 code_strategy；
+- 链接不可达 / 克隆失败 / 与本论文明显不相关时，不要把它放进 repos，
+  在 plan_summary 中说明「该仓库未能克隆分析，建议核对链接」；
+- stars / forks 始终留空（null），不要捏造。
+{REPO_QUALITY_SCORING_SECTION}
+```
+
+**评分逻辑模块归属**：评分**主观判断由模型在 ReAct 内完成**（无确定性 Python 打分函数）；`_repo_scoring.py` 只承载「评分口径常量」这一份共享事实源。两节点不引入任何 Python 评分算法，确保口径完全由同一段 prompt 文字驱动（AC-S2-22 可比较性的根本保证）。
+
+#### 2.13.4 入口 a / 入口 b 的节点层数据流（合并进 repos）
+
+**核心裁定：复用 `_backfill_repos_from_tools` 范式扫工具历史，但升级为「合并」而非「仅空时回填」。**
+
+resource_scout 的 `_backfill_repos_from_tools`（resource_scout.py:331-414）当前语义是「仅当 `payload.repos` 为空时才从工具历史回填」。planning 场景不同：重规划时 `result.repos` 通常**非空**（含已有自动候选），但用户提供仓库可能被模型写进 repos、也可能只在工具历史里（漏写）。因此 planning 侧新增 `_merge_user_repos_from_tools`（**完全沿用其 ToolMessage 解析 + 失败过滤 + 去重范式**，BUG-S1-03 治理一致）：
+
+`_map_planning_result` 增加一个步骤（在 `_build_reproduction_plan` 之后、return 之前）：
+
+1. **扫工具历史**：从 `react_messages` 取所有 `name == git_clone_and_analyze` 的 ToolMessage（复用 resource_scout `_parse_tool_content` + 失败过滤：跳过 `success==False` / 缺 `local_path` / `Error in`/`tool ` 前缀）。
+2. **合并进 resource_info.repos（去重 + 默认选中）**：
+   - 取当前 `state["resource_info"]`（重规划时已有自动候选）作为基底；
+   - 对每条成功的用户提供仓库 RepoInfo：按**规范化 URL** 与既有 `repos` 比对——命中则不重复加入、直接选中既有候选（沿用 `_switch_selected_repo` 命中语义）；未命中则 `source` 标记 `user_provided`（见 2.13.7）、加入 `repos`、并设为 `selected_repo`（默认选中，Q-S2-07）；
+   - `quality_score` 取**模型在 `result.repos[]` 中对该 URL 给出的同口径分**；若模型把仓库放进工具历史但漏写进 `result.repos`（无 LLM 评分），则按 resource_scout backfill 同款给 `_BACKFILL_DEFAULT_QUALITY` 兜底值并打 WARNING（非静默，AC-S2-22 仍落同一量纲）。
+3. **更新 code_strategy**：合并入候选并选中后，若 `code_strategy == "from_scratch"` 但现在有了选中仓库，纠正为 `use_repo`（复用现有 `_VALID_STRATEGIES` 校验）。
+4. **回写 `resource_info`** 到返回 dict（让 self-loop 重入后的 payload 携带真实 quality_score 回审核页）。
+
+**规范化 URL 去重 helper**（planning.py 新增模块级纯函数，供 switch_repo 命中判定 + 合并去重共用）：
+
+```python
+def _normalize_repo_url(url: str) -> str:
+    """规范化仓库 URL 用于去重比对（大小写、尾斜杠、.git 后缀、协议）。
+
+    归一规则（保守，仅消除明显等价差异，不做语义解析）：
+    - strip + 去尾部 "/" 与 ".git"；scheme/host 小写化；比对时整体 .lower()。
+    空输入返回 ""。
+    """
+```
+
+`_switch_selected_repo` 当前命中判定（planning.py:426）升级为 `_normalize_repo_url(repo_url) == _normalize_repo_url(url)`。
+
+#### 2.13.5 Q-S2-10 强制重填的端到端实现（裁定：interrupt payload 带 switch 失败标记）
+
+**这是本需求最需要架构裁定的 UX 链路**，因为它和现有 awaiting 轮询自愈机制（plan_review.py:795-822）有强耦合。
+
+**问题根因**：`_await_phase`（plan_review.py:76-98）对 `switch_repo` 的「重规划完成」判定**唯一依据是 `payload.revise_count > baseline`**。而改造后 switch_repo 分支无论 clone 成功失败都会 `_planning_revise_count += 1`（走 self-loop 必然触发一次重规划）：
+
+- clone **成功**：revise_count 前进 → `_await_phase` 返回 `to_review` → 回审核页展示带真实 quality_score 的新候选。正确。
+- clone **失败**：revise_count 同样前进（重规划照常完成，只是没加入新仓库）→ 同样返回 `to_review` → 回审核页。此时若 UI 不知道「上次 switch 失败」，用户只会看到「仓库没变、没有任何提示」，无法满足 Q-S2-10「明确提示 + 要求重新填写」。
+
+**裁定：在 interrupt payload 中新增 `switch_repo_failed` 标记字段，UI 据此在 switch_repo 表单内展示强制重填提示。**
+
+| 候选 | 描述 | 裁定 |
+|---|---|---|
+| **A. interrupt payload 带 `switch_repo_failed` 标记（推荐）** | planning 节点在 `_map_planning_result` 检测到「本轮存在 pending_repo_url 但未成功合并任何用户仓库」时，写 state 标记 `_planning_switch_failed=True`；下次 `planning()` 构造 interrupt payload 时读出放进 payload `switch_repo_failed`；UI switch_repo expander 据此 `st.error` 并保持展开 | **采纳**：与现有「payload 一次性带全 UI 渲染字段」范式（§4.2 方案 B）一致；不破坏 awaiting 轮询（仍靠 revise_count 前进判 to_review，UI 回来后再读 payload 标记展示提示）；标记随下一次重规划自然清除 |
+| B. UI 比对 repos 长度/selected_repo 变化判定失败 | 不加 payload 字段，UI 自比对 | 否决：需缓存上轮快照跨 rerun 比对，脆弱；命中既有候选与失败无法区分 |
+| C. node_errors 轮询判定 | UI 扫 payload.node_errors 找失败记录 | 否决：node_errors 是滚动 5 条摘要、跨轮累积，无法精确归因本轮 |
+
+**节点层信号与 node_errors（沿用 BUG-S1-02 非静默治理）**：
+- clone 失败由 `git_clone_and_analyze` 工厂层捕获 `TransientError`/`PermanentError`（git_tools.py:432-435 已实现）返回 `{"success": False, "error": ...}`，**不抛异常、不崩 ReAct 子图**。
+- `_map_planning_result` 合并步骤检测到「pending_repo_url 非空 + 工具历史中该 URL 对应 ToolMessage `success==False` 或根本没调用」时：写 `node_errors.append(make_node_error("planning", "degraded", "用户提供仓库克隆/分析失败: <url>", ...))` + `degraded_nodes` + `logger.warning`；并设 `_planning_switch_failed=True`（仅入口 b；入口 a 失败不设此标记，按「无可用新仓库」继续，AC-S2-25②）。
+- **入口 b 强制重填的「不写 0.0 / 不入候选 / 不留失败卡」**：合并步骤对失败 URL **直接跳过**（不构造任何 RepoInfo、不动 repos / selected_repo），`resource_info` 保持重规划前的候选状态。彻底消除现状 `_switch_selected_repo` 造 `quality_score=0.0` 占位卡的缺陷。
+
+**UI 层（plan_review.py switch_repo expander，L711-741）**：
+- 渲染时读 `payload.get("switch_repo_failed")`，为 True 时：expander `expanded=True` + `st.error("仓库克隆/分析失败，请核对链接或换一个；也可改选下方其它候选仓库")` + 清空 `_KEY_SWITCH_REPO_URL`（让用户重填）。
+- 用户重填提交后走同一 switch_repo 路径（标记在下一轮重规划由节点清除）。
+- 不破坏 awaiting 自愈：失败时 revise_count 仍前进 → `_await_phase` 判 `to_review` 正常回审核页 → 此时读到 `switch_repo_failed` 标记展示提示。**这正是依赖现有机制、不引入新轮询态的关键**。
+
+#### 2.13.6 Q-S2-11 耗时/超时/节流（裁定）
+
+| 子问题 | 裁定 |
+|---|---|
+| **spinner 文案是否区分「正在克隆仓库…」与「正在重新规划…」** | **不强制区分**；clone 发生在 ReAct 子图内部、对 UI 不可见（要区分需 ReAct 回写阶段到 checkpoint，破坏 §4.3 轮询模型）。**轻量增强（建议采纳）**：当 `kind == "switch_repo"` 时 spinner 文案改为「正在克隆并分析仓库、重新生成计划……」（按决策类型静态切换，零架构成本，给用户「这次更慢」的预期）。 |
+| **§3.1「planning revise ≤1 分钟」性能指标是否放宽** | **放宽为：含用户提供仓库 clone 的重规划 ≤2 分钟**（与 resource_scout「含 1~2 次 git clone ≤2 分钟」对齐）；纯 revise（无 clone）维持 ≤1 分钟。 |
+| **多个 URL 连续提供 / 单次重规划 clone 数上限** | **单次重规划 clone 用户提供仓库软上限 = 3**，由 system prompt 引导（不硬计数拦截，否则等于变相正则识别，违反硬约束 2）。git_tools 已有「同 URL 重复 clone 跳过」+ 浅克隆 + 60s 超时 + 3 次指数退避，最坏耗时在 2 分钟内可控；多轮提供天然被 self-loop 拆分。 |
+
+#### 2.13.7 state / RepoInfo 契约
+
+**RepoInfo.source 取值约定**：用户提供仓库**真实抓取成功后** `source` 标记为 `"user_provided"`（统一覆盖入口 a/b，区别于自动发现的 `"git_clone"` / `"pwc"` / `"web_search"`）。`_merge_user_repos_from_tools` 合并时把工具产出的 RepoInfo（`source="git_clone"`）改写为 `"user_provided"`。`"user_switch"` 占位语义随 `_switch_selected_repo` 改造一并废弃（不再造占位 RepoInfo）。
+
+**新增 state 字段（需 GlobalState channel 声明，吸取 analysis_notes 通道教训）**：
+
+```python
+# core/state.py GlobalState 新增（S2-13；下划线前缀=内部字段）
+# 必须声明为 GlobalState 通道，否则节点写入会被 LangGraph 静默丢弃（B2/B3 实证）。
+_planning_pending_repo_url: Optional[str]   # switch_repo 待 ReAct 抓取的 URL（消费后清空）
+_planning_switch_failed: bool               # 上一轮 switch_repo 抓取失败标记（UI 强制重填用）
+```
+
+- `create_initial_state` 显式赋默认值 `None` / `False`（与 `_planning_revise_count` 同处补）。
+- 生命周期：switch_repo resume 分支写 `_planning_pending_repo_url = new_repo_url`；`build_context` 把它注入 HumanMessage（**不进 system prompt**，保持 §4.5 字节稳定）；`_map_planning_result` 合并步骤消费后——成功→清 `_planning_pending_repo_url=None` + `_planning_switch_failed=False`；失败→清 url + 置 `_planning_switch_failed=True`。
+- **入口 a 不写 pending_url**：入口 a 的 URL 在 user_feedback 文本里，由模型识别（硬约束 2）；pending_url 仅服务入口 b 的「确定性告诉模型这个 URL 要抓」。
+
+`build_context` 改造（planning.py:372-376）增第 5 参 `state.get("_planning_pending_repo_url")`；`_format_planning_context` 增 `pending_repo_url` 形参，非空时写入 payload 的 `pending_repo_url` 键（HumanMessage 通道）。
+
+**RepoInfo 字段填充责任**：`url`（工厂回写）、`source="user_provided"`（合并步骤改写）、本地指标（`analyze_local_repo` 填）、`is_official`（模型 ReAct 内按 owner vs authors 判定）、`quality_score`（模型同口径打分）、`stars/forks=None`（恒空，AC-S2-23）、`local_path`（工厂填）。
+
+#### 2.13.8 兼容性与治理范式
+
+- **interrupt/resume 契约不变**：5 类决策、payload 既有键全保留，仅**追加** `switch_repo_failed` 一个可选键（UI 用 `.get` 容错）。
+- **5 类决策路由不变**：`_route_after_planning` 三路条件边（self/next/end）不动；revise/switch_repo 仍走 `"self"`。
+- **revise 无上限不变**：`_planning_revise_count` 语义仍是透明展示 + N≥5 软提示，不加硬拦截。
+- **sp1+sp2 测试基线**：只追加 planning 工具集 1 项 + 2 个 Optional state 通道 + 评分常量抽取，不改 `create_llm`/`react_base` 签名、不改 resource_scout 节点函数签名。`_switch_selected_repo` 由「造占位 RepoInfo」改为「只命中既有候选、未命中交 ReAct」——现有针对它的单测（造 user_switch 占位）需同步改造（见 2.13.10）。
+- **BUG-S1-02（工具序列化禁 str(dict)）**：`git_clone_and_analyze` 工厂已用 `_serialize_tool_result`（git_tools.py:431），合并解析复用 resource_scout `_parse_tool_content`，全程 JSON。
+- **BUG-S1-03（3 参签名 + 工具历史回填）**：`_map_planning_result` 已是 3 参签名（planning.py:305-308 注释明说为后续扩展留口）——本需求激活该口，新增 `_merge_user_repos_from_tools(payload, react_messages, state)`。
+- **失败非静默 WARNING**：所有 clone 失败 / 漏写回填 / 越界路径均 `logger.warning` + `node_errors(degraded)`。
+
+#### 2.13.9 测试策略（覆盖 AC-S2-20~26）
+
+mock 链路与 sp2 现有风格一致（Mock LLM + Mock `git_clone_and_analyze` 工具 + Mock `interrupt` 返回值，§5.4）。
+
+| 用例 | AC | mock 方案 |
+|---|---|---|
+| **T-S2-13-1 入口 a 贴链接经模型调工具入候选** | AC-S2-20 | Mock LLM「选择调用」`git_clone_and_analyze`（mock 返回成功 RepoInfo），断言 `repos` 含该 URL（规范化比对）、`code_strategy` 更新、`source=="user_provided"`；直接构造含该 ToolMessage 的 react_messages 验证 `_merge_user_repos_from_tools` |
+| **T-S2-13-2 切换仓库真实质量分（非 0）** | AC-S2-21 | switch_repo → 重入 → mock 工具返回 RepoInfo + mock LLM 给 quality_score=0.72；断言非 0.0、local_path 非空、被选中、在 repos 中；命中既有候选时断言不重复 clone（工具调用次数==0） |
+| **T-S2-13-3 同口径可比较** | AC-S2-22 | 同一 URL 经 resource_scout 路径与 planning switch_repo 路径，断言指标字段集合一致、quality_score 落 [0,1]；断言两节点 system prompt 都引用同一 `REPO_QUALITY_SCORING_SECTION`（import 同源断言） |
+| **T-S2-13-4 stars/forks 留空不报错** | AC-S2-23 | 断言合并后 stars/forks 均 None，`_render_repos` 渲染「⭐ —」「🍴 —」不抛异常 |
+| **T-S2-13-5 模型判断不值得加入** | AC-S2-24 | Mock LLM「不调用工具」（react_messages 无该 ToolMessage），断言 `repos` 长度不变、`_merge_user_repos_from_tools` 返回 False |
+| **T-S2-13-6 入口 b clone 失败强制重填** | AC-S2-25① | mock 工具返回失败（PermanentError / TransientError / 越界三参数化）；断言：URL 不入 repos、不留 0.0、selected_repo 不变、`_planning_switch_failed==True`、payload 含 `switch_repo_failed=True`、node_errors 有 degraded、不抛异常；UI 侧（AppTest）断言 expander 展开 + st.error |
+| **T-S2-13-7 入口 a clone 失败按无新仓库继续** | AC-S2-25② | 同失败 mock 但走 revise，断言重规划照常、`_planning_switch_failed` 不置 True、plan_summary 含「未能克隆分析」、repos 不新增 |
+| **T-S2-13-8 awaiting 轮询不破坏** | AC-S2-26 | 纯函数 `_await_phase`：switch_repo 失败后 revise_count 仍前进 → 断言返回 `to_review`（不卡 waiting） |
+| **T-S2-13-9 URL 规范化去重** | AC-S2-20/21 | `_normalize_repo_url` 参数化：`https://github.com/a/b` / `.../a/b/` / `.../a/b.git` / 大小写 归一相等；命中既有候选不重复加入 |
+
+#### 2.13.10 给全栈开发代理的实现边界清单
+
+**改动顺序（依赖拓扑，自底向上）**：
+
+1. **`core/nodes/_repo_scoring.py`（新建）**：抽出 `REPO_QUALITY_SCORING_SECTION` 共享常量。守门：T-S2-13-3（同源 import 断言）。
+2. **`core/state.py`**：GlobalState 新增 `_planning_pending_repo_url` / `_planning_switch_failed` 两通道（必须显式声明）；`create_initial_state` 补默认 `None`/`False`。守门：state 读写 + 旧 checkpoint 兼容。
+3. **`core/nodes/resource_scout.py`**：评分段落改为引用 `REPO_QUALITY_SCORING_SECTION`（保持字节等价；微调则跑 §5.3 回归）。守门：sp2 既有 resource_scout 单测全绿 + cache 回归。
+4. **`core/nodes/planning.py`**（主体）：`get_tools` 增 `make_git_clone_and_analyze_tool()`（+import）；`_PLANNING_SYSTEM_PROMPT_BODY` 追加「用户提供仓库处理 + 同口径打分」引导段（引用常量，静态字节）；新增 `_normalize_repo_url` / `_merge_user_repos_from_tools`；`_map_planning_result` 在 `_build_reproduction_plan` 后调合并步骤并回写 `resource_info` + `_planning_switch_failed`；`_format_planning_context` 增第 5 参 + `build_context` 同步；resume 路由 switch_repo 分支改为「命中既有候选直接选中 / 未命中只写 `_planning_pending_repo_url` 走 self-loop」；interrupt payload 增 `switch_repo_failed`；`_switch_selected_repo` 删除「未命中造 0.0 占位」分支。守门：T-S2-13-1/2/5/6/7。
+5. **`ui/pages/plan_review.py`**：switch_repo expander 读 `payload.switch_repo_failed` → 展开 + st.error + 清 URL；spinner 文案按 `kind=="switch_repo"` 静态切换。守门：T-S2-13-4/6（AppTest）/8。
+6. **文档回归**：PRD §3.1 性能表加「含 clone 的重规划 ≤2 分钟」行；§4.8 记 `_PLANNING_SYSTEM_PROMPT_BODY` 重新冻结 + cache 回归归档。
+
+**守门基线**：sp1 168/168 + sp2 全量（含 S2-12 的 +12）保持绿；planning 维度 Prompt Cache 回归对照归档 `docs/sprint2/test-reports/`。
+
+#### 2.13.11 决策记录（2026-06-12）
+
+承接 Maria 5 项拍板（①本地同口径补分 ②交模型判断不正则 ③Q-S2-09 模型再调主观打分同口径 ④Q-S2-10 强制重填 ⑤加入候选默认选中+保留候选+去重）。架构裁定：(A) switch_repo 归并到 self-loop 重入 ReAct 通道，重 IO 不进 resume 路由分支（否决 B 同步抓取阻塞节点线程）；(b) Q-S2-09 落地为 ReAct 内随计划自然产出打分（否决独立打分调用），评分口径抽 `core/nodes/_repo_scoring.py::REPO_QUALITY_SCORING_SECTION` 共享常量供两节点复用；(c) Q-S2-10 强制重填经 interrupt payload 新增 `switch_repo_failed` 标记驱动 UI，不破坏 awaiting 轮询自愈（仍靠 revise_count 前进判 to_review）；(d) Q-S2-11 spinner 不区分 clone/重规划（按决策类型静态切文案）、性能指标放宽到含 clone ≤2 分钟、单次重规划 clone 软上限 3 由 prompt 引导（不硬拦截）。
+
+#### 2.13.12 风险矩阵增补
+
+| 编号 | 风险 | 可能性 | 影响 | 缓解 | 验证 |
+|---|---|---|---|---|---|
+| R-S2-13 | switch_repo 改造为「交模型抓取」后模型可能不服从 pending_url 指令（不调工具） | 中 | 中 — 用户指定仓库未被抓取 | system prompt 对 pending_url 给强指令 + `_merge_user_repos_from_tools` 节点层 backfill 不依赖服从度 + 失败走强制重填提示（用户可重试/改选） | T-S2-13-2/6 |
+| R-S2-14 | clone 60s 叠加重规划阻塞工作线程过久 | 中 | 低 | 浅克隆 + 60s 超时 + clone 软上限 3 + git_tools 重复 URL 跳过；性能指标放宽 ≤2 分钟；clone 在 worker 内非主线程（不阻塞 UI 轮询） | 性能实测 |
+| R-S2-15 | `_PLANNING_SYSTEM_PROMPT_BODY` 追加引导段破坏 planning 维度 Prompt Cache 命中 | 中 | 中 | 引导段为静态字节常量、动态量走 HumanMessage；按 §4.8 改后跑 cache 回归对照 + 归档 | §5.3 / AC-S2-08 |
+| R-S2-16 | 合并去重把命中既有候选误判为新仓库（URL 归一不全）导致重复卡片 | 低 | 低 | `_normalize_repo_url` 保守归一（尾斜杠/.git/大小写）+ T-S2-13-9 参数化覆盖 | T-S2-13-9 |
+
+---
+
 ## 3. 数据流图
 
 ### 3.1 Sprint 2 完整数据流（含 interrupt 状态机）
