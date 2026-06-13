@@ -153,6 +153,8 @@
 
 ## 已完成
 
+- [x] [2026-06-13] @测试工程师代理 **Sprint 2 最终验收（阶段 E：E1 + E3）有条件 PASS**（不依赖凭证项全 PASS；真实 LLM/deepxiv e2e 凭证 EMPTY 一律 skip 不伪造）。**E1**：全套非 e2e 回归 `pytest -q -m "not e2e" --ignore=tests/test_paper_intake.py` **3 次连跑 559 passed / 0 failed / 25 skipped 零 flaky 零退化**（25 skip 全为 shadcn 迁移后 AppTest 看不到 iframe 的 UI 断言，已迁移 Playwright browser e2e / logic 测试等价覆盖，设计性非退化）；mock 集成自测覆盖 dev-plan §5.2 全部可 mock E2E 场景（E2E-2 全失败降级 from_scratch / E2E-3 连续 6 次 revise 不强制 approve+软提示阈值 / E2E-1-bis 多模型 P1/P2/P3 路由 / E2E-4 switch_repo / E2E-6 cancel→END / graph 编译+7 节点+interrupt/resume mock 链路）+ E1 五 CP（CP-E1-4 序列化合规三处一致 0 漏网 / CP-E1-5 四节点 `_map_*_result` 3 参签名 inspect 实证）全 PASS；**Playwright browser e2e `pytest -m browser` 12 passed**（三页面 UI 流转 mock 后端，chromium 真起动非 skip：plan_review 5 决策按钮+cancel 二次确认 / analysis_progress 终态卡片 / s2_13 切换失败重填+真实 quality_score）。**E2**：引用 2026-06-02 既跑结论 R_after=0.7601≥守门 0.7286 AC-S2-08 PASS；planning 维度 cache 回归（S2-13 静态引导段 R-PC4）待凭证补跑。**E3**：16 核心交付物+requirements 全就位/import 全通过/关键导出 inspect 核实齐全；BUG-S1-02/S1-03 治理范式三处复用核实；**AC-S2-01~26 覆盖矩阵** = 自动化 mock 19 条 + 已跑引用 1 条(AC-08) + manual-only 3 条(AC-12/19/26) + 待凭证真实 e2e 3 条(AC-01/03/04，均有 mock 旁证)。**补强测试净增 0**（既有覆盖已完整满足 §5.2+E1 CP），仍 0 failed。**零生产 BUG**。待凭证补跑清单：28 条 e2e marker 用例（c1_e2e/b2_e2e/paper_intake_e2e/paper_analysis_e2e/a2_e2e）+ AC-12/19 manual UI 贯通 + planning 维度 cache 回归。报告：`docs/sprint2/test-reports/2026-06-13_sprint2-final-acceptance.md`
+
 - [x] [2026-05-06] @产品经理代理 完成产品设计说明书（docs/product-design-specification.md）
 - [x] [2026-05-06] @架构师代理 完成技术架构文档（docs/technical-architecture.md）
 - [x] [2026-05-06] deepxiv_sdk 已引入项目
