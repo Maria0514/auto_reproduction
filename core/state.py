@@ -199,6 +199,10 @@ class GlobalState(TypedDict):
     # （PRD §2.3 / Q-S2-03 RESOLVED，硬上限语义已废弃）。
     _planning_revise_count: int
     _planning_user_feedback: Optional[str]
+    # === S2-13 用户提供仓库统一抓取分析通道（架构 §2.13.7）===
+    # 必须声明为 GlobalState 通道，否则节点写入会被 LangGraph 静默丢弃（B2/B3 实证）。
+    _planning_pending_repo_url: Optional[str]   # switch_repo 待 ReAct 抓取的 URL（消费后清空）
+    _planning_switch_failed: bool               # 上一轮 switch_repo 抓取失败标记（UI 强制重填用）
 
 
 def _is_legacy_llm_config(value: Any) -> bool:
@@ -280,4 +284,6 @@ def create_initial_state(
         workspace_dir=workspace_dir or str(WORKSPACE_DIR),
         _planning_revise_count=0,
         _planning_user_feedback=None,
+        _planning_pending_repo_url=None,
+        _planning_switch_failed=False,
     )

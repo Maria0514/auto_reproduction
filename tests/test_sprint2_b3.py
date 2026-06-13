@@ -230,19 +230,34 @@ def test_cp_b3_5_six_revises_no_forced_approve(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# CP-B3-6：switch_repo -> selected_repo.url 切换、与 revise 共享计数
+# CP-B3-6：switch_repo -> 与 revise 共享计数；S2-13 改造后：
+#   命中既有候选 → 直接选中；未命中 → 只写 _planning_pending_repo_url 走 self-loop 重入。
 # ---------------------------------------------------------------------------
 
-def test_cp_b3_6_switch_repo(monkeypatch):
+def test_cp_b3_6_switch_repo_unmatched_writes_pending(monkeypatch):
+    """S2-13：未命中既有候选的新 URL → 只写 _planning_pending_repo_url，不立即造 selected_repo。"""
     _patch_react(monkeypatch, _full_plan_result())
     _patch_interrupt(
         monkeypatch,
         {"decision": "switch_repo", "new_repo_url": "https://github.com/new/repo"},
     )
     out = planning(_base_state(_planning_revise_count=2))
-    assert out["resource_info"]["selected_repo"]["url"] == "https://github.com/new/repo"
+    assert out["_planning_pending_repo_url"] == "https://github.com/new/repo"
     assert out["_planning_revise_count"] == 3
     assert "reproduction_plan" not in out
+
+
+def test_cp_b3_6_switch_repo_hit_existing_selects(monkeypatch):
+    """S2-13：命中既有候选 URL → 直接选中既有候选（无需重入抓取）。"""
+    _patch_react(monkeypatch, _full_plan_result())
+    _patch_interrupt(
+        monkeypatch,
+        {"decision": "switch_repo", "new_repo_url": "https://github.com/a/repo"},
+    )
+    out = planning(_base_state(_planning_revise_count=2))
+    assert out["resource_info"]["selected_repo"]["url"] == "https://github.com/a/repo"
+    assert out.get("_planning_pending_repo_url") is None
+    assert out["_planning_revise_count"] == 3
 
 
 # ---------------------------------------------------------------------------
@@ -367,13 +382,11 @@ def test_map_no_resource_info_forces_from_scratch():
     assert out["reproduction_plan"]["code_strategy"] == "from_scratch"
 
 
-def test_switch_repo_no_resource_info():
-    """resource_info 为空时 switch_repo 也能构造仅含该仓库的 ResourceInfo。"""
+def test_switch_repo_no_resource_info_returns_none():
+    """S2-13：resource_info 为空且 URL 未命中候选时，_switch_selected_repo 返回 None
+    （不再造 user_switch 占位 RepoInfo——未命中交 ReAct 重入抓取，架构 §2.13.4）。"""
     ri = _switch_selected_repo(None, "https://github.com/x/y")
-    assert ri["selected_repo"]["url"] == "https://github.com/x/y"
-    assert ri["selected_repo"]["source"] == "user_switch"
-    assert len(ri["repos"]) == 1
-    assert ri["resource_strategy"] == "use_repo"
+    assert ri is None
 
 
 def test_minimal_plan_has_deliverables():
@@ -405,8 +418,8 @@ def test_switch_repo_hits_existing_candidate_reuses_source():
     assert out["resource_strategy"] == "hybrid"
 
 
-def test_switch_repo_empty_url_keeps_none_and_strategy():
-    """switch_repo 给空 URL：selected 保持 None，不新建候选，strategy 保留原合法值。"""
+def test_switch_repo_empty_url_returns_none():
+    """switch_repo 给空 URL：返回 None（无目标，交上层不做切换）。"""
     ri = {
         "repos": [{"url": "https://github.com/a/b", "quality_score": 0.9}],
         "selected_repo": None,
@@ -414,13 +427,11 @@ def test_switch_repo_empty_url_keeps_none_and_strategy():
         "resource_strategy": "hybrid",
     }
     out = _switch_selected_repo(ri, "")
-    assert out["selected_repo"] is None
-    assert len(out["repos"]) == 1  # 没有空 URL 候选被加入
-    assert out["resource_strategy"] == "hybrid"
+    assert out is None
 
 
-def test_switch_repo_new_url_creates_user_switch_repo():
-    """新 URL 未命中候选：构造 source='user_switch' 的 RepoInfo 并入列选中。"""
+def test_switch_repo_new_url_not_in_candidates_returns_none():
+    """S2-13：新 URL 未命中既有候选时返回 None（不再造 user_switch 占位，未命中交 ReAct）。"""
     ri = {
         "repos": [{"url": "https://github.com/a/b", "quality_score": 0.9}],
         "selected_repo": {"url": "https://github.com/a/b"},
@@ -428,45 +439,21 @@ def test_switch_repo_new_url_creates_user_switch_repo():
         "resource_strategy": "use_repo",
     }
     out = _switch_selected_repo(ri, "https://github.com/c/d")
-    assert out["selected_repo"]["url"] == "https://github.com/c/d"
-    assert out["selected_repo"]["source"] == "user_switch"
-    assert out["selected_repo"]["quality_score"] == 0.0  # 未评估
-    urls = {r["url"] for r in out["repos"]}
-    assert urls == {"https://github.com/a/b", "https://github.com/c/d"}
+    assert out is None
 
 
-def test_switch_repo_illegal_strategy_normalized_to_use_repo():
-    """选中仓库但 resource_strategy 是**非法字符串**时：归一化为 use_repo。
-
-    契约观察：归一化只兜底"非 _VALID_STRATEGIES 的非法值"，对已选中仓库时仍保留的
-    合法 from_scratch 不做语义翻转（见 test_switch_repo_legal_from_scratch_kept_when_selected）。
-    """
+def test_switch_repo_hit_normalizes_url_variants():
+    """S2-13：命中判定走规范化 URL（尾斜杠 / .git / 大小写）。"""
     ri = {
-        "repos": [],
+        "repos": [{"url": "https://github.com/a/b", "quality_score": 0.9, "source": "pwc"}],
         "selected_repo": None,
         "external_resources": [],
-        "resource_strategy": "garbage_value",  # 非法
+        "resource_strategy": "use_repo",
     }
-    out = _switch_selected_repo(ri, "https://github.com/c/d")
+    out = _switch_selected_repo(ri, "https://github.com/A/B.git/")
+    assert out is not None
+    assert out["selected_repo"]["source"] == "pwc"  # 命中复用既有候选
     assert out["resource_strategy"] == "use_repo"
-
-
-def test_switch_repo_legal_from_scratch_kept_when_selected():
-    """契约观察：选中具体仓库后，已有的合法 from_scratch **不**被翻转为 use_repo。
-
-    归一化逻辑仅针对非法字符串值；from_scratch 本身合法，故保留。此为 _switch_selected_repo
-    的实际语义（非 BUG）：strategy 翻转由下游 planning ReAct（_build_reproduction_plan）按
-    selected_repo 存在性重判，switch 工具本身不强翻合法值。
-    """
-    ri = {
-        "repos": [],
-        "selected_repo": None,
-        "external_resources": [],
-        "resource_strategy": "from_scratch",  # 合法值
-    }
-    out = _switch_selected_repo(ri, "https://github.com/c/d")
-    assert out["selected_repo"]["url"] == "https://github.com/c/d"
-    assert out["resource_strategy"] == "from_scratch"  # 合法值保留，不翻转
 
 
 # --- D2 _map 类型补齐脏数据 ---
@@ -554,14 +541,15 @@ def test_cancel_appends_to_existing_notes(monkeypatch):
 # --- D5 switch_repo 经节点完整路径（子图正常 + 子图失败） ---
 
 def test_switch_repo_after_react_failure(monkeypatch):
-    """ReAct 子图失败 + 用户 switch_repo：仍正常切仓并 +1 计数（不强制 approve）。"""
+    """ReAct 子图失败 + 用户 switch_repo（未命中候选）：写 pending_url 走 self-loop 重入，
+    +1 计数（不强制 approve）。S2-13：不再立即造占位 selected_repo。"""
     _patch_react_raises(monkeypatch, LLMError("provider down"))
     _patch_interrupt(
         monkeypatch,
         {"decision": "switch_repo", "new_repo_url": "https://github.com/new/x"},
     )
     out = planning(_base_state(_planning_revise_count=1))
-    assert out["resource_info"]["selected_repo"]["url"] == "https://github.com/new/x"
+    assert out["_planning_pending_repo_url"] == "https://github.com/new/x"
     assert out["_planning_revise_count"] == 2
     assert "reproduction_plan" not in out  # 不强制 approve
 

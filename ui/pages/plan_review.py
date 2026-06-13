@@ -708,7 +708,14 @@ def _render_decision_buttons(
     _render_revise_chat(controller, thread_id, payload, llm_config_set)
 
     # --- 切换仓库：feedback + new_repo_url（mock 文案逐字「🔁 切换仓库」）---
-    with st.expander("🔁 切换仓库", expanded=False):
+    # S2-13：上一轮 switch_repo 克隆/分析失败时（payload.switch_repo_failed），强制重填——
+    # expander 展开 + st.error 提示 + 清空已填 URL（让用户重填或改选其它候选）。
+    _switch_failed = bool((payload or {}).get("switch_repo_failed"))
+    if _switch_failed:
+        st.session_state[_KEY_SWITCH_REPO_URL] = ""
+    with st.expander("🔁 切换仓库", expanded=_switch_failed):
+        if _switch_failed:
+            st.error("仓库克隆/分析失败，请核对链接或换一个；也可改选下方其它候选仓库")
         # 单源治理（同「修改计划」框）：shadcn ui.textarea/ui.input 迁到原生
         # st.text_area/st.text_input，仅用 key、删 default_value 双源，规避 iframe
         # 逐键 rerun 回灌导致的打字抖动。键名 _KEY_SWITCH_FEEDBACK /
@@ -812,11 +819,13 @@ def render() -> None:
             st.session_state[_KEY_CURRENT_PAGE] = "progress"
             st.rerun()
         else:  # waiting：继续轮询
-            msg = (
-                "正在根据你的修改意见重新生成计划……"
-                if kind in _AWAIT_RETURN_KINDS
-                else "正在处理你的决策……"
-            )
+            # S2-13：switch_repo 含 clone 更慢，文案静态切换给用户「这次更慢」预期（§2.13.6）。
+            if kind == "switch_repo":
+                msg = "正在克隆并分析仓库、重新生成计划……"
+            elif kind in _AWAIT_RETURN_KINDS:
+                msg = "正在根据你的修改意见重新生成计划……"
+            else:
+                msg = "正在处理你的决策……"
             st.info(f"⏳ {msg}（页面会自动刷新，请稍候）")
             st_autorefresh(interval=STREAMLIT_POLL_INTERVAL, key="review_await_poll")
             return

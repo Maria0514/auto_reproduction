@@ -345,26 +345,93 @@ def test_revise_count_increments_across_self_loops(monkeypatch):
 
 
 def test_switch_repo_resource_info_persists_then_approve(monkeypatch):
-    """switch_repo 经编译图：resource_info.selected_repo 真实更新并持久化，下一轮 approve 收尾。"""
-    g = _patched_graph(monkeypatch)
+    """S2-13：switch_repo 未命中既有候选 → self-loop 重入 → ReAct 抓取 → 合并进 repos
+    并默认选中 + 持久化，下一轮 approve 收尾仍保留 user_provided 仓库。"""
+    import json as _json
+    from langchain_core.messages import AIMessage, ToolMessage
+
+    target = "https://github.com/u/v"
+
+    class _CloningSubgraph:
+        """重入后（context 含 pending_repo_url）模拟成功 clone：发 ToolMessage + result.repos 打分。"""
+
+        def invoke(self, initial):
+            messages = list(initial.get("messages") or [])
+            has_pending = any(
+                isinstance(getattr(m, "content", None), str) and "pending_repo_url" in m.content
+                for m in messages
+            )
+            repos = []
+            tool_msgs = []
+            if has_pending:
+                tool_payload = {
+                    "url": target, "source": "git_clone", "local_path": "/ws/repos/u_v",
+                    "has_readme": True, "has_requirements": True, "is_official": True,
+                    "stars": None, "forks": None, "last_commit_date": None,
+                    "commit_count_recent": None, "dir_structure": ["src"],
+                    "quality_score": 0.7,
+                }
+                tool_msgs = [
+                    AIMessage(content="", tool_calls=[{
+                        "name": "git_clone_and_analyze", "args": {"url": target}, "id": "t1"}]),
+                    ToolMessage(
+                        content=_json.dumps(tool_payload, ensure_ascii=False, sort_keys=True),
+                        name="git_clone_and_analyze", tool_call_id="t1"),
+                ]
+                repos = [{"url": target, "quality_score": 0.7}]
+            return {
+                "result": {
+                    "plan_summary": "复现计划摘要",
+                    "code_strategy": "use_repo",
+                    "deliverables": ["README.md", "requirements.txt", "run.py"],
+                    "execution_steps": [{"step_name": "s", "command": "c", "expected_output": "o"}],
+                    "repos": repos,
+                },
+                "messages": tool_msgs,
+                "round": 2,
+                "status": "done",
+            }
+
+    def fi(state): return {"paper_meta": {"arxiv_id": "2405.14831"}}
+    def fa(state): return {"paper_analysis": {"method_summary": "m"}}
+    def frs(state):
+        return {"current_step": "resource_scout",
+                "resource_info": {"repos": [], "selected_repo": None,
+                                  "external_resources": [], "resource_strategy": "from_scratch"}}
+    monkeypatch.setattr(graph_module, "paper_intake", fi)
+    monkeypatch.setattr(graph_module, "paper_analysis", fa)
+    monkeypatch.setattr(graph_module, "resource_scout", frs)
+    monkeypatch.setattr(react_base, "create_react_subgraph", lambda **k: _CloningSubgraph())
+    monkeypatch.setattr(react_base, "create_llm", lambda c: object())
+    g = build_graph(checkpointer=MemorySaver())
+
     cfg = {"configurable": {"thread_id": "c1-switch-then-approve"}}
     g.invoke(_initial_state(), cfg)
-    # 第一轮：switch_repo（self-loop）
+    # 第一轮：switch_repo（未命中 → 写 pending_url → self-loop 重入抓取）
     out1 = g.invoke(
-        Command(resume={"decision": "switch_repo", "new_repo_url": "https://github.com/u/v"}),
+        Command(resume={"decision": "switch_repo", "new_repo_url": target}),
         cfg,
     )
     assert "__interrupt__" in out1
+    # 重入后 ReAct 抓取成功 → interrupt payload 携带合并后的 resource_info（真实 quality_score）。
+    interrupt_obj = out1["__interrupt__"][0]
+    payload = interrupt_obj.value
+    assert payload["resource_info"]["selected_repo"]["url"] == target
+    assert payload["resource_info"]["selected_repo"]["source"] == "user_provided"
+    assert payload["resource_info"]["selected_repo"]["quality_score"] == 0.7
+    assert payload["switch_repo_failed"] is False
     snap1 = g.get_state(cfg)
-    assert snap1.values["resource_info"]["selected_repo"]["url"] == "https://github.com/u/v"
     assert snap1.values["_planning_revise_count"] == 1
-    # 第二轮：approve -> 收尾到 END
+    # 第二轮：approve -> 收尾到 END（合并后的 resource_info + 清理标记随本轮 return 提交）
     g.invoke(Command(resume={"decision": "approve"}), cfg)
     snap2 = g.get_state(cfg)
     assert snap2.next == ()
     assert snap2.values["reproduction_plan"]["approved"] is True
-    # switch 的 resource_info 仍保留
-    assert snap2.values["resource_info"]["selected_repo"]["url"] == "https://github.com/u/v"
+    # switch 抓取合并的 user_provided 仓库被持久化、pending/失败标记已清。
+    assert snap2.values["resource_info"]["selected_repo"]["url"] == target
+    assert snap2.values["resource_info"]["selected_repo"]["source"] == "user_provided"
+    assert snap2.values.get("_planning_pending_repo_url") is None
+    assert snap2.values.get("_planning_switch_failed") is False
 
 
 def test_route_priority_cancelled_overrides_approved_via_graph(monkeypatch):
