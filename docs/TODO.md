@@ -143,11 +143,19 @@
 
 ## 未来计划（Sprint 3+）
 
-> 以下条目为远期路线图，**依赖 Sprint 2 全部完成 + sp2 5 项 spike 验证通过**才会激活，当前不进入排期。
+> **2026-06-14 Maria 方向决策**：Sprint 3 重心改为「**先打通端到端复现**」（务实优先），原 dev_loop 真 multi-agent 改造**顺延到后续 sprint（sp4+）**。理由：coding / execution / reporting 当前仍是返回 `{}` 的占位节点，系统尚未真正端到端复现过任何论文；multi-agent 是工程深度提升但对「能否复现」的产品增量有限，应在端到端跑通后再做。
+
+### Sprint 3（新方向）：端到端复现打通
+
+- [ ] [2026-06-14] @产品经理代理 起草 Sprint 3 PRD（端到端复现）：定义 coding / execution / reporting 三个占位节点的真正实现范围 + **单 agent** coding↔execution 修复循环 + sandbox 执行环境（`sandbox/local_venv.py` 等）+ code_only 路径落地。**复用 `docs/sprint3/dev-loop-compatibility-matrix.md` 的非 multi-agent 部分**（预算扣减缺口 must-fix-2 / 修复循环死字段激活 / code_only 路由 / 占位节点现状——对单 agent 修复循环同样适用）。立项前置：sp2 验收通过 ✓ + 兼容性矩阵 ✓（原「简历目标」前置已被本次方向决策化解，不再适用于 sp3）。
+
+### 后续 sprint（sp4+）：dev_loop 真 multi-agent（原 Sprint 3 计划，已顺延）
+
+> 以下条目为远期路线图，端到端复现跑通后再激活。
 
 - [ ] [2026-05-24] @架构师代理 Sprint 3 dev_loop 真 multi-agent 改造（依赖 sp2 完成）：把现有 coding ↔ execution 单 agent 修复循环升级为 LangGraph supervisor 模式 multi-agent 子图（Coder / Executor / Reviewer 三 agent + 共享 scratchpad + supervisor 路由），保持主图 7 节点 DAG 骨架不变。预设产出 = `core/subgraphs/dev_loop/` 目录 + `docs/sprint3/architecture.md`。
-- [ ] [2026-05-24] @架构师代理 Sprint 3 启动前评估 dev_loop 子图与现有 fix_loop_count / NodeError / retry_budget_remaining 等错误追踪字段的兼容性，输出兼容性矩阵（在 sprint3 prd 之前）
-- [ ] [2026-05-24] @产品经理代理 Sprint 3 PRD 立项前置条件：sp2 验收通过 + 上述兼容性矩阵确认 + Maria 在求职简历里把 "dev_loop multi-agent 子图" 列为目标交付物
+- [x] [2026-06-14] @架构师代理 Sprint 3 启动前评估 dev_loop 子图与现有 fix_loop_count / NodeError / retry_budget_remaining 等错误追踪字段的兼容性，输出兼容性矩阵——**完成**：`docs/sprint3/dev-loop-compatibility-matrix.md`。结论 **条件性可立项**（无阻塞级数据契约冲突）。关键发现（均经主控代码实证抽查复核）：(1) 修复循环全套字段 fix_loop_count/fix_loop_history/FixLoopRecord/user_fix_decision/MAX_FIX_LOOP_COUNT 当前为**零生产引用的死字段**，sp3 重定义语义零回归风险；(2) **must-fix-1**：node_errors/degraded_nodes/fix_loop_history 是无 operator.add reducer 的普通 List，multi-agent 子图必须走 `exit_dev_loop` 单点 read-modify-write 合并，**严禁加 reducer**（会破坏 sp1/sp2 全部既有节点的"return 整列表"写法）；(3) **must-fix-2**：预算扣减对 dev_loop 完全透明（唯一扣减点 `_make_react_wrapper` 不覆盖手写 supervisor 子图），且 `MAX_DEV_LOOP_LLM_CALLS` 在 config 缺失（文档却声称 =20），需新增子预算 + 入口预算门 + 主动回写。另列 5 处文档↔代码偏差（修复轮次 3 vs 5、dev_loop 目录 nodes vs subgraphs 等）+ 7 个开放问题待 sp3 PRD 回答。
+- [ ] [2026-05-24→顺延 sp4+] @产品经理代理 后续 multi-agent sprint（sp4+）PRD 立项前置条件：端到端复现（sp3）跑通 + 兼容性矩阵确认 ✓（`docs/sprint3/dev-loop-compatibility-matrix.md`）+ Maria 确认要做 multi-agent 方向。**注（2026-06-14）**：原作为 sp3 前置的「Maria 在简历里列 multi-agent 为目标交付物」一项，已被本次方向决策化解——sp3 改为端到端复现、multi-agent 顺延，此条整体降级为 sp4+ 远期前置。
 
 ---
 
