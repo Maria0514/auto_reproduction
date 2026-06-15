@@ -13,5 +13,5 @@ _shot.py
 _shot_theme.py
 scripts/dump_real_plan.py
 
-# LangGraph SqliteSaver 运行时 checkpoint 数据库
-checkpoints.db
+# LangGraph SqliteSaver 运行时 checkpoint 数据库（含 WAL 模式伴生文件 -shm/-wal）
+checkpoints.db*
