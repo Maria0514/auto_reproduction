@@ -41,6 +41,7 @@ from config import (  # noqa: E402
 from core.nodes.paper_analysis import (  # noqa: E402
     NODE_NAME as ANALYSIS_NODE_NAME,
     _ANALYSIS_SYSTEM_PROMPT_BODY,
+    _LANGUAGE_POLICY_SECTION,
     paper_analysis,
 )
 from core.nodes.paper_intake import paper_intake  # noqa: E402
@@ -348,9 +349,13 @@ def test_e2e_prompt_cache_system_prompt_byte_identical(
         f"len_a={len(body_a)}, len_b={len(body_b)}\n"
         f"diff position: {next((i for i in range(min(len(body_a), len(body_b))) if body_a[i] != body_b[i]), 'len-mismatch')}"
     )
-    # 3) 主体与导出常量字节级一致（防止主体被偷偷改成动态拼接）
-    assert body_a.rstrip("\n") == _ANALYSIS_SYSTEM_PROMPT_BODY.rstrip("\n"), (
-        "主体与 _ANALYSIS_SYSTEM_PROMPT_BODY 不一致；任何修改都应同步常量"
+    # 3) 主体与导出常量字节级一致（防止主体被偷偷改成动态拼接）。
+    #    sp2(B1) 起主体前缀 = _ANALYSIS_SYSTEM_PROMPT_BODY + "\n" + _LANGUAGE_POLICY_SECTION
+    #    （静态语言策略段，对所有论文字节级一致，不破坏 Prompt Cache 前缀稳定性）。
+    expected_body = _ANALYSIS_SYSTEM_PROMPT_BODY + "\n" + _LANGUAGE_POLICY_SECTION
+    assert body_a.rstrip("\n") == expected_body.rstrip("\n"), (
+        "主体与 (_ANALYSIS_SYSTEM_PROMPT_BODY + _LANGUAGE_POLICY_SECTION) 不一致；"
+        "任何修改都应同步常量"
     )
     # 4) 主体不得包含任何论文级动态变量（防回归）
     for needle in [
