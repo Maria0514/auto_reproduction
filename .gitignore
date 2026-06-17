@@ -1,6 +1,7 @@
 .venv/
 *__pycache__
 .claude/.nfs*
+.claude/worktrees/
 .env
 .env.local
 # 运行时产物（git clone 的仓库 / 日志 / 运行记录）
