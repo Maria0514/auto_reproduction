@@ -203,6 +203,11 @@ class GlobalState(TypedDict):
     # 必须声明为 GlobalState 通道，否则节点写入会被 LangGraph 静默丢弃（B2/B3 实证）。
     _planning_pending_repo_url: Optional[str]   # switch_repo 待 ReAct 抓取的 URL（消费后清空）
     _planning_switch_failed: bool               # 上一轮 switch_repo 抓取失败标记（UI 强制重填用）
+    # === Sprint 3 新增（dev_loop 修复循环路由 + 子预算，架构 §5 / §7 回问 1+4）===
+    # 下划线前缀标识"内部字段，UI 不直接展示原始字段名"（沿用 sp2 _planning_revise_count 范式）。
+    # 二者均为单值，last-write-wins 正确，**不加 reducer**（must-fix-1：绝不给任何 List 字段加 reducer）。
+    _dev_loop_route: Optional[str]              # 路由意图标记（execution 写，_route_after_execution 读；如 "retry_coding"）
+    _dev_loop_llm_calls: int                    # 修复循环子预算累计（coding/execution 在修复回合内 read-modify-write 累加；默认 0）
 
 
 def _is_legacy_llm_config(value: Any) -> bool:
@@ -286,4 +291,6 @@ def create_initial_state(
         _planning_user_feedback=None,
         _planning_pending_repo_url=None,
         _planning_switch_failed=False,
+        _dev_loop_route=None,
+        _dev_loop_llm_calls=0,
     )

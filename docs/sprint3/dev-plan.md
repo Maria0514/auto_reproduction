@@ -242,10 +242,10 @@ graph TD
 - `SANDBOX_*` 工作目录若需独立子目录，在 `ensure_directories()` 视需要追加（sandbox venv/code/report 均落在 `WORKSPACE_DIR/<thread>/` 下，复用既有 WORKSPACE_DIR）。
 
 **自测检查点**：
-- [ ] CP-A1-1 `from config import SANDBOX_EXEC_TIMEOUT, SANDBOX_VENV_CREATE_TIMEOUT, SANDBOX_PIP_INSTALL_TIMEOUT, SANDBOX_OUTPUT_MAX_BYTES, SANDBOX_PIP_MAX_RETRIES, MAX_DEV_LOOP_LLM_CALLS, DEV_LOOP_MIN_CALLS_PER_ROUND, REACT_MAX_ROUNDS_CODING, STREAMLIT_PAGE_EXECUTION, STREAMLIT_PAGE_REPORT` 全部可导入
-- [ ] CP-A1-2 全表值逐项断言（`SANDBOX_EXEC_TIMEOUT==1800` / `SANDBOX_OUTPUT_MAX_BYTES==1048576` / `MAX_DEV_LOOP_LLM_CALLS==20` / `DEV_LOOP_MIN_CALLS_PER_ROUND==2` / `REACT_MAX_ROUNDS_CODING==12` 等）+ 严格类型断言（int/str）
-- [ ] CP-A1-3 **强约束断言 `MAX_DEV_LOOP_LLM_CALLS < MAX_TOTAL_LLM_CALLS`（20 < 50）**（AC-S3-04 ② 直接验收点）
-- [ ] CP-A1-4 sp1/sp2 既有常量零修改（`MAX_TOTAL_LLM_CALLS==50` / `MAX_FIX_LOOP_COUNT==3` 值不变断言；`git diff` 实证 config.py 为纯追加）
+- [x] CP-A1-1 `from config import SANDBOX_EXEC_TIMEOUT, SANDBOX_VENV_CREATE_TIMEOUT, SANDBOX_PIP_INSTALL_TIMEOUT, SANDBOX_OUTPUT_MAX_BYTES, SANDBOX_PIP_MAX_RETRIES, MAX_DEV_LOOP_LLM_CALLS, DEV_LOOP_MIN_CALLS_PER_ROUND, REACT_MAX_ROUNDS_CODING, STREAMLIT_PAGE_EXECUTION, STREAMLIT_PAGE_REPORT` 全部可导入 — `tests/test_sprint3_a1.py::test_cp_a1_1_*` PASS（2026-06-23）
+- [x] CP-A1-2 全表值逐项断言（`SANDBOX_EXEC_TIMEOUT==1800` / `SANDBOX_OUTPUT_MAX_BYTES==1048576` / `MAX_DEV_LOOP_LLM_CALLS==20` / `DEV_LOOP_MIN_CALLS_PER_ROUND==2` / `REACT_MAX_ROUNDS_CODING==12` 等）+ 严格类型断言（int/str） — `test_cp_a1_2_*` PASS
+- [x] CP-A1-3 **强约束断言 `MAX_DEV_LOOP_LLM_CALLS < MAX_TOTAL_LLM_CALLS`（20 < 50）**（AC-S3-04 ② 直接验收点） — `test_cp_a1_3_*` PASS
+- [x] CP-A1-4 sp1/sp2 既有常量零修改（`MAX_TOTAL_LLM_CALLS==50` / `MAX_FIX_LOOP_COUNT==3` 值不变断言；`git diff` 实证 config.py 为纯追加）— `test_cp_a1_4_*` PASS（git diff +26 全 insertion 0 deletion）
 
 ---
 
@@ -274,11 +274,11 @@ graph TD
 - 下划线前缀标识"内部字段，UI 不直接展示原始字段名"（沿用 sp2 `_planning_revise_count` 范式）。
 
 **自测检查点**：
-- [ ] CP-A2-1 `GlobalState.__annotations__` 含 `_dev_loop_route` 与 `_dev_loop_llm_calls`，类型分别为 `Optional[str]` / `int`
-- [ ] CP-A2-2 `create_initial_state(...)` 返回 `state["_dev_loop_route"] is None` 且 `state["_dev_loop_llm_calls"] == 0`（默认值正确）
-- [ ] CP-A2-3 **must-fix-1 grep 断言（AC-S3-05 ① 强制验收点）**：`grep -nE "Annotated|operator.add" core/state.py` 对 `node_errors`/`degraded_nodes`/`fix_loop_history` 三字段**零命中**，三字段仍为普通 `List`
-- [ ] CP-A2-4 `FixLoopRecord.__annotations__` 仍为 5 字段（`round_number`/`error_summary`/`error_category`/`fix_strategy`/`timestamp`），未追加 multi-agent 字段
-- [ ] CP-A2-5 **sp1/sp2 全量回归 pytest 不退化**（非 e2e 核心单测全绿，确认追加字段不破坏既有反序列化/初始化）
+- [x] CP-A2-1 `GlobalState.__annotations__` 含 `_dev_loop_route` 与 `_dev_loop_llm_calls`，类型分别为 `Optional[str]` / `int` — `tests/test_sprint3_a2.py::test_cp_a2_1_*` PASS（2026-06-23）
+- [x] CP-A2-2 `create_initial_state(...)` 返回 `state["_dev_loop_route"] is None` 且 `state["_dev_loop_llm_calls"] == 0`（默认值正确）— `test_cp_a2_2_*` PASS（老形态+新形态入参均覆盖）
+- [x] CP-A2-3 **must-fix-1 grep 断言（AC-S3-05 ① 强制验收点）**：`grep -nE "Annotated|operator.add" core/state.py` 对 `node_errors`/`degraded_nodes`/`fix_loop_history` 三字段**零命中**，三字段仍为普通 `List` — `test_cp_a2_3_*` PASS（grep 全文件零命中 + `get_origin is list` 双重证）
+- [x] CP-A2-4 `FixLoopRecord.__annotations__` 仍为 5 字段（`round_number`/`error_summary`/`error_category`/`fix_strategy`/`timestamp`），未追加 multi-agent 字段 — `test_cp_a2_4_*` PASS
+- [x] CP-A2-5 **sp1/sp2 全量回归 pytest 不退化**（非 e2e 核心单测全绿，确认追加字段不破坏既有反序列化/初始化）— `pytest -q -m "not e2e" --ignore=tests/test_paper_intake.py` **575 passed / 25 skipped / 0 failed**（sp2 基线 559 + 本阶段 16 新用例，既有零退化）
 
 ---
 

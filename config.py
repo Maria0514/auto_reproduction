@@ -98,6 +98,32 @@ STREAMLIT_PAGE_PROGRESS: str = "progress"  # UI 路由常量：分析进度页
 STREAMLIT_PAGE_REVIEW: str = "review"  # UI 路由常量：计划审核页
 
 
+# ========== Sprint 3：sandbox 本地 venv 执行护栏（S3-01 / architecture §2.1.1） ==========
+# 沿用 sp1/sp2 字面量风格（同款 timeout/max_rounds 均为纯字面量，不加 os.getenv 覆盖）。
+# sandbox venv/code/report 均落在 WORKSPACE_DIR/<thread>/ 下，复用既有 WORKSPACE_DIR，
+# 无需独立常量目录，ensure_directories() 不变。
+
+SANDBOX_EXEC_TIMEOUT: int = 1800  # 单条执行步骤子进程超时（秒，30 分钟；疑似死循环判据）
+SANDBOX_VENV_CREATE_TIMEOUT: int = 300  # `python -m venv` 创建超时（秒）
+SANDBOX_PIP_INSTALL_TIMEOUT: int = 1200  # 单次 pip install 超时（秒，20 分钟）
+SANDBOX_OUTPUT_MAX_BYTES: int = 1_048_576  # stdout/stderr 各自捕获字节上限（1 MiB），超限截断
+SANDBOX_PIP_MAX_RETRIES: int = 2  # pip install 网络瞬态失败重试次数
+
+
+# ========== Sprint 3：dev_loop 修复循环子预算（S3-08 / architecture §2.1.1） ==========
+# MAX_DEV_LOOP_LLM_CALLS 强约束 < MAX_TOTAL_LLM_CALLS（20 < 50），修复循环子预算天花板。
+
+MAX_DEV_LOOP_LLM_CALLS: int = 20  # 修复循环子预算天花板（强约束 < MAX_TOTAL_LLM_CALLS=50）
+DEV_LOOP_MIN_CALLS_PER_ROUND: int = 2  # 入口预算门：单回合最小 LLM 调用数
+REACT_MAX_ROUNDS_CODING: int = 12  # coding 节点 ReAct max_rounds
+
+
+# ========== Sprint 3：Streamlit UI 新增页面路由常量（S3-07 / architecture §2.5） ==========
+
+STREAMLIT_PAGE_EXECUTION: str = "execution"  # UI 路由常量：执行监控页
+STREAMLIT_PAGE_REPORT: str = "report"  # UI 路由常量：结果报告页
+
+
 # ========== 环境变量读取 ==========
 
 def get_deepxiv_token() -> Optional[str]:
