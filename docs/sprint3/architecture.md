@@ -242,7 +242,14 @@ def _truncate_output(raw: bytes, max_bytes: int) -> tuple[str, bool]:
 
 > 字节阈值在 `communicate` 之后做（`communicate` 已读全量到内存）。**注意**：超大输出在 `communicate` 阶段已进内存——MVP 接受此风险（1 MiB 子进程正常输出不会爆，疑似失控输出靠超时护栏兜底杀进程）。流式逐块截断写文件归 v1.x（§7 风险提示）。
 
-**护栏 3 — 工作目录限定**：所有 `work_dir` / `venv_dir` / `python_exe` 入参在执行前经 `resolve() + is_relative_to(WORKSPACE_DIR.resolve())` 校验（**直接复用 git_tools `_is_within_workspace` 范式**）；越界抛 `SandboxCreationError`（sp1 已定义于 errors.py L126）。子进程 `cwd` 强制设为校验后的 `work_dir`，子进程的相对路径副作用天然落在 workspace 下。**注意**：本护栏限定 cwd，无法阻止子进程用绝对路径写任意位置——MVP 接受（与 Docker 隔离的差距，归 §7 + sp4+）。
+**护栏 3 — 工作目录限定**：路径越界校验在执行前完成，越界抛 `SandboxCreationError`（sp1 已定义于 errors.py L126）；子进程 `cwd` 强制设为校验后的 `work_dir`，子进程的相对路径副作用天然落在 workspace 下。**按路径的使用方式分两类校验（sp3-B1 备案，见 §2.1.5）**：
+
+- **写入 / 产物类路径（`work_dir` / `venv_dir` / `requirements_files` / `artifacts`）**：经 `resolve() + is_relative_to(WORKSPACE_DIR.resolve())` 校验（**复用 git_tools `_is_within_workspace` 范式**，对应 `local_venv._is_within_workspace` / `_require_within_workspace`）。这类路径会产生文件系统副作用，必须 `resolve()` 解开符号链接看**真实落点**，防"符号链接指向 workspace 外再往里写"的逃逸。
+- **可执行入口（`python_exe` 等）**：经 lexical `os.path.abspath()`（仅规范化 `..`/`.`、**不解符号链接**）+ `is_relative_to(WORKSPACE_DIR.resolve())` 校验（对应 `local_venv._is_within_workspace_lexical` / `_require_python_exe_within_workspace`）。**理由**：venv 内 `bin/python` 本身就是指向系统解释器（如 `/usr/bin/python3.11`，位于 workspace 外）的符号链接，用 `resolve()` 会解开到 workspace 外导致**误判越界、拒掉合法 venv python**，护栏卡死自己。可执行入口"只读被 exec、不被写入"，护栏意图是"确认传的是 prepare_venv 在 workspace 下创建的 venv python，而非任意系统二进制"，故只需对其**字面路径**做包含校验即可。lexical 校验仍能拦 `../` 逃逸（如 `.venv/../../../../etc/python`）与绝对系统路径（如 `/usr/bin/python`），护栏意图未削弱。
+
+> **选择规则（适用于后续所有路径校验点，含 C3 execution 复用 sandbox）**：路径**会被写入 / 产生副作用 / 收集为产物** → 用 `resolve()`；路径**仅作可执行入口被 exec 且预期本身是指向系统解释器的符号链接（venv python/pip）** → 用 lexical `abspath`。git_tools 的 `dest_dir` / `local_path` 均为写入/读取路径、无可执行符号链接场景，**保持 resolve 不变**。
+
+**注意**：本护栏限定 cwd 与入参路径，无法阻止子进程用绝对路径写任意位置——MVP 接受（与 Docker 隔离的差距，归 §7 + sp4+）。
 
 **护栏 4 — 子进程隔离**：每条命令独立 `Popen` 子进程（新进程组/会话），子进程崩溃（段错误/OOM）只反映为非 0 exit_code，不抛进主工作线程；`_run_subprocess` 内部 `try/except` 兜底任何 OSError，转 `SandboxRunResult(exit_code=-1, ...)` 返回，绝不让异常逃逸到 execution 节点之外（沿用 ReAct 子图「工具异常不杀子图」治理）。
 
@@ -253,6 +260,16 @@ def _truncate_output(raw: bytes, max_bytes: int) -> tuple[str, bool]:
   - 网络瞬态（连接超时 / 解析失败）→ 按 `SANDBOX_PIP_MAX_RETRIES` 指数退避重试（复用 git_tools `_RETRY_BACKOFF_SECONDS` 思路）；
   - 包不存在 / 版本冲突 / 编译失败 → 记入 `install_failed_packages`，`success=False`，**不抛异常**，交 execution 节点分类为 `dependency` 类错误（可自动修复，送回 coding，PRD §2.7）；
   - venv 创建本身失败（磁盘满 / python 缺失）→ `SandboxPrepareResult(success=False, error=...)`，execution 据此分类（磁盘满归不可修复，python 缺失归环境硬约束）。
+
+#### 2.1.5 实现偏差备案：护栏3 路径校验二分（sp3-B1，2026-06-24）
+
+> **背景**：B1 开发时发现 §2.1.3 原文"所有 `work_dir`/`venv_dir`/`python_exe` 入参统一用 `resolve()+is_relative_to` 校验"在真实环境下不可行：venv 内 `bin/python` 是指向系统解释器（`/usr/bin/python3.11`，workspace 外）的**符号链接**，对 `python_exe` 用 `resolve()` 会解开到 workspace 外、误判越界、拒掉合法 venv python，护栏卡死自己。
+
+> **处置**（commit `750e49e`，`sandbox/local_venv.py`）：按路径使用方式拆为两类校验——写入/产物路径（work_dir/venv_dir/requirements_files/artifacts）仍用 `resolve()`（防符号链接逃逸写）；可执行入口（python_exe）改用 lexical `os.path.abspath`（不解符号链接，仅规范化 `..`/`.`）。新增 helper `_is_within_workspace_lexical` / `_require_python_exe_within_workspace`，与既有 `_is_within_workspace` / `_require_within_workspace` 并存。§2.1.3 已据此更新。
+
+> **架构评估结论**：二分合理、安全性等价于原始意图，无新增攻击面。可执行入口"只读被 exec、不被写入"，无需 resolve 的真实落点保证，只需 lexical 的"声明路径在域内"保证。本二分作为通用规则推广至 C3 execution 复用 sandbox；git_tools 的 dest_dir/local_path 无可执行符号链接场景，**保持 resolve 不推广 lexical**（与 sp1/sp2 范式一致）。
+
+> **测试独立验证（PASS，`tests/test_sprint3_b1.py`，已随 commit 750e49e 落盘）**：① 实测 venv python 确为指向系统 python3.11 的符号链接；② lexical 校验仍拦 `../` 逃逸（`.venv/../../../../etc/python` → workspace 外被拒）；③ 仍拦绝对系统路径（`/usr/bin/python` 被拒）；护栏"防传任意系统二进制"意图未削弱。
 
 ---
 
@@ -1025,7 +1042,7 @@ def _llm_extract_metrics(stdout, metric_names, state):
 
 **P0 基础设施（无依赖，先行）**
 - [ ] `config.py`：新增 `SANDBOX_EXEC_TIMEOUT/SANDBOX_VENV_CREATE_TIMEOUT/SANDBOX_PIP_INSTALL_TIMEOUT/SANDBOX_OUTPUT_MAX_BYTES/SANDBOX_PIP_MAX_RETRIES`、`MAX_DEV_LOOP_LLM_CALLS=20`、`DEV_LOOP_MIN_CALLS_PER_ROUND=2`、`REACT_MAX_ROUNDS_CODING=12`、`STREAMLIT_PAGE_EXECUTION/STREAMLIT_PAGE_REPORT`。`MAX_FIX_LOOP_COUNT=3` 值不变（首次接线引用）。`ensure_directories` 视需要加 sandbox 目录。
-- [ ] `sandbox/__init__.py` + `sandbox/local_venv.py`：实现 `prepare_venv`/`run_in_venv`/`collect_artifacts`（§2.1.2 签名）；`_run_subprocess` 跨平台进程组 + 超时杀子树 + 输出字节截断（§2.1.3）；路径越界用 `resolve()+is_relative_to(WORKSPACE_DIR)`（复用 git_tools `_is_within_workspace` 范式）；子进程列表形式、禁 `shell=True`；任何异常兜底不逃逸。
+- [ ] `sandbox/__init__.py` + `sandbox/local_venv.py`：实现 `prepare_venv`/`run_in_venv`/`collect_artifacts`（§2.1.2 签名）；`_run_subprocess` 跨平台进程组 + 超时杀子树 + 输出字节截断（§2.1.3）；路径越界校验分两类（§2.1.3 / §2.1.5 sp3-B1 备案）：写入/产物路径用 `resolve()+is_relative_to`（复用 git_tools `_is_within_workspace` 范式），可执行入口 python_exe 用 lexical `abspath+is_relative_to`（避免 venv 符号链接误判）；子进程列表形式、禁 `shell=True`；任何异常兜底不逃逸。
 - [ ] `core/tools/code_fs_tools.py`：`make_write_code_file_tool`/`make_read_code_file_tool`/`make_list_dir_tool`；序列化用 `json.dumps(ensure_ascii=False, sort_keys=True, default=str)`（禁 `str(dict)`）；路径越界校验；`@tool` + `try/except` 兜底。
 
 **P1 节点真实现**
