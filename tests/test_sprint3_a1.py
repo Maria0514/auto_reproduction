@@ -158,20 +158,48 @@ def test_cp_a1_4_sp1_sp2_constants_unchanged() -> None:
     assert config.STREAMLIT_PAGE_REVIEW == "review"
 
 
-def test_cp_a1_4_git_diff_config_is_pure_append() -> None:
-    """CP-A1-4: git diff 实证 config.py 为纯追加（0 删除行）。
+# 引入 sp3 常量的提交（A1 阶段）。CP-A1-4 git 实证对「该提交本身」断言纯追加，
+# 而非 `git diff HEAD`（后者依赖"改动停留在未提交工作树"这一脆弱前提：A1 一旦 commit、
+# 工作树干净后 `git diff HEAD` 必为空，旧断言 `assert additions` 必红）。
+# 对固定的引入提交做断言，结果永久稳定、不随提交时序漂移。
+_SP3_CONFIG_INTRO_COMMIT = "2415c96"
 
-    sp3 A1 约束 config.py 只追加常量，不动任何既有行。用 `git diff HEAD -- config.py`
-    的 unified diff 统计删除行（以 '-' 开头但非 '---' 文件头），断言为 0。
+# sp3 A1 引入的常量名（必须出现在引入提交的新增行中，证明"sp3 为新增"）。
+_SP3_NEW_CONSTANTS = (
+    "SANDBOX_EXEC_TIMEOUT",
+    "SANDBOX_VENV_CREATE_TIMEOUT",
+    "SANDBOX_PIP_INSTALL_TIMEOUT",
+    "SANDBOX_OUTPUT_MAX_BYTES",
+    "SANDBOX_PIP_MAX_RETRIES",
+    "MAX_DEV_LOOP_LLM_CALLS",
+    "DEV_LOOP_MIN_CALLS_PER_ROUND",
+    "REACT_MAX_ROUNDS_CODING",
+    "STREAMLIT_PAGE_EXECUTION",
+    "STREAMLIT_PAGE_REPORT",
+)
+
+
+def test_cp_a1_4_intro_commit_config_is_pure_append() -> None:
+    """CP-A1-4: 实证 sp3 引入提交对 config.py 是纯追加（0 删除行）+ sp3 常量确为新增。
+
+    鲁棒方案：对「引入 sp3 常量的固定提交」（_SP3_CONFIG_INTRO_COMMIT）做 `git show`
+    diff 断言，而非 `git diff HEAD`（工作树时序，A1 commit 后必为空）。
+    本断言不依赖"改动停留在未提交工作树"，结果永久稳定。
+
+    与 `test_cp_a1_4_sp1_sp2_constants_unchanged`（运行时值断言"既有常量零修改"）
+    互补：此处证明该提交未删改任何既有行 + 新增行覆盖全部 sp3 常量。
     """
     proc = subprocess.run(
-        ["git", "diff", "HEAD", "--", "config.py"],
+        ["git", "show", _SP3_CONFIG_INTRO_COMMIT, "--", "config.py"],
         cwd=str(PROJECT_ROOT),
         capture_output=True,
         text=True,
         check=True,
     )
     diff = proc.stdout
+    assert diff.strip(), (
+        f"引入提交 {_SP3_CONFIG_INTRO_COMMIT} 应包含 config.py 的 diff，实测为空"
+    )
 
     deletions = [
         line
@@ -179,16 +207,23 @@ def test_cp_a1_4_git_diff_config_is_pure_append() -> None:
         if line.startswith("-") and not line.startswith("---")
     ]
     assert deletions == [], (
-        f"config.py 必须为纯追加（0 删改），实测删除行：{deletions}"
+        f"引入提交 {_SP3_CONFIG_INTRO_COMMIT} 对 config.py 必须为纯追加（0 删改），"
+        f"实测删除行：{deletions}"
     )
 
-    # 至少应有新增行（防误判：若 diff 为空说明改动未落盘，也算异常）
     additions = [
         line
         for line in diff.splitlines()
         if line.startswith("+") and not line.startswith("+++")
     ]
-    assert additions, "config.py 应存在新增行（sp3 A1 追加的常量），diff 为空说明改动未落盘"
+    assert additions, "引入提交应存在新增行（sp3 A1 追加的常量）"
+
+    # sp3 新增的每个常量都应出现在该提交的新增行中（证明"sp3 为新增"未被削弱）。
+    added_blob = "\n".join(additions)
+    missing = [c for c in _SP3_NEW_CONSTANTS if c not in added_blob]
+    assert not missing, (
+        f"引入提交 {_SP3_CONFIG_INTRO_COMMIT} 的新增行应覆盖全部 sp3 常量，缺失：{missing}"
+    )
 
 
 # ========== Aux：env 覆盖设计声明（sp3 同类常量沿用 sp1/sp2 字面量风格） ==========

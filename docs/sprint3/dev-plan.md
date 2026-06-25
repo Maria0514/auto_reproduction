@@ -318,15 +318,16 @@ graph TD
 - 本模块为纯基础设施（无 LLM、无 GlobalState 依赖），只接收路径/命令/护栏参数返回 dataclass。
 
 **自测检查点**（全部 mock 单测，不依赖真实长训练；AC-S3-02 四护栏映射）：
-- [ ] CP-B1-1 `prepare_venv` 对合法 work_dir 创建 venv 返回 `success=True` + 合法 `python_exe`/`pip_exe`（可 mock subprocess 或在 tempdir 跑真实轻量 venv）
-- [ ] CP-B1-2 **护栏 1 超时（AC-S3-02 ①）**：mock 一个 sleep 超 timeout 的命令，`run_in_venv` 在超时上限内强制终止，返回 `timed_out=True`，子进程树被杀（无残留进程）
-- [ ] CP-B1-3 **护栏 2 输出截断（AC-S3-02 ②）**：mock 超 `output_max_bytes` 的输出，返回 `output_truncated=True`，保留尾部，不撑爆内存
-- [ ] CP-B1-4 **护栏 3 工作目录限定（AC-S3-02 ③）**：`prepare_venv`/`run_in_venv` 对 `work_dir` 越界（如 `/etc`）抛 `SandboxCreationError`，校验在 subprocess 之前（subprocess 0 次调用）
-- [ ] CP-B1-5 **护栏 4 子进程隔离（AC-S3-02 ④）**：mock 子进程崩溃（OSError / 非 0 exit），`run_in_venv` 不抛异常逃逸，返回 `SandboxRunResult(exit_code=-1 或非 0)`，主线程不污染
-- [ ] CP-B1-6 `subprocess.Popen` 全部不使用 `shell=True`（spy 录制 Popen.args 是列表 + shell 不为 True）
-- [ ] CP-B1-7 `reuse_existing=True` 且 `.venv/pyvenv.cfg` 已存在时跳过创建（venv 复用幂等，断言不重建）
-- [ ] CP-B1-8 pip 装不上的包（mock pip exit 非 0）记入 `install_failed_packages`，`success=False`，**不抛异常**（交 execution 分类为 dependency 类错误）
-- [ ] CP-B1-9 `collect_artifacts` 收集产物路径均为绝对路径且限定 WORKSPACE_DIR 下
+> **B1 完成验收（2026-06-23，@全栈开发代理）**：`tests/test_sprint3_b1.py` CP-B1-1~9 全绿（23 passed，含每 CP 主用例 + 补充用例），连跑 3 次零 flaky、`ps` 查无残留子进程；非 e2e 回归 608 passed（阶段 A 基线 585 + B1 新增 23 零退化，唯一 1 failed=`test_cp_a1_4` 时序假设失效非 B1 引入）。**关键实现偏差（已记 TODO）**：护栏 3 对 `python_exe` 改用 lexical 校验（不解符号链接），因 venv `bin/python` 本身是指向系统解释器的符号链接，`resolve()` 会误判越界——work_dir/venv_dir/requirements_files 仍用 `resolve()`（写入副作用路径防符号链接逃逸）。
+- [x] CP-B1-1 `prepare_venv` 对合法 work_dir 创建 venv 返回 `success=True` + 合法 `python_exe`/`pip_exe`（在受控 tmp workspace 跑真实轻量 venv）
+- [x] CP-B1-2 **护栏 1 超时（AC-S3-02 ①）**：真实 sleep 30 子进程 + timeout=2，`run_in_venv` 在上限内强制终止返回 `timed_out=True`，子进程树（含孙进程）被 killpg 杀（getpgid 探测 ProcessLookupError 证无残留进程）
+- [x] CP-B1-3 **护栏 2 输出截断（AC-S3-02 ②）**：真实 5000B 输出 + output_max_bytes=1000，返回 `output_truncated=True`，保留尾部（TAIL_MARKER_END 在），截断后体积受控
+- [x] CP-B1-4 **护栏 3 工作目录限定（AC-S3-02 ③）**：`prepare_venv`/`run_in_venv`/`collect_artifacts` 对 `work_dir`（及 `python_exe`）越界（如 `/etc`、`/usr/bin/python`）抛 `SandboxCreationError`，校验在 subprocess 之前（Popen 0 次调用，spy 断言）
+- [x] CP-B1-5 **护栏 4 子进程隔离（AC-S3-02 ④）**：子进程非 0 exit（42）/ Popen OSError / 真实缺失二进制（FileNotFoundError），`run_in_venv` 不抛异常逃逸，返回 `SandboxRunResult(exit_code=-1 或非 0)`
+- [x] CP-B1-6 `subprocess.Popen` 全部不使用 `shell=True`（spy 录制 run_in_venv + prepare_venv 全路径 Popen.args 是列表 + shell 不为 True）
+- [x] CP-B1-7 `reuse_existing=True` 且 `.venv/pyvenv.cfg` 已存在时跳过创建（spy 断言无 `-m venv` 命令）；reuse_existing=False 反向证重建
+- [x] CP-B1-8 pip 装不上的包（mock pip exit 非 0）记入 `install_failed_packages`，`success=False`，**不抛异常**（含瞬态退避重试 3 次 / 非瞬态不重试 / venv 创建失败降级三补充用例）
+- [x] CP-B1-9 `collect_artifacts` 收集产物路径均为绝对路径且限定 WORKSPACE_DIR 下（跳过 .venv 干扰文件 / 自定义 patterns / 缺失目录返回空）
 
 **风险标注**：
 - **中风险**：跨平台子进程树 kill —— sp3 MVP 主测 Linux（与 sp2 git_tools 一致仅声明 Linux/macOS 支持，Windows 分支代码保留但不强测）。
