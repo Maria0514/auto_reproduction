@@ -358,11 +358,11 @@ graph TD
 - `@tool` 工厂 + `try/except` 兜底，工具异常转错误描述字符串返回，**不抛异常打断 ReAct 子图**（沿用 sp1/sp2 工具工厂治理）。
 
 **自测检查点**：
-- [ ] CP-B2-1 `make_write_code_file_tool()` 写文件到 code_output_dir 成功，返回合法 JSON（`json.loads` 不报错）；越界路径（如 `/tmp/x` 或 `../`）被拒绝
-- [ ] CP-B2-2 `make_read_code_file_tool()` 读已存在文件返回内容；越界路径拒绝；不存在文件返回错误描述字符串（不抛异常）
-- [ ] CP-B2-3 `make_list_dir_tool()` 列目录返回合法 JSON；越界拒绝
-- [ ] CP-B2-4 三工具工厂均返回 `BaseTool` 实例；ToolMessage 输出含中文不转义（`ensure_ascii=False`）+ 键字典序（`sort_keys=True`），`json.loads` 可解析（**断言禁 `str(dict)`**）
-- [ ] CP-B2-5 工具内部异常（如写权限错误）被 `try/except` 捕获转字符串返回，ReAct 子图不被打断
+- [x] CP-B2-1 `make_write_code_file_tool()` 写文件到 code_output_dir 成功，返回合法 JSON（`json.loads` 不报错）；越界路径（如 `/tmp/x` 或 `../`）被拒绝
+- [x] CP-B2-2 `make_read_code_file_tool()` 读已存在文件返回内容；越界路径拒绝；不存在文件返回错误描述字符串（不抛异常）
+- [x] CP-B2-3 `make_list_dir_tool()` 列目录返回合法 JSON；越界拒绝
+- [x] CP-B2-4 三工具工厂均返回 `BaseTool` 实例；ToolMessage 输出含中文不转义（`ensure_ascii=False`）+ 键字典序（`sort_keys=True`），`json.loads` 可解析（**断言禁 `str(dict)`**）
+- [x] CP-B2-5 工具内部异常（如写权限错误）被 `try/except` 捕获转字符串返回，ReAct 子图不被打断
 
 ---
 
