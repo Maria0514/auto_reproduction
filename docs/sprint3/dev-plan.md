@@ -406,13 +406,13 @@ coding = _make_react_wrapper(
 - 配套测试：F3 需有"主体字节级一致"断言（两篇不同论文截 SystemMessage 去尾部段落后比较，参 `test_paper_analysis_e2e.py::test_e2e_prompt_cache_system_prompt_byte_identical`）。
 
 **自测检查点**：
-- [ ] CP-C1-1 `from core.nodes.coding import coding` 可导入；`coding` 为 callable，`inspect.signature` 形参为 `(state)`（wrapper 产物）
-- [ ] CP-C1-2（mock LLM）首轮 coding 正常产出代码文件到 `code_output_dir`，返回 dict 含 `code_output_dir`/`current_step="coding"`
-- [ ] CP-C1-3（mock）修复回合（`fix_loop_count>0` 且 `execution_result` 非空）：`_build_coding_context` 注入上轮 stderr 尾部 + error_category，prompt 切到"现有代码上修改"模式（断言 context payload 含 `last_error_summary`/`fix_round`）
-- [ ] CP-C1-4 `_map_coding_result` 是 3 参签名（`inspect` 断言含 `react_messages`）；coding ReAct 失败时走 read-modify-write 写 `node_errors`/`degraded_nodes`（**must-fix-1 断言：读出整列表 → append → return**），并打 WARNING
-- [ ] CP-C1-5 `_map_coding_result` **不写 `fix_loop_count`**（断言返回 dict 无该键）；`retry_budget_remaining` 不被 map_result 覆盖（must-fix-2）
-- [ ] CP-C1-6 coding system prompt 主体常量内**无 arxiv_id/paper_meta 等论文级动态变量**（字节级一致守门，归 F3 回归）
-- [ ] CP-C1-7 ToolMessage 序列化合规（间接经 B2 工具，断言不出现 `str(dict)` repr）
+- [x] CP-C1-1 `from core.nodes.coding import coding` 可导入；`coding` 为 callable，`inspect.signature` 形参为 `(state)`（wrapper 产物）
+- [x] CP-C1-2（mock LLM）首轮 coding 正常产出代码文件到 `code_output_dir`，返回 dict 含 `code_output_dir`/`current_step="coding"`
+- [x] CP-C1-3（mock）修复回合（`fix_loop_count>0` 且 `execution_result` 非空）：`_build_coding_context` 注入上轮 stderr 尾部 + error_category，prompt 切到"现有代码上修改"模式（断言 context payload 含 `last_error_summary`/`fix_round`）
+- [x] CP-C1-4 `_map_coding_result` 是 3 参签名（`inspect` 断言含 `react_messages`）；coding ReAct 失败时走 read-modify-write 写 `node_errors`/`degraded_nodes`（**must-fix-1 断言：读出整列表 → append → return**），并打 WARNING
+- [x] CP-C1-5 `_map_coding_result` **不写 `fix_loop_count`**（断言返回 dict 无该键）；`retry_budget_remaining` 不被 map_result 覆盖（must-fix-2）
+- [x] CP-C1-6 coding system prompt 主体常量内**无 arxiv_id/paper_meta 等论文级动态变量**（字节级一致守门，归 F3 回归）
+- [x] CP-C1-7 ToolMessage 序列化合规（间接经 B2 工具，断言不出现 `str(dict)` repr）
 
 **风险标注**：
 - **中风险**：修复回合反馈注入若裁剪不当（stderr 过长）会撑爆 context —— 按架构 §2.2.2 裁剪策略（尾部 ~2000 字符）控制。
