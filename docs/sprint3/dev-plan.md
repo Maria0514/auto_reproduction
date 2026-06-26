@@ -442,12 +442,12 @@ coding = _make_react_wrapper(
 - **语言策略（sp2）**：叙述中文，事实层（数据集名/指标名/仓库 URL）英文。
 
 **自测检查点**：
-- [ ] CP-C2-1 `from core.nodes.reporting import reporting` 可导入；签名 `(state) -> dict`
-- [ ] CP-C2-2 **full_success 形态（AC-S3-09 ①）**：`execution_result.success=True` → 报告含指标对比表（baseline vs 复现值）+ artifact 清单 + 成功结论；`report_path` 非空
-- [ ] CP-C2-3 **code_only 形态（AC-S3-09 ②）**：`execution_mode==CODE_ONLY` → 含代码位置 + deliverables，标注"仅生成代码"，**无指标章节**；`execution_result is None` 时仍产有效报告
-- [ ] CP-C2-4 **degraded 形态（AC-S3-09 ③）**：success=False / export_code → 标 `degraded`，含降级原因 + node_errors 摘要 + **fix_loop_history 修复历程** + 保留代码
-- [ ] CP-C2-5 reporting **不写任何 list 字段**（纯读，断言返回 dict 仅含 `report_path`/`current_step`，无 node_errors/degraded_nodes 覆盖风险）
-- [ ] CP-C2-6 `report_path` resolve+is_relative_to(WORKSPACE_DIR) 校验，落在 workspace 下
+- [x] CP-C2-1 `from core.nodes.reporting import reporting` 可导入；签名 `(state) -> dict`
+- [x] CP-C2-2 **full_success 形态（AC-S3-09 ①）**：`execution_result.success=True` → 报告含指标对比表（baseline vs 复现值）+ artifact 清单 + 成功结论；`report_path` 非空
+- [x] CP-C2-3 **code_only 形态（AC-S3-09 ②）**：`execution_mode==CODE_ONLY` → 含代码位置 + deliverables，标注"仅生成代码"，**无指标章节**；`execution_result is None` 时仍产有效报告
+- [x] CP-C2-4 **degraded 形态（AC-S3-09 ③）**：success=False / export_code → 标 `degraded`，含降级原因 + node_errors 摘要 + **fix_loop_history 修复历程** + 保留代码
+- [x] CP-C2-5 reporting **不写任何 list 字段**（纯读，断言返回 dict 仅含 `report_path`/`current_step`，无 node_errors/degraded_nodes 覆盖风险）
+- [x] CP-C2-6 `report_path` resolve+is_relative_to(WORKSPACE_DIR) 校验，落在 workspace 下
 
 ---
 
