@@ -226,14 +226,23 @@ def _build_coding_context(state: GlobalState) -> Dict[str, Any]:
         or analysis.get("hardware_requirements")
     )
 
-    # === 修复回合：注入上一轮 execution 反馈（裁剪后）===
+    # 无条件注入（首轮 + 修复回合共用，坑1-B / 坑2 修复）：
+    #   - code_output_dir：首轮也必须告知 agent 写入绝对路径（与 get_tools / map_result
+    #     幂等同值），避免 agent 写到臆想路径导致 state.code_output_dir 指向空目录；
+    #   - arxiv_id：read_section(arxiv_id, section_name) 工具的必需入参（坑2 修复，
+    #     任务标识非论文内容，放 HumanMessage 不破坏 Prompt Cache 方案 A）。
+    payload["code_output_dir"] = _resolve_code_output_dir(state)
+    paper_meta = state.get("paper_meta") or {}
+    payload["arxiv_id"] = (
+        paper_meta.get("arxiv_id") if isinstance(paper_meta, dict) else None
+    )
+
+    # === 修复回合：只保留反馈裁剪（code_output_dir 已上移无条件注入）===
     exec_result = state.get("execution_result")
     fix_count = state.get("fix_loop_count", 0) or 0
     if exec_result and fix_count > 0:
         payload["fix_round"] = fix_count
         payload["last_error_summary"] = _digest_execution_feedback(exec_result)
-        # 在原代码上改，非重生成。给出已落地的代码目录绝对路径。
-        payload["code_output_dir"] = _resolve_code_output_dir(state)
 
     return payload
 
@@ -244,9 +253,14 @@ def _build_coding_context(state: GlobalState) -> Dict[str, Any]:
 
 
 def _get_coding_tools(state: GlobalState) -> List[Any]:
-    """coding 节点工具集（架构 §2.2.3）。"""
+    """coding 节点工具集（架构 §2.2.3）。
+
+    write 工具锚定到 code_output_dir（坑1-A）：相对路径以 code_dir 为基准，越界写被
+    工具直接拒。read/list 仍限定 workspace 根（需跨访问 selected_repo.local_path）。
+    """
+    code_dir = _resolve_code_output_dir(state)   # 与 build_context / map_result 幂等同值
     return [
-        make_write_code_file_tool(),
+        make_write_code_file_tool(base_dir=code_dir),
         make_read_code_file_tool(),
         make_list_dir_tool(),
         read_section_tool(),
@@ -298,9 +312,11 @@ def _resolve_code_output_dir(state: GlobalState) -> str:
 def _has_written_any_file(react_messages: Optional[Any], code_dir: str) -> bool:
     """扫描 ReAct 子图最终 messages，判断本轮是否有成功的 write_code_file 调用。
 
-    判定标准：存在 ``name=write_code_file`` 的 ToolMessage，且其内容解析为
-    ``{"success": true, ...}``（code_fs_tools 写工具的成功序列化契约）。失败 /
-    越界 / 异常的 write 返回 ``{"success": false, ...}``，不计入。
+    判定标准：存在 ``name=write_code_file`` 的 ToolMessage，其内容解析为
+    ``{"success": true, "path": <在 code_dir 内>}``（code_fs_tools 写工具的成功序列化
+    契约）。失败 / 越界 / 异常的 write 返回 ``{"success": false, ...}``，不计入；
+    success=true 但 ``path`` 落在 code_dir 之外的也不计（坑1-C：防 agent 写到臆想路径
+    后仍被误判为有产出）。
 
     BUG-S1-02 治理：write_code_file 用 json.dumps（合法 JSON），这里用 json.loads
     解析，不走 str(dict) repr。
@@ -338,7 +354,19 @@ def _has_written_any_file(react_messages: Optional[Any], code_dir: str) -> bool:
         except (ValueError, TypeError):
             continue
         if isinstance(parsed, dict) and parsed.get("success") is True:
-            return True
+            # 落点校验（坑1-C）：只认落在 code_dir 内的成功 write。
+            # 工具 success=true 返回的 path 是 str(target.resolve())，已是绝对真实路径。
+            written_path = parsed.get("path")
+            if not written_path:
+                continue   # 无 path 字段不计（防御）
+            try:
+                rp = Path(str(written_path)).resolve()
+                cd = Path(code_dir).resolve()
+                if rp == cd or rp.is_relative_to(cd):
+                    return True
+            except (OSError, ValueError):
+                continue
+            # 写成功但落在 code_dir 外 → 不计，继续扫描。
 
     if found_write_tool:
         logger.warning(

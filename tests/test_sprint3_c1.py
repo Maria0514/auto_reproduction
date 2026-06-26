@@ -450,7 +450,10 @@ def test_reinforce_branch_exec_result_but_fix_count_zero_is_first_round(
     payload = _build_coding_context(state)
     assert "fix_round" not in payload, "fix_loop_count==0 应判为首轮"
     assert "last_error_summary" not in payload
-    assert "code_output_dir" not in payload, "首轮 context 不注入 code_output_dir"
+    # 坑1-B 修复：首轮也无条件注入 code_output_dir（区分首轮/修复回合靠 fix_round/
+    # last_error_summary 的存在与否，不再靠 code_output_dir 的存在）。
+    assert "code_output_dir" in payload, "坑1-B：首轮 context 也注入 code_output_dir"
+    assert Path(payload["code_output_dir"]).is_absolute()
 
 
 def test_reinforce_branch_fix_count_but_no_exec_result_is_first_round(
@@ -527,9 +530,10 @@ def test_reinforce_has_written_framework_error_text_is_false() -> None:
 
 
 def test_reinforce_has_written_mixed_fail_then_success_is_true() -> None:
+    # 坑1-C：成功 write 必须带落在 code_dir 内的 path 才计为有产出。
     msgs = [
         _tm(json.dumps({"success": False}), "write_code_file", "w1"),
-        _tm(json.dumps({"success": True}), "write_code_file", "w2"),
+        _tm(json.dumps({"success": True, "path": "/tmp/x/model.py"}), "write_code_file", "w2"),
     ]
     assert _has_written_any_file(msgs, "/tmp/x") is True
 
@@ -540,8 +544,8 @@ def test_reinforce_has_written_none_and_empty_is_false() -> None:
 
 
 def test_reinforce_has_written_multimodal_list_content_success() -> None:
-    """content 为 multimodal list（[{type,text}]）含成功 JSON → True。"""
-    msgs = [_tm([{"type": "text", "text": json.dumps({"success": True})}],
+    """content 为 multimodal list（[{type,text}]）含成功 JSON（带 code_dir 内 path）→ True。"""
+    msgs = [_tm([{"type": "text", "text": json.dumps({"success": True, "path": "/tmp/x/m.py"})}],
                 "write_code_file", "w1")]
     assert _has_written_any_file(msgs, "/tmp/x") is True
 

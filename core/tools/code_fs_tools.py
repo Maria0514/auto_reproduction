@@ -24,6 +24,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from typing import Optional
 
 from langchain_core.tools import tool, BaseTool
 
@@ -78,12 +79,29 @@ def _is_within_workspace(target: Path) -> bool:
     return resolved == workspace or resolved.is_relative_to(workspace)
 
 
+def _is_within_base(target: Path, base: Path) -> bool:
+    """校验 target 解析后位于 base 之下（含等于自身）。base 必须已在 workspace 内。
+
+    coding 节点把 write 工具锚定到 code_output_dir（base_dir）时使用：相对路径已先
+    锚定到 base，绝对路径必须落在 base 内。与 _is_within_workspace 同样 resolve()
+    解符号链接看真实落点。
+    """
+    resolved = target.resolve()
+    base_resolved = base.resolve()
+    return resolved == base_resolved or resolved.is_relative_to(base_resolved)
+
+
 # ---------------------------------------------------------------------------
 # ReAct 工具工厂（供 coding 节点 ReAct agent 调用）
 # ---------------------------------------------------------------------------
 
-def make_write_code_file_tool() -> BaseTool:
-    """工具工厂：写代码文件到 workspace（通常是 code_output_dir）下。
+def make_write_code_file_tool(base_dir: Optional[str] = None) -> BaseTool:
+    """工具工厂：写代码文件到 base_dir（coding 传 code_output_dir）/ workspace 下。
+
+    - ``base_dir is None``（默认，B2 既有行为逐字节不变）：path 直接作为路径，校验
+      落在 WORKSPACE_DIR 之下，越界信息含 "WORKSPACE_DIR"。
+    - ``base_dir is not None``（coding 传 code_output_dir）：相对路径锚定到 base_dir，
+      绝对路径必须落在 base_dir 内（_is_within_base），越界信息含 "code_output_dir"。
 
     成功时 ToolMessage 输出 ``{"success": true, "path": ..., "bytes_written": ...}``，
     路径越界 / 写失败时输出 ``{"success": false, "error": "..."}``。
@@ -91,25 +109,36 @@ def make_write_code_file_tool() -> BaseTool:
 
     @tool
     def write_code_file(path: str, content: str) -> str:
-        """Write text content to a file under the workspace (e.g. code_output_dir).
+        """Write text content to a file under code_output_dir (or the workspace).
 
-        Creates parent directories as needed. The target path must resolve to a
-        location inside the workspace directory; out-of-workspace paths are
-        rejected. Returns a JSON object {"success": true, "path": ...,
-        "bytes_written": ...} on success, or {"success": false, "error": "..."}
-        on failure (never raises).
+        Creates parent directories as needed. When the tool is bound to a base
+        directory (code_output_dir), relative paths are anchored to it and the
+        target must resolve inside it; out-of-base paths are rejected. Returns a
+        JSON object {"success": true, "path": ..., "bytes_written": ...} on
+        success, or {"success": false, "error": "..."} on failure (never raises).
 
         Args:
-            path: Absolute or workspace-relative file path to write.
+            path: Absolute or (base/workspace)-relative file path to write.
             content: Full text content to write (overwrites existing file).
         """
         try:
-            target = Path(path)
-            if not _is_within_workspace(target):
-                return _serialize_tool_result({
-                    "success": False,
-                    "error": f"路径越界：{path} 不在 WORKSPACE_DIR({WORKSPACE_DIR}) 之下",
-                })
+            if base_dir is None:
+                target = Path(path)
+                if not _is_within_workspace(target):
+                    return _serialize_tool_result({
+                        "success": False,
+                        "error": f"路径越界：{path} 不在 WORKSPACE_DIR({WORKSPACE_DIR}) 之下",
+                    })
+            else:
+                target = (
+                    Path(path) if Path(path).is_absolute()
+                    else Path(base_dir) / path
+                )
+                if not _is_within_base(target, Path(base_dir)):
+                    return _serialize_tool_result({
+                        "success": False,
+                        "error": f"路径越界：{path} 不在 code_output_dir({base_dir}) 之下",
+                    })
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
             resolved = target.resolve()

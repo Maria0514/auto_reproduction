@@ -320,13 +320,21 @@ def _build_coding_context(state: GlobalState) -> Dict[str, Any]:
     payload["framework"] = analysis.get("framework")
     payload["hardware_requirements_en"] = analysis.get("hardware_requirements_en")
 
+    # 无条件注入（首轮 + 修复回合共用，坑1 修复）：
+    #   - code_output_dir：首轮也必须告知 agent 写入绝对路径（system prompt 依赖之）；
+    #     由 _resolve_code_output_dir(state) 幂等取值，与 get_tools / map_result 同值。
+    #   - arxiv_id：read_section(arxiv_id, ...) 工具的必需入参（坑2 修复，任务标识非论文内容，
+    #     放 HumanMessage 不破坏 Prompt Cache 方案 A）。
+    payload["code_output_dir"] = _resolve_code_output_dir(state)
+    paper_meta = state.get("paper_meta") or {}
+    payload["arxiv_id"] = paper_meta.get("arxiv_id") if isinstance(paper_meta, dict) else None
+
     # === 修复回合：注入上一轮 execution 反馈（裁剪后）===
     exec_result = state.get("execution_result")
     fix_count = state.get("fix_loop_count", 0) or 0
     if exec_result and fix_count > 0:
         payload["fix_round"] = fix_count
         payload["last_error_summary"] = _digest_execution_feedback(exec_result)  # 见下
-        payload["code_output_dir"] = state.get("code_output_dir")  # 在原代码上改，非重生成
     return payload
 
 
@@ -347,16 +355,20 @@ def _digest_execution_feedback(exec_result: dict) -> Dict[str, Any]:
 
 ```python
 def _get_coding_tools(state) -> List[BaseTool]:
+    code_dir = _resolve_code_output_dir(state)   # 与 build_context / map_result 幂等同值（坑1）
     return [
-        make_write_code_file_tool(),      # 新增：写文件到 code_output_dir（resolve+is_relative_to 校验）
-        make_read_code_file_tool(),       # 新增：读 code_output_dir / selected_repo.local_path 下文件
-        make_list_dir_tool(),             # 新增：列目录（限定 workspace）
+        # write 锚定到 code_output_dir：相对路径以 code_dir 为基准，越界写被工具直接拒（坑1-A）
+        make_write_code_file_tool(base_dir=code_dir),
+        make_read_code_file_tool(),       # 读：仍限定 workspace 根（需跨访问 selected_repo.local_path）
+        make_list_dir_tool(),             # 列目录：仍限定 workspace 根
         read_section_tool(),              # 复用 deepxiv：回读论文章节核对实现细节
         web_search_tool(),                # 复用：查依赖/API 用法
     ]
 ```
 
 > **新增工具 `core/tools/code_fs_tools.py`**（写/读/列代码文件）：**严格复用 git_tools 安全范式** —— `resolve()+is_relative_to(WORKSPACE_DIR)` 路径越界校验、`_serialize_tool_result(json.dumps ensure_ascii=False sort_keys=True default=str)` 序列化（禁 `str(dict)`，BUG-S1-02 治理）、`@tool` 工厂 + `try/except` 兜底不杀子图。
+>
+> **写/读边界（坑1 修复）**：`make_write_code_file_tool(base_dir=None)` 增加可选基准目录参数——传入 `base_dir`（coding 传 `code_output_dir`）时相对路径锚定到 `base_dir`、绝对路径必须落在 `base_dir` 内（用新 helper `_is_within_base`）；`base_dir=None` 时退回原 WORKSPACE_DIR 根校验（向后兼容 B2 既有 38 用例）。**写工具锚定 code_output_dir、读/列工具仍限 workspace 根**——因 read/list 需跨访问 `selected_repo.local_path`（在 workspace 下但在 code_output_dir 外）。此设计与 sandbox `prepare_venv(work_dir=...)` 把执行锚定到目录的范式对称。
 
 #### 2.2.4 map_result 与 state 写入（must-fix-1）
 
@@ -373,7 +385,8 @@ def _map_coding_result(result, state, react_messages=None) -> dict:
     node_errors = list(state.get("node_errors", []))      # read-modify-write（must-fix-1）
     degraded_nodes = list(state.get("degraded_nodes", []))
     code_dir = _resolve_code_output_dir(state)            # workspace_dir/<thread>/code，幂等
-    # ReAct 失败（result 空/无文件产出）→ degraded，不死循环
+    # ReAct 失败判定（坑1-C）：result 空 / 无「写入 path 落在 code_dir 内」的成功 write
+    #   → degraded（即便工具返回 success=true 但落点在 code_dir 外也不算产出）。
     if not result or not _has_written_any_file(react_messages, code_dir):
         if NODE_NAME not in degraded_nodes:
             degraded_nodes.append(NODE_NAME)
