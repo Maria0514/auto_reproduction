@@ -489,20 +489,21 @@ coding = _make_react_wrapper(
 - **must-fix-1**：`node_errors`/`degraded_nodes`/`fix_loop_history` 全部 read-modify-write 单点写回。
 
 **自测检查点**：
-- [ ] CP-C3-1 `from core.nodes.execution import execution` 可导入；签名 `(state) -> dict`；`ErrorCategory`/`ExecutionFeedback`/`AUTO_FIXABLE` 为节点本地对象（**断言不在 `core/state.py`**）
-- [ ] CP-C3-2（mock sandbox 返回 exit 0 + 可解析 metrics）**B 档成功（AC-S3-01）**：`execution_result.success=True`，`metrics` 至少 1 个；出边到 reporting（不 interrupt、不回 coding）
-- [ ] CP-C3-3 **错误分类分流（AC-S3-08）**：可修复类（syntax/import/dependency/path/runtime）→ `auto_fixable=True`；不可修复类（timeout/hardware/data_missing/unresolved_resource）→ `auto_fixable=False`；分类映射两类断言
-- [ ] CP-C3-4 **修复回边计数（AC-S3-03 ①②）**：mock 可修复失败 + `fix_loop_count<3` + 预算够 → `fix_loop_count+1` + `fix_loop_history` append 一条 FixLoopRecord（5 字段）+ `_dev_loop_route="retry_coding"`
-- [ ] CP-C3-5 **上限拦截（AC-S3-03 ③）**：`fix_loop_count==3` 时不再回 coding、不自增，转 interrupt#2
-- [ ] CP-C3-6 **不可修复不重试（AC-S3-08 ②）**：不可修复类失败 → `fix_loop_count` 不自增、不回 coding，直接 interrupt#2（或降级）
-- [ ] CP-C3-7 **interrupt#2 三态 resume（AC-S3-07）**：`Command(resume=...)` 注入三态：terminate→`current_step="cancelled_by_user"`；revise_plan→`_planning_user_feedback`+`approved=False`+**`fix_loop_count` 清零、`fix_loop_history` 保留**；export_code→`degraded`+`user_fix_decision="export_code"`
-- [ ] CP-C3-8 **预算回写（AC-S3-04 ①）**：metrics LLM 抽取兜底触发时 `retry_budget_remaining` 按实际次数单点回写、`_dev_loop_llm_calls` 累加；不触发时 execution 对预算零扣减
-- [ ] CP-C3-9 **入口预算门（AC-S3-04 ③）**：`retry_budget_remaining < 2` 时直接降级（标 degraded、不进修复循环、不 interrupt）
-- [ ] CP-C3-10 **子预算触顶（AC-S3-04 ②）**：`_dev_loop_llm_calls >= 20` 时视同修复耗尽，转 interrupt#2
-- [ ] CP-C3-11 **must-fix-1**：`node_errors`/`degraded_nodes`/`fix_loop_history` 写入均 read-modify-write（断言读出整列表 → append → return，多回合无丢失无重复累加）
-- [ ] CP-C3-12 **细分类承载位置**：`ErrorCategory` 写进 `NodeError.error_message` 的 `[error_category=...]` 前缀，`NodeError.error_type` 严格三态（断言不出现 syntax/import 等细分类值）
-- [ ] CP-C3-13 **interrupt#2 重跑幂等（S-1 契约落地）**：mock resume 重跑 execution，检测到本回合已有 `execution_result` 则复用、不重跑 sandbox（断言 sandbox 调用计数 == 1）
-- [ ] CP-C3-14 非静默吞错：失败分类/降级均打 WARNING 日志（caplog 捕获）
+> **C3 完成验收（2026-06-27，@全栈开发代理）**：`tests/test_sprint3_c3.py` CP-C3-1~14 全绿（25 passed，含每 CP 主用例 + metrics 三档/B 档/非法 resume 兜底补充用例），连跑 3 次零 flaky（0.68/0.67/0.69s，interrupt/checkpointer 用例用唯一 `uuid4` thread_id）；全量非 e2e 回归 **782 passed / 0 failed / 25 skipped / 1 warning**（基线 757 + C3 新增 25 零退化）。**interrupt#2 重跑幂等落地形态（S-1 CP-S-3 契约）**：execution 首次失败回合若判定需 interrupt 则先 return 落盘 `execution_result` + 置 `_dev_loop_route="await_dev_loop_interrupt"`（commit 边界），不 interrupt；由 D1 self-loop 路由（`await → execution`）重入后 guard 命中跳过 sandbox 再函数体内 `interrupt()`，resume 重跑只重跑 commit 后的这次进入 → sandbox 副作用恰为 1（CP-C3-13 断言 prepare 计数恒 1）。**对 D1 交接**：`_route_after_execution` 必须把 `_dev_loop_route=="await_dev_loop_interrupt"` 路由回 execution（self-loop），把 `=="retry_coding"` 路由回 coding，其余按 `user_fix_decision` 三态 / `execution_result.success` 兜底。
+- [x] CP-C3-1 `from core.nodes.execution import execution` 可导入；签名 `(state) -> dict`；`ErrorCategory`/`ExecutionFeedback`/`AUTO_FIXABLE` 为节点本地对象（**断言不在 `core/state.py`**）— `test_cp_c3_1_*` PASS
+- [x] CP-C3-2（mock sandbox 返回 exit 0 + 可解析 metrics）**B 档成功（AC-S3-01）**：`execution_result.success=True`，`metrics` 至少 1 个；出边到 reporting（不 interrupt、不回 coding）— `test_cp_c3_2_*` PASS（含 exit0 无指标→success=False 反证）
+- [x] CP-C3-3 **错误分类分流（AC-S3-08）**：可修复类（syntax/import/dependency/path/runtime）→ `auto_fixable=True`；不可修复类（timeout/hardware/data_missing/unresolved_resource）→ `auto_fixable=False`；分类映射两类断言 — `test_cp_c3_3_*` PASS（含硬件先于 runtime 顺序敏感）
+- [x] CP-C3-4 **修复回边计数（AC-S3-03 ①②）**：mock 可修复失败 + `fix_loop_count<3` + 预算够 → `fix_loop_count+1` + `fix_loop_history` append 一条 FixLoopRecord（5 字段）+ `_dev_loop_route="retry_coding"` — `test_cp_c3_4_*` PASS
+- [x] CP-C3-5 **上限拦截（AC-S3-03 ③）**：`fix_loop_count==3` 时不再回 coding、不自增，转 interrupt#2 — `test_cp_c3_5_*` PASS（首次进入置 await、不自增）
+- [x] CP-C3-6 **不可修复不重试（AC-S3-08 ②）**：不可修复类失败 → `fix_loop_count` 不自增、不回 coding，直接 interrupt#2（或降级）— `test_cp_c3_6_*` PASS（permanent 三态映射 + 前缀断言）
+- [x] CP-C3-7 **interrupt#2 三态 resume（AC-S3-07）**：`Command(resume=...)` 注入三态：terminate→`current_step="cancelled_by_user"`；revise_plan→`_planning_user_feedback`+`approved=False`+**`fix_loop_count` 清零、`fix_loop_history` 保留**；export_code→`degraded`+`user_fix_decision="export_code"` — `test_cp_c3_7_*` PASS（最小 self-loop StateGraph + InMemorySaver 跑真实 interrupt + 非法 payload 兜底 terminate）
+- [x] CP-C3-8 **预算回写（AC-S3-04 ①）**：metrics LLM 抽取兜底触发时 `retry_budget_remaining` 按实际次数单点回写、`_dev_loop_llm_calls` 累加；不触发时 execution 对预算零扣减 — `test_cp_c3_8_*` PASS（触发 30→29 / +1；档 1 命中不写预算键）
+- [x] CP-C3-9 **入口预算门（AC-S3-04 ③）**：`retry_budget_remaining < 2` 时直接降级（标 degraded、不进修复循环、不 interrupt）— `test_cp_c3_9_*` PASS
+- [x] CP-C3-10 **子预算触顶（AC-S3-04 ②）**：`_dev_loop_llm_calls >= 20` 时视同修复耗尽，转 interrupt#2 — `test_cp_c3_10_*` PASS
+- [x] CP-C3-11 **must-fix-1**：`node_errors`/`degraded_nodes`/`fix_loop_history` 写入均 read-modify-write（断言读出整列表 → append → return，多回合无丢失无重复累加）— `test_cp_c3_11_*` PASS（原 state list 未被原地 mutate）
+- [x] CP-C3-12 **细分类承载位置**：`ErrorCategory` 写进 `NodeError.error_message` 的 `[error_category=...]` 前缀，`NodeError.error_type` 严格三态（断言不出现 syntax/import 等细分类值）— `test_cp_c3_12_*` PASS
+- [x] CP-C3-13 **interrupt#2 重跑幂等（S-1 契约落地）**：mock resume 重跑 execution，检测到本回合已有 `execution_result` 则复用、不重跑 sandbox（断言 sandbox 调用计数 == 1）— `test_cp_c3_13_*` PASS（暂停时 prepare=1，resume 后恒 1）
+- [x] CP-C3-14 非静默吞错：失败分类/降级均打 WARNING 日志（caplog 捕获）— `test_cp_c3_14_*` PASS
 
 **风险标注**：
 - **高风险**：interrupt#2 重跑幂等（CP-C3-13）依赖 S-1 spike 结论；若 S-1 证实保护方案无效，C3 需调整 interrupt 触发方案后才能继续。

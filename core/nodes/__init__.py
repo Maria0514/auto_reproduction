@@ -1,6 +1,7 @@
 """LangGraph 主图节点集合。"""
 
 from core.nodes.coding import coding
+from core.nodes.execution import execution
 from core.nodes.paper_analysis import paper_analysis
 from core.nodes.paper_intake import paper_intake
 from core.nodes.planning import planning
@@ -13,5 +14,6 @@ __all__ = [
     "resource_scout",
     "planning",
     "coding",
+    "execution",
     "reporting",
 ]
