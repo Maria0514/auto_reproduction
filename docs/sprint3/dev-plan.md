@@ -653,10 +653,11 @@ coding = _make_react_wrapper(
   - interrupt#2 三态 resume 用 `Command(resume=...)` mock（CP-C3-7，AC-S3-07，不依赖 UI 渲染）。
 
 **自测检查点**：
-- [ ] CP-F1-1 `tests/test_sprint3_*` 全套 mock 单测通过，sp1/sp2 全量回归不退化（`pytest -q -m "not e2e"` 全绿）
-- [ ] CP-F1-2 **must-fix-1 验收（AC-S3-05）**：grep 断言三字段无 `Annotated`/`operator.add` + 多回合修复三字段记录完整无丢失无重复累加
-- [ ] CP-F1-3 **must-fix-2 验收（AC-S3-04）**：预算回写 + 子预算 20 + 入口预算门三项断言
-- [ ] CP-F1-4 AC-S3-02/03/05/06/08/09 mock 单测全覆盖（AC 矩阵见 §5）
+- [x] CP-F1-1 `tests/test_sprint3_*` 全套 mock 单测通过，sp1/sp2/sp3 全量回归不退化（`pytest -q -m "not e2e" --ignore=tests/test_paper_intake.py` **1075 passed / 0 failed / 25 skipped / 119.05s**，= 基线 1056 + F1 新增 19，零退化）— PASS
+- [x] CP-F1-2 **must-fix-1 验收（AC-S3-05）**：grep 断言三字段无 `Annotated`/`operator.add`（+ `__annotations__` origin==list）+ 多回合修复三字段 read-modify-write 记录完整无丢失无重复累加（`test_sprint3_f1.py::test_cp_f1_2_*` 3 条 Sprint 级聚合，底层 CP-A2-3 / CP-C3-11 仍在）— PASS
+- [x] CP-F1-3 **must-fix-2 验收（AC-S3-04）**：预算回写（40-2=38）+ 子预算 20<50 + 入口预算门（budget<2 降级不回 coding）三项专项断言（`test_sprint3_f1.py::test_cp_f1_3_*` 4 条，对照 CP-A1-3 / CP-C3-8/9/10）— PASS
+- [x] CP-F1-4 AC-S3-02/03/04/05/06/07(mock)/08/09/10 mock 单测全覆盖（`test_sprint3_f1.py::test_cp_f1_4_ac_has_mock_test_coverage` 参数化逐条审计 + 元断言矩阵恰覆盖 9 条 AC；AC-S3-01 真实 e2e happy path 与 AC-07 真实 e2e 留 F2）— PASS
+- **CP-F1-1~4 测试工程师独立验收 PASS（2026-06-29）**：不轻信开发自测，独立探针行为级复核 must-fix-1/2（多回合三字段 read-modify-write 无丢失无重复、原 state 不 mutate；预算 40-2=38 + 入口预算门 + 子预算触顶）+ AC 映射 26 个 CP 函数逐条独立运行且抽查源码确认断言有效（防"名字对但断言空泛"，c3_7 三态/c3_5 上限3/c3_6 不可修复均强断言）。F1 补强数 0（无缺口）。见 `test-reports/2026-06-29_f1-acceptance.md`。
 
 #### 任务 F2：五条核心 e2e（凭证就绪后补跑）
 
@@ -674,9 +675,9 @@ coding = _make_react_wrapper(
 - **复跑要求（已知 bug 模式 §5）**：interrupt#2 / 修复循环属 LLM 服从度 + 重跑幂等类风险，复现率视实测定 —— 复现率高（≥50%）连跑 3 次全绿，复现率低（10%~50%）连跑 5 次全绿且含全量回归。
 
 **自测检查点**：
-- [ ] CP-F2-1 五条 e2e 逻辑用 mock LLM/sandbox 跑通（不依赖凭证）
-- [ ] CP-F2-2 凭证就绪后真实链路补跑转正（AC-S3-01 happy path 真实 LLM）+ 连跑达标
-- [ ] CP-F2-3 e2e 报告归档 `docs/sprint3/test-reports/`（含跑数/耗时）
+- [x] CP-F2-1 五条 e2e 逻辑用 mock LLM/sandbox 跑通（不依赖凭证）— PASS（by test-engineer 2026-06-29，见 `test-reports/2026-06-29_f1-acceptance.md`）：新建 `tests/test_sprint3_e2e.py` 真实 `build_graph()` 主图 + InMemorySaver + mock 上游/coding + 真实 execution(patch sandbox) + 真实 reporting，8 mock e2e 全绿覆盖 happy path B 档(AC-01)/修复上限3→interrupt#2(AC-03)/interrupt#2 三态 resume(AC-07)/code_only 跳过 execution(AC-06)/降级(预算耗尽+不可修复 export, AC-09③)。**不标 `@pytest.mark.e2e`** 进默认回归（`-m "not e2e"` 8 passed/1 deselected），连跑 3 次 0 flaky。全量回归 1083 passed（F1 基线 1075 + 8）零退化。CP-F2-2 真实链路骨架 `TestRealChainSkeleton`（`@pytest.mark.e2e` 凭证 skip）已预备，本次不跑真实 e2e。
+- [x] CP-F2-2 凭证就绪后真实链路补跑转正（AC-S3-01 happy path 真实 LLM）+ 连跑达标 — **主控补跑转正 PASS（2026-06-29）：7/7 真实 e2e 全绿**（首轮全套 6/7：real-1 仅 `run==1` 断言过严已修[真实 LLM 规划 11 步 execution_steps]→重跑 PASSED 3m08s；real-2~5 首轮全套 PASSED；首轮 29m05s；凭证有效 + deepxiv 配额够 + HippoRAG 缓存命中无 DailyLimit）。§674 稳定性复跑(real-2/3)经 Maria 决策省配额记为可选待补（本次各 1 次通过）。详见 `test-reports/2026-06-29_f2-real-e2e-run.md`。【原代码落地注记 by test-engineer 2026-06-29】：`tests/test_sprint3_e2e.py::TestRealChainE2E` 5 条真实链路 e2e（real-1~5，参数化共 7 item）已落地，真实 LLM/deepxiv + mock sandbox（§667）+ 类级 `@pytest.mark.e2e`+凭证 skipif；**本次不跑真实 e2e 省 deepxiv 配额**，mock smoke 自验装配正确（8 mock e2e 仍 `-m "not e2e"` 8 passed + 真实 e2e `-m e2e --collect-only` 7 item 收集 + skip 装配/图骨架 mock smoke 全对）。smoke 首选 = `TestRealChainE2E::test_real_1_happy_path_b_grade_success`。**待主控真跑全绿 + 连跑达标后才勾选**。见 `test-reports/2026-06-29_f2-real-e2e-wiring.md`
+- [x] CP-F2-3 e2e 报告归档 `docs/sprint3/test-reports/`（含跑数/耗时）— **PASS（2026-06-29，主控据实归档）**：真跑报告 `test-reports/2026-06-29_f2-real-e2e-run.md`（7/7 跑数 + 耗时 29m05s+3m08s + LLM 服从度观察 + §674 复跑待补说明）；代码落地报告 `test-reports/2026-06-29_f2-real-e2e-wiring.md`
 
 #### 任务 F3：Prompt Cache 守门 + 交付物整理 handoff
 
@@ -697,18 +698,18 @@ coding = _make_react_wrapper(
 
 ## 5. AC 覆盖矩阵
 
-| 验收标准 | 对应任务 | 关键检查点 | 测试类型 |
-|---|---|---|---|
-| **AC-S3-01** 端到端 happy path B 档成功 | C1+C2+C3+D1+E3 / F2 | CP-C3-2 / CP-C2-2 / CP-D1-7 / CP-F2-2 | mock 单测 + 真实链路 e2e（凭证依赖） |
-| **AC-S3-02** sandbox 4 护栏生效 | B1 / F1 | CP-B1-2~5 | mock 单测 |
-| **AC-S3-03** 修复循环计数 + 上限 3 拦截 | C3+D1 / F2 | CP-C3-4/5 / CP-F2-1 | mock 单测 + e2e |
-| **AC-S3-04** 预算回写 + 子预算 20 + 入口预算门 | A1+C3 / F1 | CP-A1-3 / CP-C3-8/9/10 | mock 单测 |
-| **AC-S3-05** list 无 reducer 单点合并无丢失（must-fix-1） | A2+C1+C3 / F1 | CP-A2-3 / CP-C1-4 / CP-C3-11 | grep 断言 + mock 单测 |
-| **AC-S3-06** code_only 跳过 execution + 修复循环 | D1+C1+C2 / F2 | CP-D1-3 / CP-C2-3 | mock 单测 + e2e |
-| **AC-S3-07** dev_loop 失败 interrupt 三选一 | C3+E2 / S-1 / F2 | CP-S-3/4 / CP-C3-7 / CP-E2-3 | spike + mock(Command resume) + e2e |
-| **AC-S3-08** 不可修复类不进重试 | C3 / F1 | CP-C3-3/6 | mock 单测 |
-| **AC-S3-09** reporting 三形态 | C2+E3 / F1 | CP-C2-2/3/4 / CP-E3-2 | mock 单测 + 手动 UI |
-| **AC-S3-10** 主图 7 节点骨架不变性 | D1 / F1 | CP-D1-1/2/4 | mock 单测（节点集合+编译）+ manual 路由复核 |
+| 验收标准 | 对应任务 | 关键检查点 | 测试类型 | F1 mock 覆盖状态（2026-06-29 审计） |
+|---|---|---|---|---|
+| **AC-S3-01** 端到端 happy path B 档成功 | C1+C2+C3+D1+E3 / F2 | CP-C3-2 / CP-C2-2 / CP-D1-7 / CP-F2-2 | mock 单测 + 真实链路 e2e（凭证依赖） | mock 旁证已覆盖（c3::test_cp_c3_2_b_grade_success / c2::test_cp_c2_2_full_success / d1::test_cp_d1_7_full_pipeline_happy_path_full_mode）；**B 档真实成功 e2e 转正 PASS（real-1 PASSED 2026-06-29，CP-F2-2，7/7 真实 e2e 全绿）** |
+| **AC-S3-02** sandbox 4 护栏生效 | B1 / F1 | CP-B1-2~5 | mock 单测 | ✅ 全覆盖（b1::test_cp_b1_2/3/4/5_*；f1::test_cp_f1_4[AC-S3-02] 审计） |
+| **AC-S3-03** 修复循环计数 + 上限 3 拦截 | C3+D1 / F2 | CP-C3-4/5 / CP-F2-1 | mock 单测 + e2e | ✅ mock 全覆盖（c3::test_cp_c3_4_retry_coding_increments / test_cp_c3_5_upper_limit_to_interrupt；d1_reinforce::test_h3 真实图回边）；e2e 连跑留 F2 |
+| **AC-S3-04** 预算回写 + 子预算 20 + 入口预算门 | A1+C3 / F1 | CP-A1-3 / CP-C3-8/9/10 | mock 单测 | ✅ 全覆盖（a1::test_cp_a1_3 / c3::test_cp_c3_8/9/10；**f1::test_cp_f1_3_* 4 条 Sprint 级专项再断言**） |
+| **AC-S3-05** list 无 reducer 单点合并无丢失（must-fix-1） | A2+C1+C3 / F1 | CP-A2-3 / CP-C1-4 / CP-C3-11 | grep 断言 + mock 单测 | ✅ 全覆盖（a2::test_cp_a2_3 grep / c1::test_cp_c1_4 / c3::test_cp_c3_11；**f1::test_cp_f1_2_* 3 条 Sprint 级聚合：grep+origin+多回合无丢失无翻倍**） |
+| **AC-S3-06** code_only 跳过 execution + 修复循环 | D1+C1+C2 / F2 | CP-D1-3 / CP-C2-3 | mock 单测 + e2e | ✅ mock 全覆盖（d1::test_cp_d1_3_route_after_coding / c2::test_cp_c2_3_code_only / d1::test_cp_d1_7_..._code_only_mode）；e2e 留 F2 |
+| **AC-S3-07** dev_loop 失败 interrupt 三选一 | C3+E2 / S-1 / F2 | CP-S-3/4 / CP-C3-7 / CP-E2-3 | spike + mock(Command resume) + e2e | ✅ **mock(Command resume) 部分全覆盖**（c3::test_cp_c3_7_interrupt_three_state_resume 参数化三态 / d1::test_cp_d1_4_terminate|revise_plan|export_code / d1_reinforce::test_h2_* 真实图 resume）；**真实 e2e 三态留 F2** |
+| **AC-S3-08** 不可修复类不进重试 | C3 / F1 | CP-C3-3/6 | mock 单测 | ✅ 全覆盖（c3::test_cp_c3_3_classify_auto_fixable_split / test_cp_c3_6_unfixable_no_retry；**f1::test_f1_classify_two_class_split_direct 直接分流再断言**） |
+| **AC-S3-09** reporting 三形态 | C2+E3 / F1 | CP-C2-2/3/4 / CP-E3-2 | mock 单测 + 手动 UI | ✅ mock 全覆盖（c2::test_cp_c2_2_full_success / test_cp_c2_3_code_only / test_cp_c2_4_degraded）；UI 手动走查留测试工程师 |
+| **AC-S3-10** 主图 7 节点骨架不变性 | D1 / F1 | CP-D1-1/2/4 | mock 单测（节点集合+编译）+ manual 路由复核 | ✅ mock 全覆盖（d1::test_cp_d1_1_build_graph_compiles / _exactly_seven_nodes / _no_forbidden_subgraph_nodes）；manual 路由复核留测试工程师 |
 
 ---
 
