@@ -534,13 +534,14 @@ coding = _make_react_wrapper(
 - **`planning.py` 微改**：interrupt payload 加一行 `"interrupt_kind": "planning"`（UI 区分两 interrupt，§2.6.1）；revise_plan 回流走既有 self-loop（execution 已清 `approved=False`，planning 重入正常重规划，逻辑无需改）。
 
 **自测检查点**：
-- [ ] CP-D1-1 **7 节点骨架不变性（AC-S3-10 ①④）**：`build_graph()` 编译成功，节点集合恰为 `{paper_intake, paper_analysis, resource_scout, planning, coding, execution, reporting}` 7 个，**无 `coding_only`/`dev_loop`/`exit_dev_loop` 节点**
-- [ ] CP-D1-2 coding/execution/reporting 注册的是真实现（非 pass-through，断言 graph.py L57-72 占位已删）
-- [ ] CP-D1-3 **`_route_after_coding`（AC-S3-06）**：`execution_mode==CODE_ONLY` → 路由到 reporting（跳过 execution）；FULL → 路由到 execution
-- [ ] CP-D1-4 **`_route_after_execution` 4 路（AC-S3-07 / AC-S3-10 ②③）**：`_dev_loop_route="retry_coding"`→coding；`user_fix_decision` 三态分别→planning/end/reporting；成功/降级→reporting
-- [ ] CP-D1-5 修复回边为新增条件边，未删除既有顺序边语义（planning 3 路 + reporting→END 保留）
-- [ ] CP-D1-6 `planning.py` interrupt payload 含 `interrupt_kind=="planning"`；revise_plan 回 planning 重入后 `_route_after_planning` 因 `approved=False` 走 self（重规划）
-- [ ] CP-D1-7 **mock 全链路路由 happy path**（用 mock 节点跑 START→...→reporting→END，断言路径正确）
+> **D1 完成验收（2026-06-28，@全栈开发代理）**：`tests/test_sprint3_d1.py` CP-D1-1~7 全绿（36 passed，连跑 3 次 0 flaky）；改动 `core/graph.py`（删占位 + import 三真实现 + `_route_after_coding` 2 路 + `_route_after_execution` 含 await self-loop + 换条件边）+ `core/nodes/planning.py`（interrupt payload 加 `interrupt_kind="planning"`）+ 同步 sp1/sp2 旧测试（`test_graph.py` / `test_sprint2_c1.py` 占位断言转真实现契约）。全量非 e2e 回归 **837 passed / 0 failed / 25 skipped / 1 warning**（基线 801 + D1 新增 36 零退化）。**关键决策**：`_route_after_execution` **以 C3 交接（TODO L214 / 本文件 L492）为权威，不取本任务正文 L532 / 架构 §2.5.3 字面**——后者遗漏 `await_dev_loop_interrupt → execution` self-loop（interrupt#2 commit 边界命门，漏接致第二个人在回路 interrupt 永不触发）；`_dev_loop_route` 两路优先于 `user_fix_decision` 三态判定（单次返回字段互斥，self-loop 命门最先命中，含防御断言）。state.py 零改动（零 reducer 红线守住），路由函数只读 state。
+- [x] CP-D1-1 **7 节点骨架不变性（AC-S3-10 ①④）**：`build_graph()` 编译成功，节点集合精确 = `{paper_intake, paper_analysis, resource_scout, planning, coding, execution, reporting}` 7 个，**无 `coding_only`/`dev_loop`/`exit_dev_loop` 节点** — `test_cp_d1_1_*` PASS（编译 + 精确相等 + 禁止节点空集）
+- [x] CP-D1-2 coding/execution/reporting 注册的是真实现（非 pass-through，占位 + `_passthrough` 已删）— `test_cp_d1_2_*` PASS（coding is `core.nodes.coding.coding` 且 `__name__==react_wrapper_coding` / execution/reporting `__module__` 指向真实现 / `_passthrough` 已删 / execution 对空 state 产非空降级更新反证非占位）
+- [x] CP-D1-3 **`_route_after_coding`（AC-S3-06）**：`execution_mode==CODE_ONLY`（Enum/str/value）→ skip_execution(→reporting)；FULL/None/缺省 → to_execution(→execution) — `test_cp_d1_3_*` PASS
+- [x] CP-D1-4 **`_route_after_execution` 全路（AC-S3-07 / AC-S3-10 ②③）**：⚠️`await_dev_loop_interrupt`→**execution self-loop**（L-C3-01 命门）；`retry_coding`→coding；`revise_plan`→planning；`terminate`/`cancelled_by_user`→end；`export_code`→reporting；成功/降级/空兜底→reporting；`_dev_loop_route` 优先级 + 路由只读 state — `test_cp_d1_4_*` PASS
+- [x] CP-D1-5 修复回边为新增条件边，既有顺序边语义保留（planning 3 路 self/coding/END + reporting→END）；coding 后继 = {execution, reporting}、execution 后继含 self-loop + coding + planning + reporting + END — `test_cp_d1_5_*` PASS（含 edges 结构核对）
+- [x] CP-D1-6 `planning.py` interrupt payload 含 `interrupt_kind=="planning"`（最小 StateGraph 跑真实 interrupt 捕获 payload）；revise_plan 回流 `approved=False` → `_route_after_planning` 走 self — `test_cp_d1_6_*` PASS
+- [x] CP-D1-7 **mock 全链路 happy path**：FULL（planning→coding→execution→reporting→END）+ CODE_ONLY（coding→reporting 跳 execution，断言 execution 未触达）+ retry_coding 修复回边（coding/execution 各调 2 次）— `test_cp_d1_7_*` PASS
 
 **风险标注**：
 - **中风险**：`_route_after_execution` 与 sp2 `_route_after_planning` 衔接 —— code_only 区分点严格后移到 coding 出边，不动 planning 出边（AC-S3-10）。
@@ -566,9 +567,9 @@ coding = _make_react_wrapper(
 - **UI 路由分发**：新增 `STREAMLIT_PAGE_EXECUTION` / `STREAMLIT_PAGE_REPORT` 两页路由（沿用 sp2 session_state 页面切换范式）。
 
 **自测检查点**：
-- [ ] CP-E1-1 `GraphController` 既有接口签名零变化（sp2 5 个方法 + cancel_task）
-- [ ] CP-E1-2 `interrupt_kind` 对 planning interrupt 返回 `"planning"`（含 payload 无该键的兜底）、对 execution interrupt 返回 `"dev_loop_failure"`、无 interrupt 返回 None（mock get_interrupt_payload）
-- [ ] CP-E1-3 UI 路由常量 `STREAMLIT_PAGE_EXECUTION`/`STREAMLIT_PAGE_REPORT` 接入页面分发
+- [x] CP-E1-1 `GraphController` 既有接口签名零变化（sp2 5 个方法 + cancel_task）— `test_cp_e1_1_*`（inspect.signature 黄金签名固化 + 公开方法集合守门）PASS
+- [x] CP-E1-2 `interrupt_kind` 对 planning interrupt 返回 `"planning"`（含 payload 无该键的兜底）、对 execution interrupt 返回 `"dev_loop_failure"`、无 interrupt 返回 None（mock get_interrupt_payload）— `test_cp_e1_2_*`（四态 + 只读性反证）PASS
+- [x] CP-E1-3 UI 路由常量 `STREAMLIT_PAGE_EXECUTION`/`STREAMLIT_PAGE_REPORT` 接入页面分发 — `test_cp_e1_3_*`（_PAGE_MAP 接入 + main() dispatch 实证 + 未实现页优雅降级）PASS
 
 ---
 
@@ -589,11 +590,16 @@ coding = _make_react_wrapper(
 - **流程结束跳转**：`current_step=="reporting"` 且 `report_path` 非空且非 interrupt → 自动跳 `STREAMLIT_PAGE_REPORT`。
 
 **自测检查点**（UI 以可启动 + 手动 happy path 为主，逻辑部分 mock 单测）：
-- [ ] CP-E2-1 页面模块可导入，`streamlit run app.py` 可启动进入执行监控页（手动）
-- [ ] CP-E2-2 进度展示读 `fix_loop_count`/`MAX_FIX_LOOP_COUNT`/`fix_loop_history`（mock state 渲染断言关键文案"修复第 N / 3 轮"）
-- [ ] CP-E2-3 dev_loop 失败决策面板：`interrupt_kind=="dev_loop_failure"` 时展示三按钮，点击注入对应 `{"decision": ...}` payload（mock resume_with 捕获实参）
-- [ ] CP-E2-4 `output_truncated=True` 时日志展示标注截断（mock execution_result）
-- [ ] CP-E2-5 reporting 完成自动跳转结果报告页（手动 + 状态判定单测）
+
+> **E2 完成（2026-06-28，@全栈开发代理）**：`tests/test_sprint3_e2.py` 26 passed，连跑 3 次 0 flaky。decision payload 经**契约守门测试**与 `core/nodes/execution.py::_route_user_fix_decision`+`_build_dev_loop_interrupt_payload` 对齐（dict 含 `"decision"`∈{terminate,revise_plan,export_code}，revise_plan 读 `user_feedback`；本页 `_INTERRUPT_KIND_DEV_LOOP==execution.INTERRUPT_KIND`，任一端改取值即红）。两处发现（非 BUG）：① 失败清单键名实为 `execution_errors`（execution.py L699），优先读 + 兜底兼容 `execution_result.errors`；② `ExecutionResult` TypedDict 无 `output_truncated`（是 SandboxRunResult 字段），双探测兜底。shadcn iframe AppTest 不可见→核心终态/降级/截断文案改原生 `st.error/warning/info`（沿用 sp2 范式）。
+>
+> **E2 独立验收 PASS（2026-06-28，@测试工程师代理）**：补强 44 条（`tests/test_sprint3_e2_reinforce.py`），E2 套件 70 条连跑 3 次 0 flaky；dev_loop 决策面板三 payload 端到端契约**真闭环**（真实 `execution` 节点 + `Command(resume)` 验三态路由 + 幂等 `prepare_venv`==1）；契约守门双向红线 + `execution_errors` 键名核实属实；零生产 BUG。报告 `test-reports/2026-06-28_e2-acceptance.md`。
+
+- [x] CP-E2-1 页面模块可导入，`streamlit run app.py` 可启动进入执行监控页（手动）— import 冒烟 + dispatch wiring 实证 PASS（真实 streamlit run 留独立验收）
+- [x] CP-E2-2 进度展示读 `fix_loop_count`/`MAX_FIX_LOOP_COUNT`/`fix_loop_history`（mock state 渲染断言关键文案"修复第 N / 3 轮"）— PASS
+- [x] CP-E2-3 dev_loop 失败决策面板：`interrupt_kind=="dev_loop_failure"` 时展示三按钮，点击注入对应 `{"decision": ...}` payload（mock resume_with 捕获实参）— PASS（AppTest 原生按钮 click + 契约守门）
+- [x] CP-E2-4 `output_truncated=True` 时日志展示标注截断（mock execution_result）— PASS
+- [x] CP-E2-5 reporting 完成自动跳转结果报告页（手动 + 状态判定单测）— PASS（`_should_jump_to_report` 真值表）
 
 ---
 
@@ -614,10 +620,15 @@ coding = _make_react_wrapper(
 - F5 后 session_state 丢失但 SqliteSaver 保留（沿用 sp2 限制，不提供 thread_id 恢复入口）。
 
 **自测检查点**：
-- [ ] CP-E3-1 页面模块可导入，`report_path` 非空时 `st.markdown` 渲染完整报告（手动）
-- [ ] CP-E3-2 三形态结论卡片正确渲染（mock 三种 report_path/state 断言关键文案）
-- [ ] CP-E3-3 指标对比表 + artifact 清单 + 修复历程 + deliverables 区块渲染（full/degraded 形态）
-- [ ] CP-E3-4 "返回输入页开启新任务"出口可用
+
+> **E3 完成（2026-06-28，@全栈开发代理）**：`tests/test_sprint3_e3.py` 23 passed，连跑 3 次 0 flaky。**直接复用** `core.nodes.reporting._determine_report_form`（不臆造）+ 守门测试断言 import 同一函数对象，形态判定优先级与 `report_path` 正文严格一致（code_only→full_success→degraded），杜绝页面卡片与报告正文两份矛盾结论。指标对比严格按 B 档（Q-S3-01）只并列、缺值→「—」、绝无"达标/不达标"。命中坑6（`__init__.py` callable 遮蔽子模块）→ 测试改 `importlib.import_module`（生产 from-import 不受影响）。
+>
+> **E3 独立验收 PASS（2026-06-28，@测试工程师代理；有条件→已转正）**：补强 39 条（`tests/test_sprint3_e3_reinforce.py`）；`is` 实证复用 reporting 同一函数对象 + 页面卡片形态==报告正文形态（三形态一致）；B 档无硬判定红线守住。**发现非阻断 BUG-S3-E3-01**（`_load_report_markdown` 漏接 `UnicodeDecodeError`→非 UTF-8 报告崩页，违反「绝不崩页」契约，正常链路写 UTF-8 不触发）；Maria 拍板本 Sprint 修，主控收口 1 行修复（`except (OSError, UnicodeDecodeError)`）+ 2 个 `xfail` 转正，E3 套件 62 全 passed。报告 `test-reports/2026-06-28_e3-acceptance.md`。
+
+- [x] CP-E3-1 页面模块可导入，`report_path` 非空时 `st.markdown` 渲染完整报告（手动）— PASS（`_load_report_markdown` 三态 + AppTest 渲染实证）
+- [x] CP-E3-2 三形态结论卡片正确渲染（mock 三种 report_path/state 断言关键文案）— PASS
+- [x] CP-E3-3 指标对比表 + artifact 清单 + 修复历程 + deliverables 区块渲染（full/degraded 形态）— PASS
+- [x] CP-E3-4 "返回输入页开启新任务"出口可用 — PASS（`_reset_to_input_page` 切 input + 状态重置）
 
 ---
 

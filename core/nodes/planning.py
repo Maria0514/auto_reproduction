@@ -768,6 +768,9 @@ def planning(state: GlobalState) -> dict:
         "_planning_switch_failed", state.get("_planning_switch_failed", False)
     )
     payload = {
+        # sp3 §2.6.1：显式标注 interrupt 类型，供 app.py interrupt_kind helper / UI
+        # 路由分发区分 planning（interrupt#1）与 dev_loop_failure（execution interrupt#2）。
+        "interrupt_kind": "planning",
         "reproduction_plan": updates["reproduction_plan"],
         "resource_info": resource_info_for_payload,
         "paper_analysis_summary": _digest_paper_analysis(state.get("paper_analysis")),

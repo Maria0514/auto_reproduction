@@ -65,11 +65,16 @@ def test_cp_c1_5_planning_handwritten():
     assert graph_module.planning.__name__ == "planning"
 
 
-def test_cp_c1_6_placeholders_passthrough():
-    for fn in (graph_module.coding, graph_module.execution, graph_module.reporting):
-        assert fn({}) == {}
-        assert fn({"user_input": "x"}) == {}
-    assert graph_module._passthrough({"foo": "bar"}) == {}
+def test_cp_c1_6_coding_execution_reporting_real_impl_after_sp3_d1():
+    """Sprint 3 D1 同步：原 CP-C1-6 断言 coding/execution/reporting 为 pass-through 占位 +
+    _passthrough 存在。sp3 D1 已把三节点升级为真实现并删除占位函数 / _passthrough，故该
+    sp2 断言前提被推翻，此处更新为 sp3 后的等价契约（占位已删 + 三节点指向真实现模块）。
+    占位/真实现的完整路由覆盖见 tests/test_sprint3_d1.py。
+    """
+    assert not hasattr(graph_module, "_passthrough")
+    assert graph_module.coding.__name__ == "react_wrapper_coding"
+    assert graph_module.execution.__module__ == "core.nodes.execution"
+    assert graph_module.reporting.__module__ == "core.nodes.reporting"
 
 
 # ---------------------------------------------------------------------------
@@ -151,17 +156,34 @@ def _initial_state(**ov) -> Dict[str, Any]:
 
 
 def _patched_graph(monkeypatch):
-    """上游 3 节点 fake + planning 内部子图脚本化（保留真实 interrupt）。"""
+    """上游 3 节点 fake + planning 内部子图脚本化（保留真实 interrupt）。
+
+    Sprint 3 D1 同步：coding/execution/reporting 已从 pass-through 占位升级为真实现
+    （ReAct agent / 真实 sandbox / 三形态报告）。这些 CP-C1-* 端到端用例的断言意图是验证
+    **planning 出边路由**（approve→next / code_only→next / cancel→end），不应被下游真实
+    节点的真实执行（真调 LLM / 真跑 sandbox）干扰。故此处把三节点 stub 为轻量函数：
+    coding stub 写 code_output_dir；execution stub 走成功路径（_dev_loop_route=None +
+    success=True → reporting）；reporting stub 写 report_path。这样 approve(FULL)
+    与 code_only 都能干净地走到 END，CP 断言仍精确反映 planning 路由语义。
+    """
     def fi(state): return {"paper_meta": {"arxiv_id": "2405.14831"}}
     def fa(state): return {"paper_analysis": {"method_summary": "m"}}
     def frs(state):
         return {"current_step": "resource_scout",
                 "resource_info": {"repos": [], "selected_repo": None,
                                   "external_resources": [], "resource_strategy": "from_scratch"}}
+    def fcoding(state): return {"code_output_dir": "/tmp/sp2c1/code", "current_step": "coding"}
+    def fexec(state):
+        return {"execution_result": {"success": True, "metrics": {"acc": 0.9}},
+                "_dev_loop_route": None, "current_step": "execution"}
+    def freport(state): return {"report_path": "/tmp/sp2c1/report.md", "current_step": "reporting"}
 
     monkeypatch.setattr(graph_module, "paper_intake", fi)
     monkeypatch.setattr(graph_module, "paper_analysis", fa)
     monkeypatch.setattr(graph_module, "resource_scout", frs)
+    monkeypatch.setattr(graph_module, "coding", fcoding)
+    monkeypatch.setattr(graph_module, "execution", fexec)
+    monkeypatch.setattr(graph_module, "reporting", freport)
     monkeypatch.setattr(react_base, "create_react_subgraph", lambda **k: _FakePlanningSubgraph())
     monkeypatch.setattr(react_base, "create_llm", lambda c: object())
     return build_graph(checkpointer=MemorySaver())
@@ -398,9 +420,19 @@ def test_switch_repo_resource_info_persists_then_approve(monkeypatch):
         return {"current_step": "resource_scout",
                 "resource_info": {"repos": [], "selected_repo": None,
                                   "external_resources": [], "resource_strategy": "from_scratch"}}
+    # Sprint 3 D1 同步：coding/execution/reporting 已是真实现，stub 为轻量函数避免下游真实
+    # ReAct/sandbox 干扰 approve→END 路由断言（本用例验证 switch_repo 持久化 + planning 路由）。
+    def fcoding(state): return {"code_output_dir": "/tmp/sp2c1/code", "current_step": "coding"}
+    def fexec(state):
+        return {"execution_result": {"success": True, "metrics": {"acc": 0.9}},
+                "_dev_loop_route": None, "current_step": "execution"}
+    def freport(state): return {"report_path": "/tmp/sp2c1/report.md", "current_step": "reporting"}
     monkeypatch.setattr(graph_module, "paper_intake", fi)
     monkeypatch.setattr(graph_module, "paper_analysis", fa)
     monkeypatch.setattr(graph_module, "resource_scout", frs)
+    monkeypatch.setattr(graph_module, "coding", fcoding)
+    monkeypatch.setattr(graph_module, "execution", fexec)
+    monkeypatch.setattr(graph_module, "reporting", freport)
     monkeypatch.setattr(react_base, "create_react_subgraph", lambda **k: _CloningSubgraph())
     monkeypatch.setattr(react_base, "create_llm", lambda c: object())
     g = build_graph(checkpointer=MemorySaver())

@@ -32,7 +32,14 @@ from typing import Dict, Optional
 
 from langgraph.types import Command
 
-from config import PROJECT_ROOT
+from config import (
+    PROJECT_ROOT,
+    STREAMLIT_PAGE_EXECUTION,
+    STREAMLIT_PAGE_INPUT,
+    STREAMLIT_PAGE_PROGRESS,
+    STREAMLIT_PAGE_REPORT,
+    STREAMLIT_PAGE_REVIEW,
+)
 from core.checkpointer import get_checkpointer
 from core.graph import build_graph
 from core.state import GlobalState, LLMConfigSet, create_initial_state
@@ -53,6 +60,21 @@ logger = logging.getLogger(__name__)
 
 # 支持节点级 LLM 覆写的 4 个节点名（与 core.state.NodeName / PRD §2.4 强一致）。
 _OVERRIDE_NODES = ("paper_intake", "paper_analysis", "resource_scout", "planning")
+
+
+# UI 页面路由表（架构 §2.6.1）：current_page(config 常量) → (模块名, render 函数名)。
+# 键统一用 config.STREAMLIT_PAGE_* 常量，避免字面量散落（A1 阶段已落地两页常量）。
+# sp2 三页（input/progress/review）已实现；sp3 两页（execution/report）由任务 E2/E3
+# 实现，页面模块/函数尚不存在时由 main() 的 ImportError/AttributeError 优雅降级兜底，
+# 保证 `streamlit run app.py` 仍可启动（不报 import 错）。
+_PAGE_MAP: Dict[str, tuple] = {
+    STREAMLIT_PAGE_INPUT: ("ui.pages.paper_input", "render_paper_input_page"),
+    STREAMLIT_PAGE_PROGRESS: ("ui.pages.analysis_progress", "render_analysis_progress_page"),
+    STREAMLIT_PAGE_REVIEW: ("ui.pages.plan_review", "render_plan_review_page"),
+    # --- Sprint 3 新增两页（E2/E3 将提供下列模块/函数；当前为预留路由入口）---
+    STREAMLIT_PAGE_EXECUTION: ("ui.pages.execution_monitor", "render_execution_monitor_page"),
+    STREAMLIT_PAGE_REPORT: ("ui.pages.result_report", "render_result_report_page"),
+}
 
 
 def _make_config(thread_id: str) -> Dict:
@@ -230,6 +252,28 @@ class GraphController:
                 return interrupts[0].value
         return None
 
+    def interrupt_kind(self, thread_id: str) -> Optional[str]:
+        """区分当前 interrupt 是 planning(interrupt#1) 还是 dev_loop_failure(interrupt#2)。
+
+        Sprint 3 任务 E1（架构 §2.6.1）。纯只读 helper：复用 get_interrupt_payload
+        的读路径（主线程 self._main_graph.get_state，独立 main_checkpointer，不阻塞工作
+        线程），**不改 state、不调 LLM**。
+
+        读 get_interrupt_payload(thread_id) 的 payload，返回 payload.get("interrupt_kind")：
+            - "planning"          → 计划审核页（sp2 plan_review）；
+            - "dev_loop_failure"  → 执行监控页 dev_loop 失败决策面板（sp3 execution_monitor）。
+
+        判定逻辑：
+            - 无 interrupt（payload 为 None / 空 dict）→ 返回 None；
+            - 有 interrupt 但 payload 无 "interrupt_kind" 键 → 默认 "planning" 兜底
+              （向后兼容 sp2 老 planning payload；D1 后新 planning payload 已显式带
+              "interrupt_kind"="planning"，此兜底仅护旧 checkpoint）。
+        """
+        payload = self.get_interrupt_payload(thread_id)
+        if not payload:
+            return None
+        return payload.get("interrupt_kind", "planning")
+
     def get_worker_error(self, thread_id: str) -> Optional[Exception]:
         """返回工作线程捕获的异常对象（无则 None），由 UI 检测展示。"""
         with self._lock:
@@ -275,7 +319,7 @@ def _init_session_state() -> None:
 
     st.session_state.setdefault("thread_id", None)
     st.session_state.setdefault("llm_config_set", None)
-    st.session_state.setdefault("current_page", "input")
+    st.session_state.setdefault("current_page", STREAMLIT_PAGE_INPUT)
     # graph_controller 单例由 _get_controller 惰性创建。
 
 
@@ -299,8 +343,11 @@ def _render_sidebar() -> Optional[LLMConfigSet]:
 def main() -> None:
     """Streamlit 主入口：初始化 session_state 单例 + 侧栏表单 + page 路由。
 
-    三个业务页面（S2-05 论文输入 / S2-06 进度 / S2-07 计划审核）由任务 D3/D4/D5 实现；
-    D2 仅搭建路由骨架，页面模块缺失时优雅降级提示（不让 D2 main 崩溃）。
+    页面路由表 = 模块级 _PAGE_MAP（架构 §2.6.1）：
+        - sp2 三页（S2-05 论文输入 / S2-06 进度 / S2-07 计划审核）由任务 D3/D4/D5 实现；
+        - sp3 两页（S3-10 执行监控 / 结果报告）由任务 E2/E3 实现，E1 仅把两页常量接入
+          路由分发并预留渲染入口——页面模块/函数尚不存在时由下方 ImportError/AttributeError
+          优雅降级提示兜底，保证 `streamlit run app.py` 仍可启动（不报 import 错）。
     """
     import streamlit as st
 
@@ -313,23 +360,18 @@ def main() -> None:
     # 此处不调 _render_sidebar()——D3 落地后 paper_input.render() 自己渲染侧栏，
     # main 里重复调用会导致 StreamlitDuplicateElementKey（key='default_base_url'）。
 
-    current_page = st.session_state.get("current_page", "input")
-    page_map = {
-        "input": ("ui.pages.paper_input", "render_paper_input_page"),
-        "progress": ("ui.pages.analysis_progress", "render_analysis_progress_page"),
-        "review": ("ui.pages.plan_review", "render_plan_review_page"),
-    }
-
-    module_name, func_name = page_map.get(current_page, page_map["input"])
+    current_page = st.session_state.get("current_page", STREAMLIT_PAGE_INPUT)
+    module_name, func_name = _PAGE_MAP.get(current_page, _PAGE_MAP[STREAMLIT_PAGE_INPUT])
     try:
         import importlib
 
         page_module = importlib.import_module(module_name)
         render_fn = getattr(page_module, func_name)
     except (ImportError, AttributeError):
-        # D3/D4/D5 尚未实现：D2 仅搭路由骨架，优雅降级提示，不崩溃。
+        # 页面尚未实现（sp2 D3/D4/D5 早期 / sp3 execution/report 由 E2/E3 交付）：
+        # 路由骨架优雅降级提示，不崩溃。
         st.info(
-            f"页面 `{current_page}` 尚未实现（由任务 D3/D4/D5 交付）。"
+            f"页面 `{current_page}` 尚未实现（由后续 UI 任务交付）。"
             "GraphController 已就绪，等待 UI 页面接入。"
         )
         return

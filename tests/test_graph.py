@@ -1,18 +1,23 @@
-"""D1 - core/graph.py LangGraph 主图骨架自测（Sprint 2 C1 升级后同步更新）。
+"""D1 - core/graph.py LangGraph 主图骨架自测（Sprint 3 D1 升级后同步更新）。
 
-覆盖 dev-plan.md D1 任务的 6 个自测检查点，并随 Sprint 2 C1 升级调整节点形态断言：
+覆盖主图骨架检查点，随 Sprint 3 D1 升级调整节点形态断言（coding/execution/reporting
+从 sp2 pass-through 占位升级为真实业务逻辑）：
 
 1. build_graph() 返回 CompiledGraph 实例
-2. 图包含 7 个业务节点（节点名集合一致）
-3. paper_intake / paper_analysis / resource_scout 节点是 ReAct wrapper 函数；
-   planning 是手写复合节点（内含 interrupt，非 wrapper）
-4. 仅 coding / execution / reporting 三个占位节点返回 {}
-   （Sprint 2 起 resource_scout / planning 已接入真节点，见 tests/test_sprint2_b2.py /
-   tests/test_sprint2_b3.py / tests/test_sprint2_c1.py）
+2. 图包含 7 个业务节点（节点名集合一致，AC-S3-10）
+3. paper_intake / paper_analysis / resource_scout / coding 节点是 ReAct wrapper 函数；
+   planning / execution 是手写复合节点（内含 interrupt，非 wrapper）
+4. coding / execution / reporting 已是真实现（**不再返回 {} 占位**；sp3 D1 删除占位函数 +
+   _passthrough）—— 此处仅断言它们不是 graph 内定义的占位，行为细节由
+   tests/test_sprint3_c1*.py / c2 / c3 覆盖；
 5. 可使用 mock checkpointer 编译成功（langgraph.checkpoint.memory.MemorySaver）
-6. 全链路可通过 graph.invoke(state, config) 执行
-   —— 用 unittest.mock.patch 把 4 个真节点 monkey-patch 成返回固定 dict 的函数，
-   避免触发真实 LLM / SDK 调用；planning fake 返回 approved plan 使 3 路条件边走 next
+6. 全链路可通过 graph.invoke(state, config) 执行 —— 用 unittest.mock.patch 把 5 个真节点
+   （paper_intake / paper_analysis / resource_scout / planning + coding/execution/reporting）
+   monkey-patch 成返回固定 dict 的函数，避免触发真实 LLM / SDK / sandbox 调用；
+   planning fake 返回 approved plan 使 3 路条件边走 next，coding fake FULL → execution。
+
+注：D1 路由（_route_after_coding / _route_after_execution）的完整分支覆盖见
+tests/test_sprint3_d1.py（CP-D1-1~7）。本文件保留 sp1/sp2 既有骨架断言并随真实现同步。
 """
 from __future__ import annotations
 
@@ -116,43 +121,46 @@ def test_resource_scout_is_react_wrapper():
     assert callable(resource_scout)
 
 
+def test_coding_is_react_wrapper():
+    """Sprint 3 D1：coding 已是 _make_react_wrapper 生成的 callable（真实现，非占位）。"""
+    assert coding.__name__ == "react_wrapper_coding"
+    assert callable(coding)
+
+
 def test_planning_is_handwritten_node():
     """Sprint 2 C1：planning 是手写复合节点（含 interrupt），非 ReAct wrapper。"""
     assert planning.__name__ == "planning"
     assert callable(planning)
 
 
-# ---------- 检查点 4：3 个占位节点返回空字典（Sprint 2 起仅 coding/execution/reporting）----------
+def test_execution_is_handwritten_node():
+    """Sprint 3 D1：execution 是手写复合节点（含 interrupt#2），非 ReAct wrapper。"""
+    assert execution.__name__ == "execution"
+    assert execution.__module__ == "core.nodes.execution"
+    assert callable(execution)
 
 
-@pytest.mark.parametrize(
-    "placeholder_fn",
-    [coding, execution, reporting],
-    ids=["coding", "execution", "reporting"],
-)
-def test_placeholder_nodes_return_empty_dict(placeholder_fn):
-    """占位节点接受任意 GlobalState（含空 dict），均应返回空 dict —— LangGraph
-    merge 语义下空 dict 不会触发任何状态字段更新。
+# ---------- 检查点 4：coding/execution/reporting 已是真实现（占位已删，Sprint 3 D1）----------
 
-    注意（Sprint 2 C1）：resource_scout / planning 已升级为真节点，不再属于占位集合，
-    其行为分别由 tests/test_sprint2_b2.py / tests/test_sprint2_b3.py 覆盖。
+
+def test_coding_execution_reporting_are_real_implementations():
+    """Sprint 3 D1：coding/execution/reporting 不再是 graph.py 内定义的 pass-through
+    占位，而是从各自真实现模块 import 的对象。断言它们的来源模块正确。
+
+    - coding：core.react_base（_make_react_wrapper 生成的 wrapper）；
+    - execution：core.nodes.execution；
+    - reporting：core.nodes.reporting。
+    行为细节（B 档判定 / 三形态报告 / 修复循环）由 tests/test_sprint3_c*.py 覆盖。
     """
-    # 空 state
-    assert placeholder_fn({}) == {}
-
-    # 有数据的 state：返回值仍应是空 dict（不污染上游写入）
-    state_with_data: Dict[str, Any] = {
-        "user_input": "2410.21276",
-        "retry_budget_remaining": 50,
-        "node_errors": [],
-    }
-    assert placeholder_fn(state_with_data) == {}
+    # coding wrapper 由 react_base 工厂生成，__module__ 指向 react_base，__name__ 携节点名。
+    assert coding.__name__ == "react_wrapper_coding"
+    assert execution.__module__ == "core.nodes.execution"
+    assert reporting.__module__ == "core.nodes.reporting"
 
 
-def test_passthrough_helper_returns_empty_dict():
-    """内部 _passthrough 通用占位也应返回空 dict。"""
-    assert graph_module._passthrough({}) == {}
-    assert graph_module._passthrough({"foo": "bar"}) == {}
+def test_passthrough_helper_removed():
+    """Sprint 3 D1：占位辅助函数 _passthrough 已从 graph.py 删除（CP-D1-2）。"""
+    assert not hasattr(graph_module, "_passthrough")
 
 
 # ---------- 检查点 5：mock checkpointer 编译成功 ----------
@@ -184,12 +192,17 @@ def test_build_graph_default_checkpointer_lazy_import():
 
 
 def test_full_graph_invoke_with_patched_react_wrappers():
-    """端到端 invoke：用 patch 把 4 个真节点（paper_intake / paper_analysis /
-    resource_scout / planning）替换为返回固定 dict 的轻量函数，避免触发真实 LLM / SDK /
-    interrupt 调用，验证主干顺序边 + planning 3 路条件边（approve -> next -> coding）连通。
+    """端到端 invoke：用 patch 把 7 个真节点全部替换为返回固定 dict 的轻量函数，避免触发
+    真实 LLM / SDK / sandbox / interrupt 调用，验证主干顺序边 + planning 3 路条件边
+    （approve -> next -> coding）+ sp3 新增 coding/execution 出边连通：
+    planning(approve) -> coding -> (FULL) execution -> (成功) reporting -> END。
 
-    planning fake 返回 approved=True 的 reproduction_plan，使 _route_after_planning 走
-    "next" 进入 coding；coding / execution / reporting 占位返回 {} 不修改状态。
+    - planning fake 返回 approved=True + execution_mode=FULL 的状态，使 _route_after_planning
+      走 "next" 进入 coding；
+    - coding fake 返回 {}（FULL 模式由 execution_mode 决定 _route_after_coding 走 to_execution）；
+    - execution fake 返回 execution_result.success=True + _dev_loop_route=None，使
+      _route_after_execution 走 reporting；
+    - reporting fake 返回 report_path。
     """
 
     def fake_paper_intake(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -231,11 +244,30 @@ def test_full_graph_invoke_with_patched_react_wrappers():
         return {"current_step": "resource_scout"}
 
     def fake_planning(state: Dict[str, Any]) -> Dict[str, Any]:
-        # 返回 approved plan -> _route_after_planning 走 "next"（coding），避免真实 interrupt。
+        # 返回 approved plan + FULL 模式 -> _route_after_planning 走 "next"（coding），
+        # 避免真实 interrupt#1；FULL 使 _route_after_coding 走 to_execution。
+        from core.state import ExecutionMode
+
         return {
             "reproduction_plan": {"plan_summary": "fake plan", "approved": True},
+            "execution_mode": ExecutionMode.FULL,
             "current_step": "planning",
         }
+
+    def fake_coding(state: Dict[str, Any]) -> Dict[str, Any]:
+        # coding 真实现是 ReAct wrapper（真调 LLM），mock 成轻量返回；不判 mode。
+        return {"code_output_dir": "/tmp/fake/code", "current_step": "coding"}
+
+    def fake_execution(state: Dict[str, Any]) -> Dict[str, Any]:
+        # 成功路径：_dev_loop_route=None + success=True -> _route_after_execution 走 reporting。
+        return {
+            "execution_result": {"success": True, "metrics": {"accuracy": 0.9}},
+            "_dev_loop_route": None,
+            "current_step": "execution",
+        }
+
+    def fake_reporting(state: Dict[str, Any]) -> Dict[str, Any]:
+        return {"report_path": "/tmp/fake/report.md", "current_step": "reporting"}
 
     # patch 必须打在 core.graph 命名空间（graph.py 在 module import 阶段已经把节点函数
     # 绑定到自己的全局名字；add_node 注册时存的是那些绑定的引用）。直接 patch 子模块
@@ -244,7 +276,9 @@ def test_full_graph_invoke_with_patched_react_wrappers():
         graph_module, "paper_analysis", fake_paper_analysis
     ), patch.object(graph_module, "resource_scout", fake_resource_scout), patch.object(
         graph_module, "planning", fake_planning
-    ):
+    ), patch.object(graph_module, "coding", fake_coding), patch.object(
+        graph_module, "execution", fake_execution
+    ), patch.object(graph_module, "reporting", fake_reporting):
         g = build_graph(checkpointer=MemorySaver())
         initial_state: Dict[str, Any] = {
             "user_input": "2410.21276",
@@ -263,7 +297,10 @@ def test_full_graph_invoke_with_patched_react_wrappers():
     assert final_state["paper_meta"]["title"] == "Fake Paper"
     assert final_state.get("paper_analysis", {}).get("method_summary") == "fake summary"
     assert final_state["paper_analysis"]["datasets"] == ["fake-dataset"]
-    # planning approve -> 条件边走 coding -> execution -> reporting -> END
+    # planning approve -> coding -> (FULL) execution -> (成功) reporting -> END
     assert final_state.get("reproduction_plan", {}).get("approved") is True
-    # 占位节点没有写入任何字段，原始 user_input 被保留
+    assert final_state.get("code_output_dir") == "/tmp/fake/code"
+    assert final_state.get("execution_result", {}).get("success") is True
+    assert final_state.get("report_path") == "/tmp/fake/report.md"
+    assert final_state.get("current_step") == "reporting"
     assert final_state["user_input"] == "2410.21276"
