@@ -690,9 +690,10 @@ coding = _make_react_wrapper(
   - **handoff**：整理五条 e2e 入口 + mock 用例运行方式 + AC 覆盖矩阵 + 已知限制（interrupt#2 重跑幂等依赖 S-1 结论、错误分类准确率边界、B 档解析依赖 `<METRICS>` 约定）。
 
 **自测检查点**：
-- [ ] CP-F3-1 coding system prompt 主体字节级一致断言通过（两篇不同论文）
-- [ ] CP-F3-2 Prompt Cache 命中率回归 ≥ sp2 基线 ×0.95（凭证就绪后实测，归档报告）
-- [ ] CP-F3-3 handoff 文档完成（运行方式 + AC 矩阵 + 已知限制），交付物与本 dev-plan 产出文件一致
+- [x] CP-F3-1 coding system prompt 主体字节级一致断言通过（两篇不同论文）— PASS（2026-06-29）：新建 `tests/test_sprint3_f3.py`（4 条 mock 断言，不依赖凭证）。构造两篇完全不同论文（HippoRAG 2405.14831 RAG / ResNet 1512.03385 图像分类，每个论文级动态字段都不同：arxiv_id/title/plan/resource/analysis，论文 B 还处于修复回合注入 execution_result）经完整 `_build_coding_context → _build_coding_system_prompt` 链路，去尾部 `--- 当前任务上下文 ---` 段后主体字节级 `==` 且 == `_CODING_SYSTEM_PROMPT_BODY` 常量；旁证：主体常量内无任一论文特征字面量 + 动态字段全进 HumanMessage context + coding 尾部段也是常量（整份 system prompt 两篇论文完全字节一致，强于 paper_analysis）。`pytest tests/test_sprint3_f3.py -v` 4 passed/0.64s。
+- [x] CP-F3-2 Prompt Cache 命中率回归 ≥ sp2 基线 ×0.95（凭证就绪后实测，归档报告）— **主控授权补跑转正 PASS（2026-06-29）：R_after=mean(R_2,R_3)=0.9008 ≥ 守门 0.7286**（run#1 cold 77.7% / run#2 87.1% / run#3 93.1%，3 次 120.06s，无 degraded；远超 sp2 S-3 基线 0.7669）。详见 `test-reports/2026-06-29_f3-cache-gate.md`。【原准备注记】：验证脚本 `scripts/spike_coding_prompt_cache.py` 已就绪（沿用 sp2 S-3 `spike_prompt_cache_baseline.py` 范式，针对 coding 节点；固定 HippoRAG + 预置 mock 上游 state 不跑 intake/analysis/scout/planning 省配额 + 连跑 coding×3 + monkey-patch ChatOpenAI.invoke 采集 cached/prompt tokens；`R_after=mean(R_2,R_3)` 同口径）。守门 = `R_after ≥ sp2 S-3 基线 0.7669 × 0.95 = 0.7286`。**双保险硬闸门**：脚本 load_dotenv 会自动加载 .env 凭证，故额外要求显式 `SPIKE_F3_AUTHORIZED=1` 才真跑，否则立即 skip(exit 2) 不耗配额。授权补跑命令：`SPIKE_F3_AUTHORIZED=1 .venv/bin/python scripts/spike_coding_prompt_cache.py`。旁证：CP-F3-1 字节级一致（cache 命中前置必要条件）已 PASS。
+- [x] CP-F3-3 handoff 文档完成（运行方式 + AC 矩阵 + 已知限制），交付物与本 dev-plan 产出文件一致 — PASS（2026-06-29）：新建 `docs/sprint3/handoff-to-test-engineer.md`（照搬 sp1 F2 体例）。含 ① 五条 real e2e 精确节点 id（real-1~5 参数化共 7 item，smoke 首选 real-1）；② mock 用例运行方式（`-m "not e2e"` 全量回归 + sp3 各文件入口）；③ AC-S3-01~10 覆盖矩阵（复用 F1/§5）；④ 已知限制 L-S3-01~07（interrupt#2 重跑幂等依赖 S-1、错误分类准确率边界、B 档 `<METRICS>` 约定、**LLM read_section 章节名命中率**[F2 真跑观察 LLM 猜错章节名触发 Section-not-found 降级，非 bug]、§674 稳定性复跑待补、真实 e2e 用 mock sandbox 不真跑训练、CP-F3-2 待授权补跑）；⑤ 交付物清单与 §8 逐条一致性核对（全就位）。
+- **CP-F3-1/CP-F3-3 全量非 e2e 回归零退化**：`pytest -q -m "not e2e" --ignore=tests/test_paper_intake.py` **1087 passed / 25 skipped / 35 deselected / 120.23s**（= F3 前基线 1083 + f3 新增 4，零退化，零 flaky）。
 
 ---
 
@@ -758,7 +759,8 @@ coding = _make_react_wrapper(
 | 改动 | `core/nodes/planning.py`（interrupt payload 加 `interrupt_kind`） | D1 |
 | 改动 | `app.py`（`interrupt_kind` helper + 路由分发两页） | E1 |
 | 新增 | `scripts/spike_execution_interrupt_idempotency.py` | S-1 |
-| 新增 | `tests/test_sprint3_*.py` + `tests/test_sprint3_e2e.py` | F1/F2 |
+| 新增 | `scripts/spike_coding_prompt_cache.py`（CP-F3-2 cache 命中率验证脚本，待主控授权补跑） | F3 |
+| 新增 | `tests/test_sprint3_*.py` + `tests/test_sprint3_e2e.py` + `tests/test_sprint3_f3.py`（CP-F3-1 字节级一致） | F1/F2/F3 |
 | 新增 | `docs/sprint3/test-reports/*`（spike + e2e + Prompt Cache 报告） | S-1/F2/F3 |
 | 新增 | `docs/sprint3/handoff-to-test-engineer.md` | F3 |
 | **零改动** | `core/react_base.py`（预算扣减点）/ `core/checkpointer.py` / `core/errors.py` / `core/tools/git_tools.py` / sp1/sp2 既有节点 | — |
