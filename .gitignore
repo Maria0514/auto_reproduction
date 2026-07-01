@@ -16,3 +16,6 @@ scripts/dump_real_plan.py
 
 # LangGraph SqliteSaver 运行时 checkpoint 数据库（含 WAL 模式伴生文件 -shm/-wal）
 checkpoints.db*
+
+# 个人面试速览用 HTML 项目报告（不进版本控制）
+docs/reports/

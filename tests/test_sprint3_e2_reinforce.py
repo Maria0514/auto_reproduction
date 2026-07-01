@@ -954,7 +954,7 @@ def test_g10_panel_renders_context_summary_fields():
 
 
 def test_g10_panel_fix_count_progress_text_in_panel():
-    """G10（AppTest）：决策面板内复用 _fix_loop_progress_text（修复第 N/3 轮文案）。"""
+    """G10（AppTest）：决策面板内复用 _fix_loop_progress_text（修复第 N/MAX_FIX_LOOP_COUNT 轮文案）。"""
     controller = _make_controller_mock(
         state=_make_state(current_step="execution"),
         is_interrupted=True,

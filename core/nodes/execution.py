@@ -38,6 +38,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from langgraph.types import interrupt
@@ -52,6 +53,7 @@ from core.state import ExecutionResult, FixLoopRecord, GlobalState
 from sandbox.local_venv import (
     SandboxPrepareResult,
     SandboxRunResult,
+    _is_within_workspace,
     collect_artifacts,
     prepare_venv,
     run_in_venv,
@@ -468,14 +470,8 @@ def _extract_requirements(plan: Optional[Dict[str, Any]]) -> List[str]:
     return out
 
 
-def _step_to_command(step: Any, python_exe: str) -> Optional[List[str]]:
-    """把一个 execution_step（dict 含 command 字段，或纯字符串）转为 run_in_venv 的命令列表。
-
-    禁 shell=True：command 一律列表形式。优先用 venv python 解释器执行 `.py` 脚本，
-    其余命令做 shlex 拆分（不经 shell）。
-    """
-    import shlex
-
+def _extract_command_str(step: Any) -> Optional[str]:
+    """从 execution_step（dict 含 command 字段，或纯字符串）取出命令字符串。"""
     cmd_str: Optional[str] = None
     if isinstance(step, dict):
         cmd_str = step.get("command") or step.get("cmd") or step.get("run")
@@ -485,19 +481,182 @@ def _step_to_command(step: Any, python_exe: str) -> Optional[List[str]]:
         cmd_str = step
     if not cmd_str or not cmd_str.strip():
         return None
-    cmd_str = cmd_str.strip()
+    return cmd_str.strip()
+
+
+def _split_top_level(cmd_str: str) -> List[Tuple[List[str], str]]:
+    """把一个 command 字符串按**顶层** `&&` / `;` 拆成多条子命令（禁 shell，shlex 保证引号内不误拆）。
+
+    返回 List[(argv, connector)]，connector 为**该子命令之前**的连接符：
+    第一条恒为 "" ；其后每条为 "&&"（前置非 0 短路）或 ";"（无条件顺序）。
+    shlex.split 已剥离引号，故引号内的 `&&` / `;` 不会被当作连接符（它们成为单个 token）。
+
+    解析失败（未闭合引号等）退化为整条 whitespace split 单子命令，交由下游自然报错。
+    """
+    import shlex
 
     try:
-        parts = shlex.split(cmd_str)
+        tokens = shlex.split(cmd_str)
     except ValueError:
-        parts = cmd_str.split()
-    if not parts:
-        return None
+        toks = cmd_str.split()
+        return [(toks, "")] if toks else []
 
-    # 把裸 `python` / `python3` 替换为 venv python_exe（避免落到系统 py2/无依赖解释器）。
-    if parts[0] in ("python", "python3", "py"):
-        parts = [python_exe] + parts[1:]
-    return parts
+    subcommands: List[Tuple[List[str], str]] = []
+    current: List[str] = []
+    connector = ""  # 当前累积子命令前的连接符
+    for tok in tokens:
+        if tok == "&&" or tok == ";":
+            if current:
+                subcommands.append((current, connector))
+                current = []
+            connector = tok
+            continue
+        current.append(tok)
+    if current:
+        subcommands.append((current, connector))
+    return subcommands
+
+
+def _step_to_command(step: Any, python_exe: str) -> Optional[List[Tuple[List[str], str]]]:
+    """把一个 execution_step 转为子命令序列 List[(argv, connector)]，供执行循环逐条跑。
+
+    禁 shell=True：每条子命令一律 argv 列表形式。在**解析期**（非 shell）安全处理一小撮
+    shell 语义：顶层 `&&` / `;` 拆分（见 _split_top_level）。裸 python/pip 改写与 cd/source/
+    glob 等 token 级语义在执行循环里按 current_dir 处理（_apply_subcommand_semantics）。
+
+    connector：第一条 "" ；其后 "&&"（短路）或 ";"（顺序）。
+    """
+    cmd_str = _extract_command_str(step)
+    if not cmd_str:
+        return None
+    subs = _split_top_level(cmd_str)
+    return subs or None
+
+
+# cd 后续步骤都假设在新目录里——current_dir 跨子命令/跨 step 持续（模拟连续 shell 会话）。
+_GLOB_CHARS = ("*", "?", "[")
+
+
+def _rewrite_interpreter(argv: List[str], python_exe: str) -> List[str]:
+    """裸 python/python3/py -> venv python_exe；裸 pip -> python_exe -m pip（避免落到系统 pip）。"""
+    if not argv:
+        return argv
+    head = argv[0]
+    if head in ("python", "python3", "py"):
+        return [python_exe] + argv[1:]
+    if head in ("pip", "pip3"):
+        return [python_exe, "-m", "pip"] + argv[1:]
+    return argv
+
+
+def _expand_globs(argv: List[str], cwd: str) -> List[str]:
+    """对含通配符的 token 用 Python glob 在 cwd 下展开（非 shell）。展开为空保留原 token（让命令自然报错）。"""
+    import glob as _glob
+    import os as _os
+
+    out: List[str] = []
+    for tok in argv:
+        if any(c in tok for c in _GLOB_CHARS):
+            if _os.path.isabs(tok):
+                matches = sorted(_glob.glob(tok))
+            else:
+                # root_dir 保证相对模式相对 current_dir 展开，返回的也是相对路径（与原命令语义一致）。
+                matches = sorted(_glob.glob(tok, root_dir=cwd))
+            if matches:
+                out.extend(matches)
+            else:
+                out.append(tok)  # 展开为空：保留原样，不静默吞
+        else:
+            out.append(tok)
+    return out
+
+
+def _resolve_cd(target: Optional[str], current_dir: str) -> str:
+    """把 `cd <target>` 相对 current_dir 解析为绝对路径，并经 workspace 边界校验。
+
+    Raises:
+        SandboxCreationError: 解析后越出 WORKSPACE_DIR（绝不允许 cd 逃逸）。
+    """
+    import os as _os
+
+    if not target:
+        # 裸 `cd`：退回 work_dir 语义不明确，这里保持当前目录（不做 HOME 跳转，避免逃逸）。
+        return current_dir
+    candidate = target if _os.path.isabs(target) else _os.path.join(current_dir, target)
+    new_path = Path(candidate)
+    if not _is_within_workspace(new_path):
+        raise SandboxCreationError(
+            "cd 目标越界",
+            f"cd {target} 解析为 {new_path} 不在 WORKSPACE_DIR 之下",
+        )
+    return str(new_path.resolve())
+
+
+def _run_step_subcommands(
+    step: Any,
+    python_exe: str,
+    current_dir: str,
+) -> Tuple[List[SandboxRunResult], str]:
+    """执行一个 step 的子命令序列（顶层 && / ; 拆分后），返回 (run_results, 更新后的 current_dir)。
+
+    语义（解析期，非 shell）：
+      - connector "&&"：前一条非 0/超时则短路，停止该 step 剩余子命令；
+      - connector ";"：无条件顺序执行；
+      - `cd <dir>`：更新 current_dir（经 workspace 边界校验），不作为子进程执行；越界拒绝该 step；
+      - `source`/`.`：丢弃（venv 已由 prepare_venv 建好，python_exe 已指向 venv）；
+      - 裸 python/pip：改写为 venv 解释器；通配符：glob 展开（空则保留原样）。
+    每条子命令以 current_dir 作 run_in_venv 的 work_dir（跨子命令、跨 step 持续）。
+    """
+    subs = _step_to_command(step, python_exe)
+    results: List[SandboxRunResult] = []
+    if not subs:
+        return results, current_dir
+
+    prev_failed = False
+    for argv, connector in subs:
+        # && 短路：前一条失败则停止该 step 剩余子命令。
+        if connector == "&&" and prev_failed:
+            break
+        if not argv:
+            continue
+
+        head = argv[0]
+        # source / . 激活 venv：丢弃（无需执行）。
+        if head in ("source", "."):
+            continue
+        # cd：更新 current_dir，不执行子进程。
+        if head == "cd":
+            target = argv[1] if len(argv) > 1 else None
+            try:
+                current_dir = _resolve_cd(target, current_dir)
+            except SandboxCreationError as exc:
+                logger.warning("[%s] cd 越界拒绝: %s", NODE_NAME, exc)
+                results.append(SandboxRunResult(
+                    exit_code=-1, stdout="", stderr=str(exc),
+                    duration_seconds=0.0, timed_out=False,
+                    output_truncated=False, command=argv,
+                ))
+                prev_failed = True
+                if connector != ";":  # 默认 cd 失败短路（& 风险），仅显式 ; 才续跑
+                    break
+            continue
+
+        argv = _rewrite_interpreter(argv, python_exe)
+        argv = _expand_globs(argv, current_dir)
+
+        try:
+            rr = run_in_venv(python_exe, argv, current_dir)
+        except SandboxCreationError as exc:
+            logger.warning("[%s] run_in_venv 越界: %s", NODE_NAME, exc)
+            rr = SandboxRunResult(
+                exit_code=-1, stdout="", stderr=str(exc),
+                duration_seconds=0.0, timed_out=False,
+                output_truncated=False, command=argv,
+            )
+        results.append(rr)
+        prev_failed = (rr.exit_code != 0 or rr.timed_out)
+
+    return results, current_dir
 
 
 # ---------------------------------------------------------------------------
@@ -927,25 +1086,21 @@ def execution(state: GlobalState) -> dict:
         )
 
     # 步骤 2：逐条执行 execution_steps 并聚合。
+    # current_dir 模拟连续 shell 会话的 cwd：cd 更新它、跨子命令/跨 step 持续（LLM 规划时
+    # 假设 `cd 进仓库后后续步骤都在仓库里`）。始终经 workspace 边界校验，越界拒绝。
     steps = plan.get("execution_steps") or []
     run_results: List[SandboxRunResult] = []
+    current_dir = work_dir
     if prep.success:
         for step in steps:
-            cmd = _step_to_command(step, prep.python_exe)
-            if not cmd:
+            sub_results, current_dir = _run_step_subcommands(
+                step, prep.python_exe, current_dir
+            )
+            if not sub_results:
                 continue
-            try:
-                rr = run_in_venv(prep.python_exe, cmd, work_dir)
-            except SandboxCreationError as exc:
-                logger.warning("[%s] run_in_venv 越界: %s", NODE_NAME, exc)
-                rr = SandboxRunResult(
-                    exit_code=-1, stdout="", stderr=str(exc),
-                    duration_seconds=0.0, timed_out=False,
-                    output_truncated=False, command=cmd,
-                )
-            run_results.append(rr)
-            # 某步失败即停（后续步骤通常依赖前序成功，避免噪声）。
-            if rr.exit_code != 0 or rr.timed_out:
+            run_results.extend(sub_results)
+            # 某 step（任一子命令）失败即停（后续步骤通常依赖前序成功，避免噪声）。
+            if any(r.exit_code != 0 or r.timed_out for r in sub_results):
                 break
 
     # 步骤 3：错误分类。

@@ -6,6 +6,8 @@
 > 权威依据：`core/state.py`（字段定义以此为准）、`core/react_base.py`、`core/graph.py`、`core/checkpointer.py`、`config.py`；架构意图依据 `docs/technical-architecture.md`
 > 立项判定结论：**条件性可立项**——无阻塞级数据契约冲突，但存在 2 项 must-fix-before-PRD 的设计前置（见 §D）
 >
+> **后续默认参数变更（2026-06-30，Maria 拍板）**：本矩阵正文中对 `config.py` 的取值引用（`MAX_FIX_LOOP_COUNT=3`、`MAX_TOTAL_LLM_CALLS=50`、新增 `MAX_DEV_LOOP_LLM_CALLS` 建议 ≤20 等）是 **2026-06-14 立项评估时刻的代码取证快照**，保留以维持审计可追溯。Sprint 3 落地后这三常量默认值已放大为 `MAX_FIX_LOOP_COUNT=10` / `MAX_DEV_LOOP_LLM_CALLS=60` / `MAX_TOTAL_LLM_CALLS=120`（强约束 60 < 120 不变）。当前生效值以 `config.py` 与 PRD/架构文档顶部注记为准；矩阵的兼容性结论（字段语义、reducer 红线、预算扣减缺口）不受默认值放大影响，依然成立。
+>
 > **⚠️ 方向调整（2026-06-14 Maria 决策）**：本矩阵原服务于「Sprint 3 = dev_loop 真 multi-agent」。Maria 已决定 **Sprint 3 重心改为「先打通端到端复现」（单 agent 修复循环），dev_loop 真 multi-agent 顺延到 sp4+**。本矩阵中**非 multi-agent 专属的发现对 sp3 端到端复现（单 agent 修复循环）同样适用**——尤其 §A.3/§B 的 must-fix-2（预算扣减缺口）、§A.2 修复循环死字段激活、§C.3 code_only 路由、§0.3 占位节点现状、§C.1 把 coding/execution 节点位换成真实现的嵌入范式。仅 §A.4（DevLoopState / 共享 scratchpad）、supervisor / 三 agent 路由、§D.3 的 must-fix-1（多 agent 并发写无 reducer 的 list）属 **multi-agent 专属，服务 sp4+**。
 
 ---

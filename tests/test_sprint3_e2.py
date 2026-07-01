@@ -247,12 +247,12 @@ def test_cp_e2_1_renders_without_exception_normal_path():
 # CP-E2-2：进度展示读 fix_loop_count / MAX_FIX_LOOP_COUNT / fix_loop_history
 # =========================================================================== #
 def test_cp_e2_2_fix_loop_progress_text_pure():
-    """CP-E2-2（纯函数）：_fix_loop_progress_text 渲染「修复第 N / 3 轮」+ 边界。"""
+    """CP-E2-2（纯函数）：_fix_loop_progress_text 渲染「修复第 N / MAX_FIX_LOOP_COUNT 轮」+ 边界。"""
     mod = _mod()
     assert mod._fix_loop_progress_text(1) == f"修复第 1 / {MAX_FIX_LOOP_COUNT} 轮"
     assert mod._fix_loop_progress_text(2) == f"修复第 2 / {MAX_FIX_LOOP_COUNT} 轮"
     assert mod._fix_loop_progress_text(MAX_FIX_LOOP_COUNT) == f"修复第 {MAX_FIX_LOOP_COUNT} / {MAX_FIX_LOOP_COUNT} 轮"
-    # 越界封顶（不出现「第 4 / 3 轮」这种文案）。
+    # 越界封顶（不出现「第 (MAX+1) / MAX 轮」这种越界文案）。
     assert mod._fix_loop_progress_text(MAX_FIX_LOOP_COUNT + 5) == f"修复第 {MAX_FIX_LOOP_COUNT} / {MAX_FIX_LOOP_COUNT} 轮"
     # N==0 / 非数 → 尚未进入修复循环。
     assert "尚未进入修复循环" in mod._fix_loop_progress_text(0)
@@ -280,7 +280,7 @@ def test_cp_e2_2_summarize_fix_history_pure():
 
 
 def test_cp_e2_2_progress_text_rendered_in_apptest():
-    """CP-E2-2（AppTest）：渲染含「修复第 N / 3 轮」+ 每轮摘要文案。"""
+    """CP-E2-2（AppTest）：渲染含「修复第 N / MAX_FIX_LOOP_COUNT 轮」+ 每轮摘要文案。"""
     state = _make_state(fix_loop_count=2, fix_loop_history=_make_fix_history(2))
     controller = _make_controller_mock(state=state, is_interrupted=False)
     at = _run(controller, _SCRIPT_HEADER)

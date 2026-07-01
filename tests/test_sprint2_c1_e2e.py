@@ -206,8 +206,10 @@ def test_e2e_c1_01_natural_pause_at_planning(approve_thread, llm_config):
         assert payload.get("revise_count") == 0, (
             f"首次暂停 revise_count 应为 0：{payload.get('revise_count')}"
         )
+        from config import MAX_TOTAL_LLM_CALLS
+
         assert payload.get("soft_hint_threshold") == 5
-        assert payload.get("max_total_llm_calls") == 50
+        assert payload.get("max_total_llm_calls") == MAX_TOTAL_LLM_CALLS
 
         # 4) 上游真节点已填充
         vals = snap.values

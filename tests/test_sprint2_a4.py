@@ -120,12 +120,13 @@ def test_cp_a4_3_ensure_directories_creates_repos_dir() -> None:
 
 
 def test_cp_a4_4_sp1_constants_unchanged() -> None:
-    """CP-A4-4: sp1 既有关键常量值零修改（尤其 MAX_TOTAL_LLM_CALLS = 50）。"""
+    """CP-A4-4: sp1 既有关键常量基线断言（MAX_TOTAL_LLM_CALLS / MAX_FIX_LOOP_COUNT
+    默认值已于 2026-06 经 Maria 拍板放大为 120 / 10）。"""
     import config
 
-    assert config.MAX_TOTAL_LLM_CALLS == 50, "禁止修改 sp1 MAX_TOTAL_LLM_CALLS"
+    assert config.MAX_TOTAL_LLM_CALLS == 120, "MAX_TOTAL_LLM_CALLS 默认放大为 120（2026-06 Maria 拍板）"
     assert config.MAX_NODE_LLM_CALLS == 10
-    assert config.MAX_FIX_LOOP_COUNT == 3
+    assert config.MAX_FIX_LOOP_COUNT == 10, "MAX_FIX_LOOP_COUNT 默认放大为 10（2026-06 Maria 拍板）"
     assert config.REACT_MAX_ROUNDS_PAPER_INTAKE == 5
     assert config.REACT_MAX_ROUNDS_PAPER_ANALYSIS == 12
     assert config.REACT_LLM_TEMPERATURE == 0.3

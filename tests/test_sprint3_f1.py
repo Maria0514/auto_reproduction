@@ -9,7 +9,7 @@ F1 的增量价值（收尾性）：
      对应 CP 测试函数覆盖——通过 import 并断言 CP 测试函数 callable 存在（防回归删除）。
   2. **must-fix-1 Sprint 级专项聚合断言**（CP-F1-2，AC-S3-05）：grep 三字段无 reducer
      + 多回合修复三字段 read-modify-write 无丢失无重复累加（直接行为断言，不依赖底层 CP）。
-  3. **must-fix-2 Sprint 级专项聚合断言**（CP-F1-3，AC-S3-04）：预算回写 + 子预算 20
+  3. **must-fix-2 Sprint 级专项聚合断言**（CP-F1-3，AC-S3-04）：预算回写 + 子预算 60
      + 入口预算门三项专项断言（直接行为断言）。
   4. **CP-F1-1/4 收尾确认**：AC-S3-02/03/05/06/08/09/10 mock 单测全覆盖审计。
 
@@ -250,8 +250,8 @@ def test_cp_f1_2_multi_round_fix_three_fields_no_loss_no_dup(
 
 
 def test_cp_f1_3_dev_loop_subbudget_constant_below_total() -> None:
-    """CP-F1-3 ②（AC-S3-04 ② 直接验收点）：MAX_DEV_LOOP_LLM_CALLS==20 且 < MAX_TOTAL_LLM_CALLS。"""
-    assert MAX_DEV_LOOP_LLM_CALLS == 20, f"子预算应为 20，实际 {MAX_DEV_LOOP_LLM_CALLS}"
+    """CP-F1-3 ②（AC-S3-04 ② 直接验收点）：MAX_DEV_LOOP_LLM_CALLS==60 且 < MAX_TOTAL_LLM_CALLS。"""
+    assert MAX_DEV_LOOP_LLM_CALLS == 60, f"子预算应为 60，实际 {MAX_DEV_LOOP_LLM_CALLS}"
     assert MAX_DEV_LOOP_LLM_CALLS < MAX_TOTAL_LLM_CALLS, (
         f"子预算 {MAX_DEV_LOOP_LLM_CALLS} 必须 < 总预算 {MAX_TOTAL_LLM_CALLS}"
     )
@@ -351,13 +351,13 @@ AC_COVERAGE_MAP: Dict[str, List[tuple]] = {
             "test_cp_b1_5_nonzero_exit_does_not_raise",
         ]),
     ],
-    "AC-S3-03": [  # 修复循环计数 + 上限 3 拦截
+    "AC-S3-03": [  # 修复循环计数 + 上限拦截（上限取 MAX_FIX_LOOP_COUNT）
         ("tests.test_sprint3_c3", [
             "test_cp_c3_4_retry_coding_increments",
             "test_cp_c3_5_upper_limit_to_interrupt",
         ]),
     ],
-    "AC-S3-04": [  # 预算回写 + 子预算 20 + 入口预算门
+    "AC-S3-04": [  # 预算回写 + 子预算（MAX_DEV_LOOP_LLM_CALLS）+ 入口预算门
         ("tests.test_sprint3_c3", [
             "test_cp_c3_8_budget_writeback_on_llm_extract",
             "test_cp_c3_9_entry_budget_gate_degrade",

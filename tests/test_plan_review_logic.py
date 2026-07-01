@@ -81,7 +81,7 @@ def _make_payload(
         "node_errors": [],
         "revise_count": revise_count,
         "soft_hint_threshold": soft_hint_threshold,
-        "max_total_llm_calls": 50,
+        "max_total_llm_calls": 120,
     }
 
 
@@ -882,7 +882,7 @@ def test_info_bar_shows_both_revise_and_chat_counts():
     text = _collect_text(at)
     assert "已修改 2 轮" in text
     assert "本轮对话已消耗 3 次调用" in text
-    assert "LLM 调用上限 50 次" in text
+    assert "LLM 调用上限 120 次" in text
 
 
 # --- AC-S2-16 强化：_apply_chat_revision 计数 +1（总结调用计入对话计数）-------- #

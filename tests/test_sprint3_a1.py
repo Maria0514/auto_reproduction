@@ -4,8 +4,8 @@
 
 参考实现：sp2 同款风格 tests/test_sprint2_a4.py（轻量结构性断言，无真实 LLM）。
 
-约束：A1 只追加常量，禁止修改 sp1/sp2 既有常量（尤其 MAX_TOTAL_LLM_CALLS=50 /
-MAX_FIX_LOOP_COUNT=3）。CP-A1-4 用 git diff 实证 config.py 为纯追加 0 删改。
+约束：A1 只追加常量；MAX_TOTAL_LLM_CALLS / MAX_FIX_LOOP_COUNT 默认值于 2026-06 经 Maria 拍板
+放大（120 / 10）。CP-A1-4 用 git diff 实证 config.py sp3 部分为纯追加 0 删改。
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ def test_cp_a1_2_constant_values() -> None:
     assert config.SANDBOX_OUTPUT_MAX_BYTES == 1_048_576
     assert config.SANDBOX_OUTPUT_MAX_BYTES == 1048576  # 1 MiB 双形态确认
     assert config.SANDBOX_PIP_MAX_RETRIES == 2
-    assert config.MAX_DEV_LOOP_LLM_CALLS == 20
+    assert config.MAX_DEV_LOOP_LLM_CALLS == 60
     assert config.DEV_LOOP_MIN_CALLS_PER_ROUND == 2
     assert config.REACT_MAX_ROUNDS_CODING == 12
     assert config.STREAMLIT_PAGE_EXECUTION == "execution"
@@ -115,28 +115,28 @@ def test_cp_a1_2_aux_execution_report_pages_distinct() -> None:
 
 
 def test_cp_a1_3_dev_loop_budget_strictly_less_than_total() -> None:
-    """CP-A1-3（AC-S3-04 ② 直接验收点）: 子预算 20 < 总预算 50。"""
+    """CP-A1-3（AC-S3-04 ② 直接验收点）: 子预算 60 < 总预算 120。"""
     import config
 
     assert config.MAX_DEV_LOOP_LLM_CALLS < config.MAX_TOTAL_LLM_CALLS, (
         "MAX_DEV_LOOP_LLM_CALLS 必须严格小于 MAX_TOTAL_LLM_CALLS（修复循环子预算不得超总预算）"
     )
-    assert config.MAX_DEV_LOOP_LLM_CALLS == 20
-    assert config.MAX_TOTAL_LLM_CALLS == 50
+    assert config.MAX_DEV_LOOP_LLM_CALLS == 60
+    assert config.MAX_TOTAL_LLM_CALLS == 120
 
 
 # ========== CP-A1-4：sp1/sp2 既有常量零修改 + git diff 实证纯追加 ==========
 
 
 def test_cp_a1_4_sp1_sp2_constants_unchanged() -> None:
-    """CP-A1-4: sp1/sp2 既有关键常量值零修改（尤其 MAX_TOTAL_LLM_CALLS=50 /
-    MAX_FIX_LOOP_COUNT=3）。"""
+    """CP-A1-4: sp1/sp2 既有关键常量基线断言（MAX_TOTAL_LLM_CALLS / MAX_FIX_LOOP_COUNT
+    默认值已于 2026-06 经 Maria 拍板放大为 120 / 10）。"""
     import config
 
     # sp1 核心预算 / 重试常量
-    assert config.MAX_TOTAL_LLM_CALLS == 50, "禁止修改 sp1 MAX_TOTAL_LLM_CALLS"
+    assert config.MAX_TOTAL_LLM_CALLS == 120, "MAX_TOTAL_LLM_CALLS 默认放大为 120（2026-06 Maria 拍板）"
     assert config.MAX_NODE_LLM_CALLS == 10
-    assert config.MAX_FIX_LOOP_COUNT == 3, "禁止修改 MAX_FIX_LOOP_COUNT（sp3 仅引用不改值）"
+    assert config.MAX_FIX_LOOP_COUNT == 10, "MAX_FIX_LOOP_COUNT 默认放大为 10（2026-06 Maria 拍板）"
     assert config.LLM_REQUEST_TIMEOUT == 60
     assert config.DEFAULT_LLM_MAX_TOKENS == 8192
     assert config.LLM_MAX_RETRIES == 3
@@ -247,7 +247,7 @@ def test_aux_no_env_override_for_sp3_literals(
     reloaded = importlib.reload(config_module)
     try:
         assert reloaded.SANDBOX_EXEC_TIMEOUT == 1800
-        assert reloaded.MAX_DEV_LOOP_LLM_CALLS == 20
+        assert reloaded.MAX_DEV_LOOP_LLM_CALLS == 60
         assert reloaded.REACT_MAX_ROUNDS_CODING == 12
         assert reloaded.STREAMLIT_PAGE_EXECUTION == "execution"
     finally:

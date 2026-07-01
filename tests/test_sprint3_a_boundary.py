@@ -183,7 +183,7 @@ def test_no_env_override_for_all_sp3_constants(
         "SANDBOX_PIP_INSTALL_TIMEOUT": 1200,
         "SANDBOX_OUTPUT_MAX_BYTES": 1_048_576,
         "SANDBOX_PIP_MAX_RETRIES": 2,
-        "MAX_DEV_LOOP_LLM_CALLS": 20,
+        "MAX_DEV_LOOP_LLM_CALLS": 60,
         "DEV_LOOP_MIN_CALLS_PER_ROUND": 2,
         "REACT_MAX_ROUNDS_CODING": 12,
         "STREAMLIT_PAGE_EXECUTION": "execution",
@@ -209,10 +209,12 @@ def test_create_initial_state_legacy_defaults_intact() -> None:
 
     覆盖补强方向：「新字段与既有字段共存、不破坏既有默认值」。
     """
+    import config
+
     state = create_initial_state("2103.00020", _CFG)
 
-    # sp1 预算 / 错误追踪默认值
-    assert state["retry_budget_remaining"] == 50  # == MAX_TOTAL_LLM_CALLS
+    # sp1 预算 / 错误追踪默认值（初值引用常量，避免默认值调整后再破）
+    assert state["retry_budget_remaining"] == config.MAX_TOTAL_LLM_CALLS
     assert state["fix_loop_count"] == 0
     assert state["node_errors"] == []
     assert state["degraded_nodes"] == []

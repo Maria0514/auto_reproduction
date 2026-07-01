@@ -215,8 +215,10 @@ def test_create_initial_state_defaults() -> None:
 
     state = create_initial_state(user_input="2405.14831", llm_config=llm_config)
 
-    # 关键默认值断言（dev-plan L802）
-    assert state["retry_budget_remaining"] == 50
+    # 关键默认值断言（dev-plan L802）；初值引用常量，默认预算调整后不再破。
+    from config import MAX_TOTAL_LLM_CALLS
+
+    assert state["retry_budget_remaining"] == MAX_TOTAL_LLM_CALLS
     assert state["fix_loop_count"] == 0
     assert state["execution_mode"] == ExecutionMode.FULL
     assert state["node_errors"] == []

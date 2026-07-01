@@ -445,7 +445,7 @@ def _payload(switch_repo_failed: bool) -> Dict[str, Any]:
         "resource_info": {"repos": [], "selected_repo": None, "resource_strategy": "from_scratch"},
         "paper_analysis_summary": {"method_summary": "m"},
         "degraded_nodes": [], "node_errors": [],
-        "revise_count": 1, "soft_hint_threshold": 5, "max_total_llm_calls": 50,
+        "revise_count": 1, "soft_hint_threshold": 5, "max_total_llm_calls": 120,
         "switch_repo_failed": switch_repo_failed,
     }
 

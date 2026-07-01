@@ -304,7 +304,7 @@ def test_cp_c3_4_retry_coding_increments(monkeypatch):
 
 
 def test_cp_c3_5_upper_limit_to_interrupt(monkeypatch):
-    """fix_loop_count==3（已达上限）+ 可修复失败 → 不回 coding、不自增。
+    """fix_loop_count==MAX_FIX_LOOP_COUNT（已达上限）+ 可修复失败 → 不回 coding、不自增。
 
     首次进入（已 commit=False）→ 置 await 标记 return（不 interrupt），不自增 fix_loop_count。
     """
@@ -312,7 +312,7 @@ def test_cp_c3_5_upper_limit_to_interrupt(monkeypatch):
         monkeypatch,
         run_results=[FakeRunResult(exit_code=1, stderr="RuntimeError: oops")],
     )
-    state = _base_state(fix_loop_count=MAX_FIX_LOOP_COUNT)  # ==3
+    state = _base_state(fix_loop_count=MAX_FIX_LOOP_COUNT)  # ==MAX_FIX_LOOP_COUNT
     out = execution(state)
     # 不回 coding（无 retry_coding），不自增。
     assert out.get("_dev_loop_route") == "await_dev_loop_interrupt"
@@ -503,7 +503,7 @@ def test_cp_c3_9_entry_budget_gate_degrade(monkeypatch):
         monkeypatch,
         run_results=[FakeRunResult(exit_code=1, stderr="ModuleNotFoundError: x")],
     )
-    state = _base_state(retry_budget_remaining=DEV_LOOP_MIN_CALLS_PER_ROUND - 1)  # =1 < 2
+    state = _base_state(retry_budget_remaining=DEV_LOOP_MIN_CALLS_PER_ROUND - 1)  # < DEV_LOOP_MIN_CALLS_PER_ROUND
     out = execution(state)
     assert out["execution_result"]["success"] is False
     assert NODE_NAME in out["degraded_nodes"]
@@ -515,7 +515,7 @@ def test_cp_c3_9_entry_budget_gate_degrade(monkeypatch):
 
 
 # ===========================================================================
-# CP-C3-10：子预算触顶（AC-S3-04 ②）—— _dev_loop_llm_calls >= 20 → 视同修复耗尽，转 interrupt#2
+# CP-C3-10：子预算触顶（AC-S3-04 ②）—— _dev_loop_llm_calls >= MAX_DEV_LOOP_LLM_CALLS → 视同修复耗尽，转 interrupt#2
 # ===========================================================================
 
 
@@ -528,7 +528,7 @@ def test_cp_c3_10_dev_loop_budget_ceiling(monkeypatch):
     state = _base_state(
         fix_loop_count=1,
         retry_budget_remaining=30,
-        _dev_loop_llm_calls=MAX_DEV_LOOP_LLM_CALLS,  # ==20
+        _dev_loop_llm_calls=MAX_DEV_LOOP_LLM_CALLS,  # ==MAX_DEV_LOOP_LLM_CALLS
     )
     out = execution(state)
     assert "fix_loop_count" not in out  # 不回 coding、不自增

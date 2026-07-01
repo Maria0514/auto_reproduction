@@ -332,26 +332,34 @@ def test_r4_export_code_node_errors_complete(monkeypatch):
 
 
 def test_r5_step_to_command_edges():
+    # 新契约（方向 2 复合命令拆分）：_step_to_command 返回 List[(argv, connector)]，
+    # 仅做顶层 && / ; 拆分；裸 python/pip 改写延后到执行循环（_run_step_subcommands），此层保留原 token。
     PE = "/ws/.venv/bin/python"
-    # python/python3 替换为 venv 解释器。
+    # 单条原子命令：一条子命令、connector 为 ""（python 此层尚未改写）。
     assert _step_to_command({"command": "python train.py --epochs 5"}, PE) == [
-        PE, "train.py", "--epochs", "5"
+        (["python", "train.py", "--epochs", "5"], "")
     ]
-    assert _step_to_command("python3 eval.py", PE) == [PE, "eval.py"]
-    # 非 python 命令不替换。
-    assert _step_to_command({"command": "bash run.sh"}, PE) == ["bash", "run.sh"]
+    assert _step_to_command("python3 eval.py", PE) == [(["python3", "eval.py"], "")]
+    # 非 python 命令原样。
+    assert _step_to_command({"command": "bash run.sh"}, PE) == [(["bash", "run.sh"], "")]
     # 空 / 缺键 → None（被节点跳过）。
     assert _step_to_command({"command": ""}, PE) is None
     assert _step_to_command({"step_name": "x"}, PE) is None
     assert _step_to_command("   ", PE) is None
-    # 引号内 -c 表达式保持完整。
-    assert _step_to_command({"command": 'python -c "print(1)"'}, PE) == [PE, "-c", "print(1)"]
+    # 引号内 -c 表达式保持完整（不被顶层拆分误切）。
+    assert _step_to_command({"command": 'python -c "print(1)"'}, PE) == [
+        (["python", "-c", "print(1)"], "")
+    ]
     # shlex 异常（不平衡引号）兜底 split 不抛。
     out = _step_to_command({"command": 'python -c "unclosed'}, PE)
-    assert out is not None and out[0] == PE
+    assert out is not None and out[0][0][0] == "python"
     # 备用键 cmd / run。
-    assert _step_to_command({"cmd": "python a.py"}, PE) == [PE, "a.py"]
-    assert _step_to_command({"run": "python b.py"}, PE) == [PE, "b.py"]
+    assert _step_to_command({"cmd": "python a.py"}, PE) == [(["python", "a.py"], "")]
+    assert _step_to_command({"run": "python b.py"}, PE) == [(["python", "b.py"], "")]
+    # 顶层 && 拆分为两条子命令。
+    assert _step_to_command({"command": "git clone X && cd X"}, PE) == [
+        (["git", "clone", "X"], ""), (["cd", "X"], "&&")
+    ]
 
 
 # ===========================================================================
@@ -539,13 +547,13 @@ def test_r12_interrupt_payload_shape(monkeypatch):
 
 
 # ===========================================================================
-# R-13：连续修复回合 fix_loop_count 单调推进（0→1→2→3），第 3 轮后转 await
+# R-13：连续修复回合 fix_loop_count 单调推进（0→…→MAX_FIX_LOOP_COUNT），触顶后转 await
 # ===========================================================================
 
 
 def test_r13_sequential_fix_rounds_monotonic(monkeypatch):
-    """逐回合模拟：fix_loop_count 0→1→2 都回 coding，==3 时转 await（单点自增、上限拦截）。"""
-    for fc in (0, 1, 2):
+    """逐回合模拟：fix_loop_count 0→…→MAX-1 都回 coding，==MAX 时转 await（单点自增、上限拦截）。"""
+    for fc in range(MAX_FIX_LOOP_COUNT):
         _patch_sandbox(
             monkeypatch,
             run_results=[FakeRunResult(exit_code=1, stderr="ModuleNotFoundError: x")],
@@ -554,7 +562,7 @@ def test_r13_sequential_fix_rounds_monotonic(monkeypatch):
         assert out["fix_loop_count"] == fc + 1, f"fc={fc} 应自增到 {fc+1}"
         assert out["_dev_loop_route"] == _ROUTE_RETRY_CODING
         assert len(out["fix_loop_history"]) == 1  # 本回合 append 一条（基于空 history）
-    # fc==3：上限，不自增、转 await。
+    # fc==MAX_FIX_LOOP_COUNT：上限，不自增、转 await。
     _patch_sandbox(
         monkeypatch,
         run_results=[FakeRunResult(exit_code=1, stderr="ModuleNotFoundError: x")],

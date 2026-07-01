@@ -9,6 +9,8 @@
 
 本文档汇总 Sprint 3 全部代码交付物的核对结果、五条核心 e2e 入口、mock 用例运行方式、AC-S3-01~10 覆盖矩阵、已知限制，作为测试工程师执行 Sprint 3 最终验收的上下文基线。范式照搬 `docs/sprint1/handoff-to-test-engineer.md`（sp1 F2 产出）。
 
+> **默认参数变更注记（2026-06-30，Maria 拍板）**：修复循环三常量默认值放大——`MAX_FIX_LOOP_COUNT` 3→**10**、`MAX_DEV_LOOP_LLM_CALLS` 20→**60**、`MAX_TOTAL_LLM_CALLS` 50→**120**。验收时「修复循环上限拦截」类断言一律以 `config.MAX_FIX_LOOP_COUNT`（=10）为准、不硬编码 3；real-2 真实 e2e 现意味连续 10 轮真实 LLM 修复回合，配额成本相应放大，主控真跑时按 §674 复跑要求评估。本文档正文「上限 3」类描述已更新；2026-06-29 dated 运行记录（F2/F3 真跑数）为历史快照不回改。
+
 ---
 
 ## 1. 五条核心 e2e 入口（真实链路，凭证就绪后由主控补跑）
@@ -18,7 +20,7 @@
 | # | 精确节点 id | 场景 | AC | 备注 |
 |---|------------|------|----|------|
 | real-1 | `tests/test_sprint3_e2e.py::TestRealChainE2E::test_real_1_happy_path_b_grade_success` | happy path B 档成功（FULL 模式跑通 → success=True + 报告渲染） | AC-S3-01 | **smoke 首选**（最省 deepxiv 配额、一条真实链路 fail-fast 验凭证 + deepxiv 可达 + 全装配） |
-| real-2 | `tests/test_sprint3_e2e.py::TestRealChainE2E::test_real_2_fix_loop_upper_limit_three` | 修复循环上限 3 拦截 → interrupt#2 | AC-S3-03 | mock 连续可修复失败 |
+| real-2 | `tests/test_sprint3_e2e.py::TestRealChainE2E::test_real_2_fix_loop_upper_limit_three` | 修复循环上限拦截（上限取 MAX_FIX_LOOP_COUNT，默认 10）→ interrupt#2 | AC-S3-03 | mock 连续可修复失败 |
 | real-3 | `tests/test_sprint3_e2e.py::TestRealChainE2E::test_real_3_interrupt2_three_state_resume[terminate-end]` / `[revise_plan-planning]` / `[export_code-reporting]` | interrupt#2 三选一（`Command(resume=...)` 三态路由） | AC-S3-07 | **参数化展开 3 个 item** |
 | real-4 | `tests/test_sprint3_e2e.py::TestRealChainE2E::test_real_4_code_only_skips_execution` | code_only 跳过 execution → reporting code_only 形态 | AC-S3-06 | planning 选 code_only |
 | real-5 | `tests/test_sprint3_e2e.py::TestRealChainE2E::test_real_5_degraded_budget_exhausted` | 预算耗尽 → degraded 报告 | AC-S3-09 ③ | 降级仍交付 |
@@ -90,7 +92,7 @@
 |---|---|---|---|---|
 | **AC-S3-01** 端到端 happy path B 档成功 | C1+C2+C3+D1+E3 / F2 | CP-C3-2 / CP-C2-2 / CP-D1-7 / CP-F2-2 | mock 单测 + 真实链路 e2e | mock 旁证全覆盖（c3::test_cp_c3_2 / c2::test_cp_c2_2 / d1::test_cp_d1_7）；**B 档真实成功 e2e 转正 PASS（real-1 PASSED 2026-06-29，7/7 真实 e2e 全绿）** |
 | **AC-S3-02** sandbox 4 护栏生效 | B1 / F1 | CP-B1-2~5 | mock 单测 | 全覆盖（b1::test_cp_b1_2/3/4/5；f1::test_cp_f1_4[AC-S3-02] 审计） |
-| **AC-S3-03** 修复循环计数 + 上限 3 拦截 | C3+D1 / F2 | CP-C3-4/5 / CP-F2-1 | mock 单测 + e2e | mock 全覆盖（c3::test_cp_c3_4/5；d1_reinforce::test_h3 真实图回边）；real-2 真实 e2e PASS |
+| **AC-S3-03** 修复循环计数 + 上限拦截（上限取 MAX_FIX_LOOP_COUNT，默认 10） | C3+D1 / F2 | CP-C3-4/5 / CP-F2-1 | mock 单测 + e2e | mock 全覆盖（c3::test_cp_c3_4/5；d1_reinforce::test_h3 真实图回边）；real-2 真实 e2e PASS |
 | **AC-S3-04** 预算回写 + 子预算 20 + 入口预算门 | A1+C3 / F1 | CP-A1-3 / CP-C3-8/9/10 | mock 单测 | 全覆盖（a1::test_cp_a1_3 / c3::test_cp_c3_8/9/10；f1::test_cp_f1_3_* 4 条 Sprint 级专项再断言） |
 | **AC-S3-05** list 无 reducer 单点合并无丢失（must-fix-1） | A2+C1+C3 / F1 | CP-A2-3 / CP-C1-4 / CP-C3-11 | grep 断言 + mock 单测 | 全覆盖（a2::test_cp_a2_3 grep / c1::test_cp_c1_4 / c3::test_cp_c3_11；f1::test_cp_f1_2_* 3 条 Sprint 级聚合） |
 | **AC-S3-06** code_only 跳过 execution + 修复循环 | D1+C1+C2 / F2 | CP-D1-3 / CP-C2-3 | mock 单测 + e2e | mock 全覆盖（d1::test_cp_d1_3 / c2::test_cp_c2_3 / d1::test_cp_d1_7_code_only）；real-4 真实 e2e PASS |
@@ -108,7 +110,7 @@
 | 编号 | 限制 | 影响范围 | 后续处理 / 验收关注点 |
 |------|------|---------|---------|
 | L-S3-01 | **interrupt#2 重跑幂等依赖 S-1 spike 结论**：execution 函数体内 resume 重跑非幂等风险（R-S3-06 最高风险）由 S-1 spike 前置验证幂等保护方案，C3 复用本回合 `execution_result`（CP-C3-13）。验收 real-2/3 时需关注重跑幂等行为。 | `core/nodes/execution.py` + `core/graph.py` | S-1 spike 报告 `test-reports/2026-06-16_spike-s1-execution-interrupt-idempotency.md`；§674 稳定性复跑（real-2/3）经 Maria 决策省配额记为可选待补，验收时若复跑可补样本 |
-| L-S3-02 | **错误分类准确率边界**：execution 错误分类（可修复 RUNTIME vs 不可修复 PERMANENT）基于规则 + 兜底归 RUNTIME 给一次机会（R-S3-04）；LLM / 异构 stderr 下分类准确率非 100%。 | `core/nodes/execution.py` 分类逻辑 | 上限 3 拦截 + CP-C3-3 两类分流验收兜底；验收时关注边界 stderr 的分类落点 |
+| L-S3-02 | **错误分类准确率边界**：execution 错误分类（可修复 RUNTIME vs 不可修复 PERMANENT）基于规则 + 兜底归 RUNTIME 给一次机会（R-S3-04）；LLM / 异构 stderr 下分类准确率非 100%。 | `core/nodes/execution.py` 分类逻辑 | 上限拦截（MAX_FIX_LOOP_COUNT，默认 10）+ CP-C3-3 两类分流验收兜底；验收时关注边界 stderr 的分类落点 |
 | L-S3-03 | **B 档解析依赖 `<METRICS>` 约定**：B 档 metrics 解析依赖入口脚本在 stdout 末尾打印 `<METRICS>{...}</METRICS>`（C1 prompt 强约束前移）；三档解析为正则 → LLM 抽取兜底 → 降级。若 LLM 生成的入口脚本漏打该行，走 LLM 抽取兜底或降级。 | `core/nodes/coding.py`（prompt 约定）+ `core/nodes/execution.py`（三档解析） | R-S3-05 缓解；验收 real-1 happy path 时关注 `<METRICS>` 命中走正则解析路径 |
 | L-S3-04 | **LLM read_section 章节名命中率**（F2 真跑观察）：coding ReAct 内 agent 自主调 `read_section(arxiv_id, section_name)` 时，LLM 常猜错章节名（如猜 `method` / `experiments` / `abstract`，而 HippoRAG 真实章节是 `HippoRAG` / `Experimental Setup` / `Introduction`），触发 deepxiv「Section not found」降级（返回可用章节列表）。不影响最终产出（agent 会重试或换章节），但**真跑日志会有大量 `Section not found` WARNING**，属预期，非 bug。 | `core/tools/deepxiv_tools.py::read_section` + coding ReAct | 验收真实 e2e 时见此 WARNING 不必惊慌；后续 Sprint 可考虑把 `get_paper_structure` 章节清单前置喂给 agent 提升命中率 |
 | L-S3-05 | **§674 稳定性复跑待补**：interrupt#2 / 修复循环属 LLM 服从度 + 重跑幂等类风险，dev-plan §674 要求按复现率连跑 3~5 次全绿。F2 真跑各场景本次各 1 次通过，real-2/3 多次复跑经 Maria 决策省配额记为可选待补。 | 真实 e2e real-2/3 | 验收若有配额预算，可补连跑样本固化复现率结论 |

@@ -67,7 +67,7 @@ _PAYLOAD = {
     "node_errors": [],
     "revise_count": 1,
     "soft_hint_threshold": 5,
-    "max_total_llm_calls": 50,
+    "max_total_llm_calls": 120,
     "switch_repo_failed": _SWITCH_FAILED,
 }
 

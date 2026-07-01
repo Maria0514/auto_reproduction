@@ -28,8 +28,8 @@ LLM_REQUEST_TIMEOUT: int = 60
 # ========== 重试预算 ==========
 
 MAX_NODE_LLM_CALLS: int = 10
-MAX_TOTAL_LLM_CALLS: int = 50
-MAX_FIX_LOOP_COUNT: int = 3
+MAX_TOTAL_LLM_CALLS: int = 120
+MAX_FIX_LOOP_COUNT: int = 10
 
 
 # ========== LLM 客户端重试配置 ==========
@@ -111,9 +111,9 @@ SANDBOX_PIP_MAX_RETRIES: int = 2  # pip install 网络瞬态失败重试次数
 
 
 # ========== Sprint 3：dev_loop 修复循环子预算（S3-08 / architecture §2.1.1） ==========
-# MAX_DEV_LOOP_LLM_CALLS 强约束 < MAX_TOTAL_LLM_CALLS（20 < 50），修复循环子预算天花板。
+# MAX_DEV_LOOP_LLM_CALLS 强约束 < MAX_TOTAL_LLM_CALLS（60 < 120），修复循环子预算天花板。
 
-MAX_DEV_LOOP_LLM_CALLS: int = 20  # 修复循环子预算天花板（强约束 < MAX_TOTAL_LLM_CALLS=50）
+MAX_DEV_LOOP_LLM_CALLS: int = 60  # 修复循环子预算天花板（强约束 < MAX_TOTAL_LLM_CALLS=120）
 DEV_LOOP_MIN_CALLS_PER_ROUND: int = 2  # 入口预算门：单回合最小 LLM 调用数
 REACT_MAX_ROUNDS_CODING: int = 12  # coding 节点 ReAct max_rounds
 
