@@ -28,6 +28,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_core.tools import BaseTool
+from langgraph.errors import GraphBubbleUp
 from langgraph.graph import END, StateGraph
 
 from config import (
@@ -596,6 +597,13 @@ def create_react_subgraph(
             try:
                 raw = tool_map[tool_name].invoke(tool_args or {})
                 content = _truncate_tool_result(_stringify_tool_result(raw))
+            except GraphBubbleUp:
+                # BUG-S4-B1-01：GraphInterrupt / ParentCommand 等 LangGraph 控制流
+                # 异常（基类 GraphBubbleUp）必须直通上浮，交由 LangGraph 暂停主图
+                # （interrupt#3，如 request_user_input）。绝不转 error ToolMessage
+                # ——否则子图永不暂停，且 payload（含 question 全文）会泄漏进
+                # ToolMessage / WARNING 日志。
+                raise
             except Exception as exc:  # noqa: BLE001 ReAct 容错的关键：不让工具异常杀掉子图
                 content = f"tool {tool_name} raised {type(exc).__name__}: {exc}"
                 logger.warning("[%s] tool %s error: %s", node_name, tool_name, exc)
