@@ -446,10 +446,12 @@ def _pip_install_with_retry(
     cwd: str,
     timeout: int,
     max_retries: int,
+    extra_env: Optional[Dict[str, str]] = None,
 ) -> SandboxRunResult:
     """单条 pip install 命令：网络瞬态按指数退避重试，其它失败直接返回。
 
     install_args 形如 ["torch", "numpy"] 或 ["-r", "/abs/requirements.txt"]。
+    extra_env 透传给每次 _run_subprocess（含重试路径），在白名单环境之上显式覆盖。
     """
     cmd = [pip_exe, "install"] + install_args
     last_result: Optional[SandboxRunResult] = None
@@ -460,6 +462,7 @@ def _pip_install_with_retry(
             cwd=cwd,
             timeout=timeout,
             output_max_bytes=SANDBOX_OUTPUT_MAX_BYTES,
+            extra_env=extra_env,
         )
         last_result = result
         if result.exit_code == 0:
@@ -492,6 +495,7 @@ def prepare_venv(
     reuse_existing: bool = True,
     venv_timeout: int = SANDBOX_VENV_CREATE_TIMEOUT,
     pip_timeout: int = SANDBOX_PIP_INSTALL_TIMEOUT,
+    extra_env: Optional[Dict[str, str]] = None,
 ) -> SandboxPrepareResult:
     """在 work_dir 下创建（或复用）隔离 venv 并安装依赖。
 
@@ -515,6 +519,9 @@ def prepare_venv(
         reuse_existing: 同目录已存在 venv 时复用（默认 True）。
         venv_timeout: python -m venv 创建超时（秒）。
         pip_timeout: 单次 pip install 超时（秒）。
+        extra_env: 额外环境变量（在白名单环境之上显式注入/覆盖；透传给 venv 创建
+            与每次 pip install 子进程，含瞬态重试路径——pip 装私有源依赖需凭证，
+            GIT_TERMINAL_PROMPT=0 也经此让 pip 内 git 依赖认证失败立即返回）。
 
     Returns:
         SandboxPrepareResult。
@@ -547,6 +554,7 @@ def prepare_venv(
             cwd=work_dir_str,
             timeout=venv_timeout,
             output_max_bytes=SANDBOX_OUTPUT_MAX_BYTES,
+            extra_env=extra_env,
         )
         if create_result.exit_code != 0 or not pyvenv_cfg.exists():
             err = (
@@ -606,6 +614,7 @@ def prepare_venv(
             cwd=work_dir_str,
             timeout=pip_timeout,
             max_retries=SANDBOX_PIP_MAX_RETRIES,
+            extra_env=extra_env,
         )
         install_log_parts.append(
             f"[pip install -r {req_file}] exit={result.exit_code}\n"
@@ -624,6 +633,7 @@ def prepare_venv(
             cwd=work_dir_str,
             timeout=pip_timeout,
             max_retries=SANDBOX_PIP_MAX_RETRIES,
+            extra_env=extra_env,
         )
         install_log_parts.append(
             f"[pip install {pkg}] exit={result.exit_code}\n"

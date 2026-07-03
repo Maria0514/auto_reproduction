@@ -208,6 +208,21 @@ class GlobalState(TypedDict):
     # 二者均为单值，last-write-wins 正确，**不加 reducer**（must-fix-1：绝不给任何 List 字段加 reducer）。
     _dev_loop_route: Optional[str]              # 路由意图标记（execution 写，_route_after_execution 读；如 "retry_coding"）
     _dev_loop_llm_calls: int                    # 修复循环子预算累计（coding/execution 在修复回合内 read-modify-write 累加；默认 0）
+    # Sprint 4 语义收窄（dev-plan sp4 §7.3 / 架构 sp4 §4.2 落点 B，A2 顺带备注）：
+    # _dev_loop_llm_calls 自 sp4 起仅由 execution 编排层单点累计（coding 本就不写此字段），
+    # 数值行为对 sp3 既有用例向后兼容。
+    # === Sprint 4 新增（用户交互通道，S4-10，架构 sp4 §7.2 / §12.1）===
+    # 两字段均单值 / Dict 单点写（编排层 read-modify-write 整 dict 回写，last-write-wins 安全），
+    # **无 reducer**（must-fix-1：绝不给任何字段加 Annotated / operator.add）。
+    # 必须显式声明为 GlobalState 通道 + create_initial_state 给默认值，
+    # 否则节点写入会被 LangGraph 静默丢弃（B2/B3 实证）。
+    # - pending_user_input：当前待回答请求的快照（question/is_sensitive/purpose_key），**绝不存答案**；
+    #   MVP 为通道声明占位（编排层可观测性镜像，resume 后清 None），UI 实际渲染走
+    #   interrupt payload（架构 sp4 §7.2 推荐）。
+    # - collected_inputs：本任务内已收集的**非敏感**项（purpose_key → value）；
+    #   敏感项（is_sensitive=True）绝不进入 state，跨任务复用只靠 .secrets（架构 sp4 §6.3）。
+    pending_user_input: Optional[Dict]
+    collected_inputs: Dict[str, str]
 
 
 def _is_legacy_llm_config(value: Any) -> bool:
@@ -293,4 +308,6 @@ def create_initial_state(
         _planning_switch_failed=False,
         _dev_loop_route=None,
         _dev_loop_llm_calls=0,
+        pending_user_input=None,
+        collected_inputs={},
     )

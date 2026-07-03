@@ -124,6 +124,14 @@ STREAMLIT_PAGE_EXECUTION: str = "execution"  # UI 路由常量：执行监控页
 STREAMLIT_PAGE_REPORT: str = "report"  # UI 路由常量：结果报告页
 
 
+# ========== Sprint 4：execution 内嵌子图 / run_command / secrets（S4-10 / architecture §12.2） ==========
+# 沿用 sp1~sp3 字面量风格（无 env 覆盖）。不新增交互超时常量（Q-F1 Maria 已定一直暂停）。
+
+REACT_MAX_ROUNDS_EXECUTION: int = 10  # execution 内嵌子图单次 invoke 轮次上限（budget_check_node 消费）
+RUN_COMMAND_TIMEOUT: int = 120  # coding run_command 短超时（秒，机制上防跑重活；远小于 SANDBOX_EXEC_TIMEOUT=1800）
+SECRETS_FILE_NAME: str = ".secrets"  # secrets 文件名；实际路径 = Path(workspace_dir) / SECRETS_FILE_NAME（运行期 state 优先，回退 config.WORKSPACE_DIR）
+
+
 # ========== 环境变量读取 ==========
 
 def get_deepxiv_token() -> Optional[str]:
