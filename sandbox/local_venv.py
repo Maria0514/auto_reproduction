@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -122,6 +123,14 @@ _SANDBOX_ENV_ALLOWLIST = frozenset({
 # 注意不含 PYTHON*（PYTHONPATH 继承会把父进程模块路径漏进沙箱，破坏隔离）。
 _SANDBOX_ENV_ALLOWLIST_PREFIXES = ("LC_", "PIP_")
 
+# 凭证形态否决（sp4 D2 / HOTFIX-2 备忘闭环，架构师定案 (a')-修正版）：
+# URL userinfo（`://user:pass@host` 或 token-only `://token@host`）按 RFC 语义
+# 本身即凭证载体——`PIP_INDEX_URL=https://user:token@host/` / 认证代理等形态若随
+# 白名单继承进沙箱，会把私有源凭证暴露给沙箱内不可信代码。白名单继承环节对
+# **所有**继承值统一做值级否决（不特判 PIP_ 前缀，单一规则）；凭证注入的正规
+# 路径 = .secrets → extra_env 显式口（不过滤）。
+_CREDENTIAL_URL_USERINFO_RE = re.compile(r"://[^/\s@]+@")
+
 
 def _build_sandbox_env(extra_env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     """构造沙箱子进程环境：白名单继承 + extra_env 显式覆盖，禁止全量继承 os.environ。
@@ -130,12 +139,21 @@ def _build_sandbox_env(extra_env: Optional[Dict[str, str]] = None) -> Dict[str, 
     路径都经 _run_subprocess，在此单点收口——pip 路径同样会执行不完全可信代码
     （sdist 安装会跑包内 setup.py），且其运行必需的代理 / PIP_* 变量已在白名单内，
     收口无功能损失。
+
+    白名单继承值经凭证形态否决（URL userinfo 命中即整变量剔除 + WARNING，日志
+    只打变量名绝不打值）；extra_env 显式注入口不过滤（凭证注入唯一入口全通）。
     """
-    env = {
-        key: value
-        for key, value in os.environ.items()
-        if key in _SANDBOX_ENV_ALLOWLIST or key.startswith(_SANDBOX_ENV_ALLOWLIST_PREFIXES)
-    }
+    env: Dict[str, str] = {}
+    for key, value in os.environ.items():
+        if key not in _SANDBOX_ENV_ALLOWLIST and not key.startswith(_SANDBOX_ENV_ALLOWLIST_PREFIXES):
+            continue
+        if _CREDENTIAL_URL_USERINFO_RE.search(value):
+            logger.warning(
+                "沙箱环境白名单变量 %s 值含 URL 内嵌凭证形态，已剔除不透传"
+                "（凭证请走 .secrets/extra_env 显式注入）", key,
+            )
+            continue
+        env[key] = value
     if extra_env:
         env.update(extra_env)
     return env

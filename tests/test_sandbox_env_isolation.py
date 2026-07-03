@@ -130,6 +130,60 @@ def test_build_sandbox_env_no_pythonpath_inheritance(monkeypatch):
     assert "PYTHONPATH" not in env
 
 
+# ---------------------------------------------------------------------------
+# 1b. 白名单继承值级凭证形态否决（sp4 D2 / HOTFIX-2 备忘闭环，架构师定案 (a')-修正版）
+#     既有用例零修改（语义不弱化）；本节为增量护栏。
+# ---------------------------------------------------------------------------
+
+def test_build_sandbox_env_drops_pip_credential_userinfo(monkeypatch, caplog):
+    """PIP_INDEX_URL 值含 user:token@（URL userinfo 凭证形态）→ 整变量剔除 +
+    WARNING（只打变量名，绝不打 token 值）。"""
+    import logging as _logging
+    token = "d2-pip-embedded-token-do-not-leak"
+    monkeypatch.setenv("PIP_INDEX_URL", f"https://user:{token}@pypi.private.example/simple")
+    with caplog.at_level(_logging.WARNING, logger="sandbox.local_venv"):
+        env = _build_sandbox_env()
+    assert "PIP_INDEX_URL" not in env
+    assert token not in json.dumps(env)
+    warnings = [r for r in caplog.records if r.levelno == _logging.WARNING]
+    assert any("PIP_INDEX_URL" in r.getMessage() for r in warnings), "剔除必须 WARNING 非静默"
+    for record in caplog.records:
+        assert token not in record.getMessage(), "WARNING 不得泄漏 token 值"
+
+
+def test_build_sandbox_env_drops_pip_extra_index_url_multi_url(monkeypatch):
+    """PIP_EXTRA_INDEX_URL 多 URL 空格串、其中一段含 userinfo → 整变量剔除。"""
+    monkeypatch.setenv(
+        "PIP_EXTRA_INDEX_URL",
+        "https://pypi.org/simple https://user:tok@private.example/simple",
+    )
+    env = _build_sandbox_env()
+    assert "PIP_EXTRA_INDEX_URL" not in env
+
+
+def test_build_sandbox_env_drops_token_only_userinfo(monkeypatch):
+    """token-only userinfo（https://<PAT>@host/，无 user:pass 冒号）同样剔除
+    （护住正则放宽：`://[^/\\s@]+@` 同时覆盖 user:pass 与 token-only 两形态）。"""
+    monkeypatch.setenv("PIP_INDEX_URL", "https://sometoken@pypi.private.example/simple")
+    env = _build_sandbox_env()
+    assert "PIP_INDEX_URL" not in env
+
+
+def test_build_sandbox_env_credential_filter_applies_allowlist_wide(monkeypatch):
+    """值级否决对全部白名单继承统一生效（不特判 PIP_ 前缀）：认证代理
+    https_proxy=http://u:p@proxy:3128 剔除；同时既有无 userinfo proxy / 非凭证
+    PIP_* 语义不弱化（继续透传）。"""
+    monkeypatch.setenv("https_proxy", "http://user:pass@proxy.example:3128")
+    monkeypatch.setenv("http_proxy", "http://proxy.example:3128")  # 无 userinfo，保留
+    monkeypatch.setenv("PIP_INDEX_URL", "https://pypi.example/simple")  # 非凭证，保留
+    monkeypatch.setenv("PIP_CACHE_DIR", "/tmp/pipcache")  # 非 URL，保留
+    env = _build_sandbox_env()
+    assert "https_proxy" not in env, "认证代理（userinfo 形态）必须剔除"
+    assert env.get("http_proxy") == "http://proxy.example:3128"
+    assert env.get("PIP_INDEX_URL") == "https://pypi.example/simple"
+    assert env.get("PIP_CACHE_DIR") == "/tmp/pipcache"
+
+
 # ===========================================================================
 # 2. 真实子进程实测：沙箱内看不到哨兵，白名单关键变量仍在
 # ===========================================================================
