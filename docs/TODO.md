@@ -308,3 +308,18 @@
 - [ ] [2026-06-01] @测试工程师代理 [L-A3-01] `tests/test_paper_intake.py` 标准化：sp1 遗留 main() 风格自测脚本（`case_*` + `if __name__`），`pytest -q` 收集为 0、不在全量回归内，paper_intake mock 覆盖永久游离于回归网外。建议改写为 pytest 标准函数（参考 paper_analysis 聚合用例或拆分），纳入回归。非阻断，建议 sp2 C 阶段前或独立小任务处理
 - [ ] [2026-06-01] @全栈开发代理 [L-A3-02] `pytest.ini` markers 注释写"加 --run-e2e 启用"，但实际 e2e 是凭证驱动（conftest load_dotenv + 各 e2e 文件 skipif），无 `--run-e2e` 选项也无 addopts 默认排除 e2e。建议把注释改为"凭证（LLM_API_KEY+DEEPXIV_TOKEN）缺失则自动 skip"。非阻断文档偏差
 - [x] [2026-05-31] @测试工程师代理 完善 Sprint 2 任务 A2（`core/llm_client.py::resolve_llm_config` 节点级 LLM 路由 helper）测试：在既有 `tests/test_sprint2_a2.py`（CP-A2-1~7，8 passed）基础上**新建** `tests/test_llm_routing.py`（24 用例补强：4 个合法 NodeName 全枚举命中参数化 / 仅登记节点命中其余回退 / NodeName 之外字符串回退 default / overrides 健壮性 5 形态（缺键·None·list·str·int 均回退）/ 返回引用非拷贝 + deepcopy 不篡改入参 / PermanentError 6 形态参数化（断类型+消息含 default）/ create_initial_state 老形态单 LLMConfig 全节点回退 + 新形态带 override 命中集成）；**新建** `tests/test_sprint2_a2_e2e.py`（4 用例，`pytestmark=pytest.mark.e2e`）验证真实装配链 `create_llm(resolve_llm_config(config_set, node_name))` 构造真实 ChatOpenAI 后 `model_name` 选路正确（命中取 override.model / 未命中与 None 共用路径回退 default.model），仅读 .model_name 不发 LLM 请求省 token。**结果**：单元 `pytest tests/test_sprint2_a2.py tests/test_llm_routing.py -v` 32 passed（0.38s）；e2e `--collect-only` 收集 4 + 真跑 4 passed（0.58s，LLM_API_KEY 凭证齐备真跑未 skip）；全量回归 `pytest -q` **108 passed / 0 failed / 1 warning（LangChain 预存 deprecation，与 A2 无关）/ 260.81s 零退化**。**未发现生产 bug**，resolve_llm_config 实现与规格完全一致。详见 `docs/sprint2/test-reports/2026-05-31_a2-test.md`
+
+---
+
+## 热修复（2026-07-02 项目总览评审发现，Maria 授权直修不走 PRD）
+
+- [x] [2026-07-02] @全栈开发代理 [HOTFIX-1] **已修复** LLM 重试层未接入 ReAct 主循环：实际排查出 `core/react_base.py` **3 处**裸 `llm.invoke`（reasoning_node 主循环 / `_invoke_with_schema` 结构化降级路径——瞬态错误此前会被误判"该档不支持"而错误降档 / force_finish free-form 回退）。修法：`core/llm_client.py` 新增与既有重试同构的 `invoke_with_retry`（返回原始 response 保留 tool_calls；PermanentError 立抛、Retry-After 优先、指数退避），`_call_llm_with_retry` 改为委托它避免两份退避逻辑漂移；三处均单行替换，messages 原对象透传保 prompt cache 字节稳定。新增 `tests/test_react_retry.py` 11 用例（重试次数/退避序列/立抛/messages 不可变三层断言/子图集成），targeted 回归 41 passed
+- [x] [2026-07-02] @全栈开发代理 [HOTFIX-2] **已修复** 沙箱凭证泄漏：`sandbox/local_venv.py` `_run_subprocess` 原 `{**os.environ, **extra_env}` 改为 `_build_sandbox_env()` 白名单单点收口（prepare_venv 的 pip install 与 run_in_venv 执行两条路径都经此函数，天然全覆盖；sdist setup.py 同属不可信代码故 pip 路径必须收口）。白名单：PATH/HOME/LANG+LC_*/TMPDIR·TEMP·TMP/PYTHONUNBUFFERED/代理 6 变体/SSL·CA 证书 4 项/PIP_* 前缀/Windows 4 项；剔除一切凭证且特意不放 PYTHON*（PYTHONPATH 继承会反向破坏隔离，有专门测试）。`extra_env` 形参保留为 sp4 凭证显式注入唯一入口。新增 `tests/test_sandbox_env_isolation.py` 9 用例，targeted 回归 47 passed（含既有 B1 护栏 38 条零回归）
+- [x] [2026-07-02] @主控 两热修复统一收口：全量非 e2e 回归 **1119 passed / 0 failed / 37 skipped / 43 deselected / 1 warning（langgraph 库级预存）/ 55.60s**，既有用例零退化（新增 11+9=20 用例全绿）。未跑 e2e（省 deepxiv 配额）
+- [ ] [2026-07-02] @全栈开发代理 [HOTFIX-1 后续观察·非阻断] `_classify_error` 对未分类 4xx（如网关不支持 json_schema response_format 的 400）按可重试处理，结构化降级路径会先重试（默认最坏 ~14s）再降档；建议单独评估「未分类 4xx 默认归 Permanent」的影响面后再改
+- [ ] [2026-07-02] @架构师代理 [HOTFIX-2 备忘·低风险] 白名单透传的 PIP_* 理论上可含私有源内嵌凭证（`https://user:token@host/` 形态），当前环境未设置此类变量；sp4 .secrets/extra_env 方案落地时应改为显式注入并复核此项
+
+## Sprint 5+ 候选（面试价值优先，2026-07-02 项目总览评估产出）
+
+- [ ] [2026-07-02] @产品经理代理 立项「评测体系」Sprint（先落 PRD）：选 3-5 篇带官方仓库的小论文构建 benchmark 集，定义分级成功指标（环境搭建成功 / 代码跑通 / 复现指标进容差），跑出成功率结果表与逐篇失败归因——回答「复现成功率多少」这一核心问题，当前仅 1 篇真实 e2e 不足以支撑
+- [ ] [2026-07-02] @产品经理代理 立项「token/成本追踪 + observability」（先落 PRD，可并入评测 Sprint）：预算从按调用次数计升级为 token/金额计量（`estimate_tokens` 已实现但未接入），接入 tracing（LangSmith/Langfuse 类），产出「单篇论文复现成本」数字与调用链瀑布图

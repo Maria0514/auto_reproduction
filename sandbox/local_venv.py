@@ -21,7 +21,9 @@
 安全约束（BUG-S1-02 / sp2 安全范式）：
     - 子进程禁 shell=True，command 一律列表形式；
     - 路径越界一律 resolve()+is_relative_to（复用 git_tools `_is_within_workspace` 范式）；
-    - venv 创建必须用 sys.executable -m venv（当前解释器即 python3），不用裸 `python`。
+    - venv 创建必须用 sys.executable -m venv（当前解释器即 python3），不用裸 `python`；
+    - 子进程环境白名单继承（_build_sandbox_env）：禁止全量继承 os.environ，
+      LLM_API_KEY / DEEPXIV_TOKEN 等凭证一律不透传给沙箱内不可信代码。
 
 跨平台说明：MVP 主测 Linux/macOS（与 sp2 git_tools 一致），Windows 分支代码保留但不强测。
 """
@@ -95,6 +97,48 @@ _DEFAULT_ARTIFACT_PATTERNS = (
 
 # collect_artifacts 扫描时跳过的目录名（避免把 venv / 缓存当产物）。
 _ARTIFACT_SKIP_DIRS = (".venv", "venv", "__pycache__", ".git", ".pytest_cache")
+
+# 沙箱子进程环境白名单（凭证泄漏止血）：沙箱里跑的是 LLM 生成的不可信代码，
+# 全量继承 os.environ 会把 .env 装载的 LLM_API_KEY / DEEPXIV_TOKEN 等凭证暴露给
+# 被执行代码。按「运行必需」原则仅透传以下变量；凭证注入只能走 extra_env 显式口
+# （sp4 .secrets 方案沿用该口，本次不实现）。
+_SANDBOX_ENV_ALLOWLIST = frozenset({
+    # 基础运行必需：可执行查找 / 用户目录（pip 缓存 ~/.cache/pip）/ locale 编码
+    "PATH", "HOME", "LANG",
+    # 临时目录（tempfile / pip build；TEMP/TMP 兼顾 Windows）
+    "TMPDIR", "TEMP", "TMP",
+    # 输出无缓冲（超时被杀时尾部日志尽量完整，配合护栏 2 尾部截断）
+    "PYTHONUNBUFFERED",
+    # 网络代理（非凭证；pip 装依赖 / 沙箱内下载数据需要）
+    "http_proxy", "https_proxy", "no_proxy",
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+    # CA 证书路径（内网/代理 MITM 场景 pip https 需要；路径类非凭证）
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+    # Windows 分支保留但不强测（缺 SystemRoot 时 subprocess 启动会失败）
+    "SYSTEMROOT", "SYSTEMDRIVE", "COMSPEC", "PATHEXT",
+})
+
+# 前缀白名单：LC_*（locale 全家）+ PIP_*（pip 源/缓存配置，prepare_venv 装依赖需要）。
+# 注意不含 PYTHON*（PYTHONPATH 继承会把父进程模块路径漏进沙箱，破坏隔离）。
+_SANDBOX_ENV_ALLOWLIST_PREFIXES = ("LC_", "PIP_")
+
+
+def _build_sandbox_env(extra_env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """构造沙箱子进程环境：白名单继承 + extra_env 显式覆盖，禁止全量继承 os.environ。
+
+    prepare_venv（venv 创建 / pip install）与 run_in_venv（执行）两条 subprocess
+    路径都经 _run_subprocess，在此单点收口——pip 路径同样会执行不完全可信代码
+    （sdist 安装会跑包内 setup.py），且其运行必需的代理 / PIP_* 变量已在白名单内，
+    收口无功能损失。
+    """
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key in _SANDBOX_ENV_ALLOWLIST or key.startswith(_SANDBOX_ENV_ALLOWLIST_PREFIXES)
+    }
+    if extra_env:
+        env.update(extra_env)
+    return env
 
 
 # ---------------------------------------------------------------------------
@@ -300,8 +344,8 @@ def _run_subprocess(
 
     绝不抛异常逃逸——任何启动/执行失败均返回 SandboxRunResult。
     """
-    # 子进程环境：继承当前环境 + extra_env 覆盖。
-    env = {**os.environ, **(extra_env or {})}
+    # 子进程环境：白名单继承 + extra_env 显式覆盖（凭证泄漏止血，禁全量继承）。
+    env = _build_sandbox_env(extra_env)
 
     popen_kwargs: Dict[str, object] = dict(
         cwd=cwd,
@@ -667,7 +711,7 @@ def run_in_venv(
         work_dir: 子进程 cwd（必须位于 WORKSPACE_DIR 下）。
         timeout: 执行超时（秒）。
         output_max_bytes: stdout/stderr 各自字节上限。
-        extra_env: 额外环境变量（覆盖继承环境）。
+        extra_env: 额外环境变量（在白名单环境之上显式注入/覆盖；凭证注入唯一入口）。
 
     Returns:
         SandboxRunResult（绝不抛异常逃逸；越界除外）。

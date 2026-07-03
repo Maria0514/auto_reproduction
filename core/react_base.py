@@ -36,7 +36,7 @@ from config import (
     TOOL_RESULT_MAX_LENGTH,
 )
 from core.errors import TransientError
-from core.llm_client import create_llm, resolve_llm_config
+from core.llm_client import create_llm, invoke_with_retry, resolve_llm_config
 from core.state import GlobalState
 
 logger = logging.getLogger(__name__)
@@ -428,7 +428,9 @@ def _invoke_with_schema(
     for method in ("json_schema", "function_calling"):
         try:
             structured = llm.with_structured_output(normalized, method=method)
-            result = structured.invoke(messages)
+            # 瞬态错误先重试再降级下一档；PermanentError 由 invoke_with_retry
+            # 立抛后被本 except 捕获 → 降级，维持"本 helper 绝不外抛"契约。
+            result = invoke_with_retry(structured, messages)
         except Exception as exc:  # noqa: BLE001
             logger.debug(
                 "[%s] with_structured_output(method=%s) failed: %s",
@@ -530,7 +532,9 @@ def create_react_subgraph(
     def reasoning_node(state: ReActState) -> dict:
         """调用 LLM 生成下一步行动，更新 status / round。"""
         llm = _bind_llm(state)
-        response = llm.invoke(state["messages"])
+        # 经 invoke_with_retry 接入重试层（瞬态 429/5xx 指数退避，PermanentError
+        # 立抛）；messages 原样透传不变形，保证 Prompt Cache 前缀字节稳定。
+        response = invoke_with_retry(llm, state["messages"])
 
         if not isinstance(response, AIMessage):
             # 容错：包装为 AIMessage
@@ -665,8 +669,8 @@ def create_react_subgraph(
                     "result": forced,
                 }
 
-        # 回退：与原行为一致——再调一次 free-form LLM
-        response = llm.invoke(state["messages"] + [instruction])
+        # 回退：与原行为一致——再调一次 free-form LLM（经重试层，瞬态错误退避重试）
+        response = invoke_with_retry(llm, state["messages"] + [instruction])
         if not isinstance(response, AIMessage):
             response = AIMessage(content=str(getattr(response, "content", response)))
         return {

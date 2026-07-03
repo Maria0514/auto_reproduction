@@ -258,27 +258,38 @@ def _log_cache_metrics(response: Any) -> None:
         return
 
 
-def _call_llm_with_retry(
-    llm: ChatOpenAI,
-    prompt: str,
+def invoke_with_retry(
+    runnable: Any,
+    input: Any,
     max_retries: int = LLM_MAX_RETRIES,
     initial_delay: float = LLM_INITIAL_RETRY_DELAY,
-) -> str:
-    """带指数退避重试的 LLM 调用。"""
+) -> Any:
+    """带指数退避重试的 ``runnable.invoke(input)``，返回**原始 response 对象**。
+
+    与 ``_call_llm_with_retry`` 的区别：不提取 ``response.content``，完整保留
+    AIMessage 的 ``tool_calls`` / ``usage_metadata`` 等属性，供 ReAct 主循环
+    （react_base.reasoning_node / force_finish / with_structured_output 降级路径）
+    直接消费。
+
+    约束（bug 修复"LLM 重试层未接入 ReAct 主循环"，2026-07-02）：
+    - **绝不修改 / 变形传入的 input**（messages 列表原样透传，不 copy 不追加），
+      保证 Prompt Cache 字节级前缀稳定性；重试时重发同一个对象。
+    - PermanentError（含 LLMAuthError / LLMContextOverflowError）立刻抛出不重试。
+    - TransientError（含 LLMRateLimitError）与未分类错误按指数退避重试，
+      LLMRateLimitError 携带 retry_after 时优先使用该等待值。
+    - 重试耗尽后抛 TransientError（与 ``_call_llm_with_retry`` 异常语义一致）。
+    """
     last_error: Optional[Exception] = None
     delay = initial_delay
 
     for attempt in range(max_retries + 1):
         try:
-            response = llm.invoke(prompt)
-            content = response.content
-            if isinstance(content, list):
-                content = "".join(str(c) for c in content)
+            response = runnable.invoke(input)
             try:
                 _log_cache_metrics(response)
             except Exception:  # noqa: BLE001 二次防御
                 pass
-            return content
+            return response
         except Exception as e:
             classified = _classify_error(e)
             last_error = classified
@@ -308,6 +319,26 @@ def _call_llm_with_retry(
         f"LLM call failed after {max_retries + 1} attempts: {last_error}",
         detail=repr(last_error),
     )
+
+
+def _call_llm_with_retry(
+    llm: ChatOpenAI,
+    prompt: str,
+    max_retries: int = LLM_MAX_RETRIES,
+    initial_delay: float = LLM_INITIAL_RETRY_DELAY,
+) -> str:
+    """带指数退避重试的 LLM 调用（返回纯文本 content）。
+
+    委托 ``invoke_with_retry`` 执行重试循环（单一实现，避免两份退避逻辑漂移），
+    仅在成功后提取 ``response.content``。签名与异常语义保持不变。
+    """
+    response = invoke_with_retry(
+        llm, prompt, max_retries=max_retries, initial_delay=initial_delay,
+    )
+    content = response.content
+    if isinstance(content, list):
+        content = "".join(str(c) for c in content)
+    return content
 
 
 def _try_parse_json(text: str) -> Optional[Dict[str, Any]]:
