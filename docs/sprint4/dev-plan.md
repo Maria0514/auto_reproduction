@@ -329,11 +329,11 @@ graph TD
 - docstring 纪律：明确"仅轻量验证（import / py_compile / 启动探测），禁止完整训练 / 评估 / 下载大数据集"（+120s 超时机制双保险）；零动态变量。
 
 **自测检查点**：
-- [ ] CP-C1-1 正常 smoke（`python -c "print(1)"`）返回合法 JSON、exit_code=0；`json.loads` 可解析 + sort_keys + ensure_ascii=False（禁 str(dict) 断言）
-- [ ] CP-C1-2 越界 base_dir（/etc 等）→ 结构化错误 JSON + caplog WARNING，`_run_subprocess` 0 次调用（校验在前）；解析失败（不闭合引号）/ 空命令 → 结构化错误不炸子图
-- [ ] CP-C1-3 超时护栏：真实 sleep 子进程 + monkeypatch 短超时 → `timed_out=True`、子进程树被杀（AC-S4-02；`RUN_COMMAND_TIMEOUT=120 < SANDBOX_EXEC_TIMEOUT=1800` 常量断言在 CP-A1-2）
-- [ ] CP-C1-4 脱敏：`register_sensitive_value` 注入已知 token 后，stdout/stderr 含 token 的输出返回前被 mask 为 `****`
-- [ ] CP-C1-5 **不写 execution_result**：工具返回值结构中无 metrics / success 语义键，B 档判定无从消费（Q-B1 红线 3 的机制面断言）
+- [x] CP-C1-1 正常 smoke（`python -c "print(1)"`）返回合法 JSON、exit_code=0；`json.loads` 可解析 + sort_keys + ensure_ascii=False（禁 str(dict) 断言）
+- [x] CP-C1-2 越界 base_dir（/etc 等）→ 结构化错误 JSON + caplog WARNING，`_run_subprocess` 0 次调用（校验在前）；解析失败（不闭合引号）/ 空命令 → 结构化错误不炸子图
+- [x] CP-C1-3 超时护栏：真实 sleep 子进程 + monkeypatch 短超时 → `timed_out=True`、子进程树被杀（AC-S4-02；`RUN_COMMAND_TIMEOUT=120 < SANDBOX_EXEC_TIMEOUT=1800` 常量断言在 CP-A1-2）
+- [x] CP-C1-4 脱敏：`register_sensitive_value` 注入已知 token 后，stdout/stderr 含 token 的输出返回前被 mask 为 `****`
+- [x] CP-C1-5 **不写 execution_result**：工具返回值结构中无 metrics / success 语义键，B 档判定无从消费（Q-B1 红线 3 的机制面断言）
 
 #### 任务 C2：`core/nodes/coding.py` 挂载 + prompt 守门 + Q-C 复验（S4-01/02）
 
@@ -349,11 +349,11 @@ graph TD
 - coding 侧 Q-C 复验（B2 结论在真实 coding wrapper 上复证）：mock LLM 剧本 write_code_file → request_user_input → resume，断言 write 副作用恰为 1 + `code_output_dir` 等 map_result 契约不回归。
 
 **自测检查点**：
-- [ ] CP-C2-1 工具集恰为 7 个、名称集合断言（AC-S4-01 存在性）；wrapper 形态不变（`coding` 仍为 `_make_react_wrapper` 产物，`_map_coding_result` 3 参签名不动）
-- [ ] CP-C2-2 prompt 主体字节级一致守门更新：沿用 sp3 CP-F3-1 断言（两篇不同论文去尾部动态段后主体 `==` 新 `_CODING_SYSTEM_PROMPT_BODY` 常量），确认新增段落进稳定前缀
-- [ ] CP-C2-3 **coding 真实 wrapper Q-C 复验**（AC-S4-14 coding 侧）：write → request_user_input → resume 后文件写副作用恰为 1、文件内容正确、agent 拿到值继续收尾
-- [ ] CP-C2-4 凭证注入链路：mock `.secrets` 含 git 凭证时 `run_command` 收到的 extra_env 含 GIT_ASKPASS + GIT_TERMINAL_PROMPT=0（经工厂闭包断言）
-- [ ] CP-C2-5 coding 既有测试全绿（sp3 c1 系列 + c1_fix 系列零退化）
+- [x] CP-C2-1 工具集恰为 7 个、名称集合断言（AC-S4-01 存在性）；wrapper 形态不变（`coding` 仍为 `_make_react_wrapper` 产物，`_map_coding_result` 3 参签名不动）
+- [x] CP-C2-2 prompt 主体字节级一致守门更新：沿用 sp3 CP-F3-1 断言（两篇不同论文去尾部动态段后主体 `==` 新 `_CODING_SYSTEM_PROMPT_BODY` 常量），确认新增段落进稳定前缀
+- [x] CP-C2-3 **coding 真实 wrapper Q-C 复验**（AC-S4-14 coding 侧）：write → request_user_input → resume 后文件写副作用恰为 1、文件内容正确、agent 拿到值继续收尾
+- [x] CP-C2-4 凭证注入链路：mock `.secrets` 含 git 凭证时 `run_command` 收到的 extra_env 含 GIT_ASKPASS + GIT_TERMINAL_PROMPT=0（经工厂闭包断言）
+- [x] CP-C2-5 coding 既有测试全绿（sp3 c1 系列 + c1_fix 系列零退化）
 
 ---
 
@@ -421,11 +421,11 @@ graph TD
 - 工具异常一律 try/except 转结构化错误 JSON + WARNING，不炸子图（sp1 以来工具工厂治理）。
 
 **自测检查点**：
-- [ ] CP-E1-1 两工具返回合法 JSON（sort_keys / ensure_ascii=False / 禁 str(dict)）；mock sandbox 下收集器收到的是**真实 dataclass 结果**而非 agent 文本
-- [ ] CP-E1-2 确定性解析改写在工具内生效（复合命令 `&&`/`;` 拆分、裸 python/pip 改写 venv 解释器、cd 越界拒绝、glob 展开——复用 sp3 既有用例语料断言行为等价）
-- [ ] CP-E1-3 脱敏：注入已知 token 后 run_in_sandbox 返回的 stdout/stderr 无明文（`****`）
-- [ ] CP-E1-4 extra_env 注入链路：两工具透传到 `prepare_venv` / `run_in_venv`（spy 断言）；无条件含 `GIT_TERMINAL_PROMPT=0`
-- [ ] CP-E1-5 工具异常（sandbox 抛 SandboxCreationError / OSError 兜底）转结构化错误 + WARNING，子图不被打断
+- [x] CP-E1-1 两工具返回合法 JSON（sort_keys / ensure_ascii=False / 禁 str(dict)）；mock sandbox 下收集器收到的是**真实 dataclass 结果**而非 agent 文本
+- [x] CP-E1-2 确定性解析改写在工具内生效（复合命令 `&&`/`;` 拆分、裸 python/pip 改写 venv 解释器、cd 越界拒绝、glob 展开——复用 sp3 既有用例语料断言行为等价）
+- [x] CP-E1-3 脱敏：注入已知 token 后 run_in_sandbox 返回的 stdout/stderr 无明文（`****`）
+- [x] CP-E1-4 extra_env 注入链路：两工具透传到 `prepare_venv` / `run_in_venv`（spy 断言）；无条件含 `GIT_TERMINAL_PROMPT=0`
+- [x] CP-E1-5 工具异常（sandbox 抛 SandboxCreationError / OSError 兜底）转结构化错误 + WARNING，子图不被打断
 
 #### 任务 E2：`_run_execution_agent`（S4-03 内嵌子图装配）
 
@@ -452,11 +452,11 @@ graph TD
 - `_EXECUTION_SYSTEM_PROMPT_BODY`：职责边界（先 prepare 后 run / 逐条跑 execution_steps / 看 exit_code 决策 / 缺凭证或缺信息就地 `request_user_input`、**问在跑重活之前**（R-S4-03 缓解）/ 不得自行宣称成功——成功由编排层判定）；零动态变量。
 
 **自测检查点**：
-- [ ] CP-E2-1 装配清单逐项断言：`_llm` 注入（缺 llm_config_set 时报错路径）、SystemMessage 主体字节级一致（两个不同任务 state 去尾部/HumanMessage 后 `==` 常量——沿用 CP-F3-1 断言范式）、HumanMessage sort_keys 幂等
-- [ ] CP-E2-2 mock LLM 剧本（prepare → run×2 → 收尾）：收集器取回真实结果、rounds_used 与剧本轮数一致；`REACT_MAX_ROUNDS_EXECUTION=10` 到顶 force_finish 不越界（budget_check_node L613 消费断言）
-- [ ] CP-E2-3 agent 谎报拦截：剧本让 LLM `<result>` 自称 success 但收集器 exit_code 非 0 → 上层（E3 装配后）判定失败（R-S4-01 端到端断言，可在 E3 后补跑）
-- [ ] CP-E2-4 子图异常降级：mock 子图抛异常 → WARNING + 空结果返回，节点不炸
-- [ ] CP-E2-5 execution 侧 request_user_input 挂载：剧本 run（认证失败 stderr）→ request_user_input → resume → 再 run（成功）走通（AC-S4-06 execution 侧 mock 证）
+- [x] CP-E2-1 装配清单逐项断言：`_llm` 注入（缺 llm_config_set 时报错路径）、SystemMessage 主体字节级一致（两个不同任务 state 去尾部/HumanMessage 后 `==` 常量——沿用 CP-F3-1 断言范式）、HumanMessage sort_keys 幂等
+- [x] CP-E2-2 mock LLM 剧本（prepare → run×2 → 收尾）：收集器取回真实结果、rounds_used 与剧本轮数一致；`REACT_MAX_ROUNDS_EXECUTION=10` 到顶 force_finish 不越界（budget_check_node L613 消费断言）
+- [x] CP-E2-3 agent 谎报拦截：剧本让 LLM `<result>` 自称 success 但收集器 exit_code 非 0 → 上层（E3 装配后）判定失败（R-S4-01 端到端断言，可在 E3 后补跑）
+- [x] CP-E2-4 子图异常降级：mock 子图抛异常 → WARNING + 空结果返回，节点不炸
+- [x] CP-E2-5 execution 侧 request_user_input 挂载：剧本 run（认证失败 stderr）→ request_user_input → resume → 再 run（成功）走通（AC-S4-06 execution 侧 mock 证）
 
 #### 任务 E3：execution() 主函数改造 + 预算对账 + credential 分类（S4-03/06/08）
 
@@ -515,8 +515,8 @@ graph TD
 - app.py 路由分发：`user_input_request` → execution_monitor 页（与 `dev_loop_failure` 同页不同面板）。
 
 **自测检查点**：
-- [ ] CP-F1-1 面板逻辑单测（沿用 sp3 E2 测试范式 mock controller）：三类 interrupt_kind 分发正确（planning / dev_loop_failure / user_input_request 互不误触）；敏感 → password + 勾选出现、非敏感 → 普通输入 + 无勾选
-- [ ] CP-F1-2 提交 payload 契约：`{"value", "remember"}` 两键、类型正确、经 `resume_with` 透传
+- [x] CP-F1-1 面板逻辑单测（沿用 sp3 E2 测试范式 mock controller）：三类 interrupt_kind 分发正确（planning / dev_loop_failure / user_input_request 互不误触）；敏感 → password + 勾选出现、非敏感 → 普通输入 + 无勾选
+- [x] CP-F1-2 提交 payload 契约：`{"value", "remember"}` 两键、类型正确、经 `resume_with` 透传
 - [ ] CP-F1-3 手动 happy path（`streamlit run`）走查记录（AC-S4-10，与测试工程师协作，coding / execution 两侧各一次）
 
 ---

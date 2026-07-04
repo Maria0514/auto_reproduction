@@ -35,25 +35,34 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.tools import tool
+from langgraph.errors import GraphBubbleUp
 from langgraph.types import interrupt
 
 from config import (
     DEV_LOOP_MIN_CALLS_PER_ROUND,
     MAX_DEV_LOOP_LLM_CALLS,
     MAX_FIX_LOOP_COUNT,
+    REACT_MAX_ROUNDS_EXECUTION,
 )
 from core.errors import SandboxCreationError, make_node_error
+from core.llm_client import create_llm, resolve_llm_config
+from core.react_base import _repair_truncated_json_prefix, create_react_subgraph
+from core.secrets_store import build_credential_env, load_all_secrets, mask_value
 from core.state import ExecutionResult, FixLoopRecord, GlobalState
+from core.tools.interaction_tools import request_user_input
 from sandbox.local_venv import (
     SandboxPrepareResult,
     SandboxRunResult,
     _is_within_workspace,
+    _venv_python_exe,
     collect_artifacts,
     prepare_venv,
     run_in_venv,
@@ -596,6 +605,7 @@ def _run_step_subcommands(
     step: Any,
     python_exe: str,
     current_dir: str,
+    extra_env: Optional[Dict[str, str]] = None,
 ) -> Tuple[List[SandboxRunResult], str]:
     """执行一个 step 的子命令序列（顶层 && / ; 拆分后），返回 (run_results, 更新后的 current_dir)。
 
@@ -606,6 +616,9 @@ def _run_step_subcommands(
       - `source`/`.`：丢弃（venv 已由 prepare_venv 建好，python_exe 已指向 venv）；
       - 裸 python/pip：改写为 venv 解释器；通配符：glob 展开（空则保留原样）。
     每条子命令以 current_dir 作 run_in_venv 的 work_dir（跨子命令、跨 step 持续）。
+
+    extra_env（sp4 E1 新增，保持向后兼容默认 None）：透传给每条 run_in_venv 子进程，
+    在沙箱白名单环境之上显式注入（凭证注入唯一入口，architecture §9.3）。
     """
     subs = _step_to_command(step, python_exe)
     results: List[SandboxRunResult] = []
@@ -645,7 +658,7 @@ def _run_step_subcommands(
         argv = _expand_globs(argv, current_dir)
 
         try:
-            rr = run_in_venv(python_exe, argv, current_dir)
+            rr = run_in_venv(python_exe, argv, current_dir, extra_env=extra_env)
         except SandboxCreationError as exc:
             logger.warning("[%s] run_in_venv 越界: %s", NODE_NAME, exc)
             rr = SandboxRunResult(
@@ -657,6 +670,594 @@ def _run_step_subcommands(
         prev_failed = (rr.exit_code != 0 or rr.timed_out)
 
     return results, current_dir
+
+
+# ---------------------------------------------------------------------------
+# E1（S4-04）：sandbox 工具化 —— prepare_environment / run_in_sandbox + 结果收集器
+# ---------------------------------------------------------------------------
+# 设计权威：dev-plan §4 任务 E1 + architecture §3.3 工具层 / §3.4 关键注记 / §9.3。
+# 确定性辅助函数（_step_to_command / _rewrite_interpreter / _expand_globs /
+# _resolve_cd / _run_step_subcommands）保留为工具内部实现——agent 只管"跑哪条"。
+
+
+_PREPARE_TOOL_NAME: str = "prepare_environment"
+_RUN_TOOL_NAME: str = "run_in_sandbox"
+
+# 工具执行失败 ToolMessage 的典型前缀（react_base tool_executor 兜底写入），
+# messages 回读时过滤（BUG-S1-03 范式：仅回填成功结果）。
+_FAILED_TOOL_MESSAGE_PREFIXES: Tuple[str, ...] = ("Error in ", "tool ", "unknown tool")
+
+
+@dataclass
+class _SandboxRunCollector:
+    """R-S4-01 结果收集器：工具体内真跑 sandbox 后 append **真实 dataclass 结果**。
+
+    编排层收尾读收集器（真实 exit_code/stderr）而非 agent 自述——agent 无法伪造
+    成功。
+
+    R-S4-10 实证边界（B2 报告 2026-07-04）：本收集器由 ``_run_execution_agent``
+    每次进入时新建；``request_user_input`` interrupt#3 → resume 会重跑节点函数体、
+    重建收集器，**pre-interrupt 的收集值会丢失**（而子图 messages 经 checkpoint
+    恢复是完整的）。因此跨 interrupt 的完整执行序列以子图 messages 回读为权威
+    （``_rebuild_*_from_messages``），收集器仅对其覆盖的尾段提供全保真（未截断
+    stdout/stderr）结果——见 ``_merge_with_collector``。
+    """
+
+    prep_results: List[SandboxPrepareResult] = field(default_factory=list)
+    run_results: List[SandboxRunResult] = field(default_factory=list)
+
+
+def _tool_json(payload: Dict[str, Any]) -> str:
+    """工具返回 JSON 统一序列化（BUG-S1-02 治理：禁 str(dict)；sort_keys 保证
+    Prompt Cache 字节级幂等）。"""
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _tool_error_json(message: str, **extra: Any) -> str:
+    """工具异常 → 结构化错误 JSON（tool_error=True 标记，messages 回读时据此跳过，
+    与"prepare_venv 返回的业务失败"区分——后者是合法结果、进收集器）。"""
+    payload: Dict[str, Any] = {"tool_error": True, "error": mask_value(message) or ""}
+    payload.update(extra)
+    return _tool_json(payload)
+
+
+def _merge_extra_env(extra_env: Optional[Dict[str, str]]) -> Dict[str, str]:
+    """工具层兜底保证 extra_env 无条件含 GIT_TERMINAL_PROMPT=0（R-S4-08：git 认证
+    失败立即返回而非挂起等 stdin；CP-E1-4）。调用方（build_credential_env）通常
+    已含，这里是防御性收口。"""
+    return {"GIT_TERMINAL_PROMPT": "0", **(extra_env or {})}
+
+
+def _run_result_to_payload(rr: SandboxRunResult) -> Dict[str, Any]:
+    """单条 SandboxRunResult → 工具返回 JSON 条目。
+
+    stdout/stderr 返回前 ``mask_value``（C1 同范式：ToolMessage 虽在子图私有
+    messages，但 agent 可能把内容复述进 <result> 进而入 state，必须源头 mask）；
+    取尾部 ~2000 字符（错误栈 / <METRICS> 行均在末尾）。
+    """
+    return {
+        "command": [str(c) for c in (rr.command or [])],
+        "exit_code": rr.exit_code,
+        "stdout_tail": mask_value(_tail(rr.stdout)) or "",
+        "stderr_tail": mask_value(_tail(rr.stderr)) or "",
+        "timed_out": bool(rr.timed_out),
+        "truncated": bool(rr.output_truncated),
+        "duration_seconds": rr.duration_seconds,
+    }
+
+
+def make_prepare_environment_tool(
+    work_dir: str,
+    plan: Optional[Dict[str, Any]],
+    collector: _SandboxRunCollector,
+    extra_env: Optional[Dict[str, str]] = None,
+):
+    """工厂：包 ``prepare_venv`` 为 LangChain tool（真实结果 append 收集器）。
+
+    工具异常一律 try/except 转结构化错误 JSON + WARNING，不炸子图（CP-E1-5）。
+    """
+    merged_env = _merge_extra_env(extra_env)
+
+    @tool
+    def prepare_environment() -> str:
+        """在工作目录下创建（或复用）隔离 venv 并安装复现计划声明的依赖。
+
+        在执行任何 run_in_sandbox 命令之前必须先调用本工具一次。返回 JSON：
+        success / python_exe / venv_dir / install_failed_packages / error。
+        依赖装不全时 success=false 且 install_failed_packages 列出失败项，
+        可据此用 run_in_sandbox 执行 pip install 兜底或调整依赖后继续。
+        """
+        try:
+            prep = prepare_venv(
+                work_dir=work_dir,
+                requirements=_extract_requirements(plan),
+                requirements_files=None,
+                extra_env=merged_env,
+            )
+        except SandboxCreationError as exc:
+            logger.warning(
+                "[%s] %s 工具 prepare_venv 失败（转结构化错误，不炸子图）: %s",
+                NODE_NAME, _PREPARE_TOOL_NAME, exc,
+            )
+            return _tool_error_json(f"SandboxCreationError: {exc}", success=False)
+        except Exception as exc:  # noqa: BLE001 - OSError 等兜底，绝不让工具异常杀掉子图
+            logger.warning(
+                "[%s] %s 工具异常（转结构化错误，不炸子图）: %s: %s",
+                NODE_NAME, _PREPARE_TOOL_NAME, type(exc).__name__, exc,
+            )
+            return _tool_error_json(f"{type(exc).__name__}: {exc}", success=False)
+
+        collector.prep_results.append(prep)  # R-S4-01：真实 dataclass 进收集器
+        return _tool_json({
+            "success": bool(prep.success),
+            "python_exe": prep.python_exe,
+            "venv_dir": prep.venv_dir,
+            "install_failed_packages": [str(p) for p in (prep.install_failed_packages or [])],
+            "error": (mask_value(_tail(prep.error)) or None) if prep.error else None,
+        })
+
+    return prepare_environment
+
+
+def make_run_in_sandbox_tool(
+    work_dir: str,
+    collector: _SandboxRunCollector,
+    extra_env: Optional[Dict[str, str]] = None,
+    python_exe_ref: Optional[Dict[str, Optional[str]]] = None,
+):
+    """工厂：包 ``run_in_venv`` 为 LangChain tool（含确定性解析改写 + 收集器）。
+
+    python_exe 解析优先级（工具内确定性，agent 无需感知）：
+        1. 收集器内最近一次成功 prepare 的 python_exe（本次进入内正常路径）；
+        2. ``python_exe_ref["python_exe"]``（调用方显式提供）；
+        3. ``work_dir/.venv`` 已存在（pyvenv.cfg 探测）→ 确定性推导（R-S4-10：
+           interrupt resume 后收集器重建为空、但 venv 已在 pre-interrupt 建好）；
+        4. 均无 → 结构化错误 JSON 提示 agent 先调 prepare_environment。
+
+    ``cd`` 引起的 current_dir 变化在工具闭包内跨调用持续（模拟连续 shell 会话）；
+    resume 重建后回落 work_dir（可接受：agent 通常在命令内显式 cd）。
+    """
+    merged_env = _merge_extra_env(extra_env)
+    session: Dict[str, str] = {"current_dir": work_dir}
+    ref: Dict[str, Optional[str]] = python_exe_ref if python_exe_ref is not None else {}
+
+    def _resolve_python_exe() -> Optional[str]:
+        for prep in reversed(collector.prep_results):
+            if prep.python_exe:
+                return str(prep.python_exe)
+        if ref.get("python_exe"):
+            return str(ref["python_exe"])
+        venv_dir = Path(work_dir) / ".venv"
+        if (venv_dir / "pyvenv.cfg").exists():
+            return str(_venv_python_exe(venv_dir))
+        return None
+
+    @tool
+    def run_in_sandbox(command: str) -> str:
+        """在已准备好的沙箱 venv 中执行一条命令，返回真实执行结果。
+
+        入参为单条命令字符串（如 "python train.py --epochs 1"）。支持顶层
+        `&&` / `;` 复合命令、`cd`（限工作区内，越界拒绝）、裸 python/pip 自动
+        改写为 venv 解释器、通配符展开；不经过 shell。返回 JSON：exit_code
+        （首个非 0 子命令的退出码，全 0 则 0）/ timed_out / results（逐子命令
+        command、exit_code、stdout_tail、stderr_tail）。请根据 exit_code 与
+        stderr_tail 决定下一步，一次只执行一条命令。
+        """
+        try:
+            python_exe = _resolve_python_exe()
+            if not python_exe:
+                logger.warning(
+                    "[%s] %s 工具：沙箱环境尚未准备（无可用 venv python），提示先 prepare",
+                    NODE_NAME, _RUN_TOOL_NAME,
+                )
+                return _tool_error_json(
+                    "沙箱环境尚未准备，请先调用 prepare_environment 创建 venv",
+                    exit_code=-1, results=[], timed_out=False,
+                )
+            results, session["current_dir"] = _run_step_subcommands(
+                {"command": command},
+                python_exe,
+                session["current_dir"],
+                extra_env=merged_env,
+            )
+        except SandboxCreationError as exc:
+            logger.warning(
+                "[%s] %s 工具越界/沙箱失败（转结构化错误，不炸子图）: %s",
+                NODE_NAME, _RUN_TOOL_NAME, exc,
+            )
+            return _tool_error_json(
+                f"SandboxCreationError: {exc}", exit_code=-1, results=[], timed_out=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - OSError 等兜底，绝不让工具异常杀掉子图
+            logger.warning(
+                "[%s] %s 工具异常（转结构化错误，不炸子图）: %s: %s",
+                NODE_NAME, _RUN_TOOL_NAME, type(exc).__name__, exc,
+            )
+            return _tool_error_json(
+                f"{type(exc).__name__}: {exc}", exit_code=-1, results=[], timed_out=False,
+            )
+
+        collector.run_results.extend(results)  # R-S4-01：真实 dataclass 进收集器
+        if not results:
+            return _tool_error_json(
+                "命令为空或无可执行子命令", exit_code=-1, results=[], timed_out=False,
+            )
+        overall = next((r.exit_code for r in results if r.exit_code != 0), 0)
+        return _tool_json({
+            "exit_code": overall,
+            "timed_out": any(r.timed_out for r in results),
+            "results": [_run_result_to_payload(r) for r in results],
+        })
+
+    return run_in_sandbox
+
+
+# ---------------------------------------------------------------------------
+# E2（S4-03）：_run_execution_agent —— 内嵌 ReAct 子图装配（首个裸 create_react_subgraph 消费者）
+# ---------------------------------------------------------------------------
+# 设计权威：dev-plan §4 任务 E2（含 wrapper 内建项复刻清单）+ architecture §3.3
+# 子图层 / §3.4 / §4.3。不经 _make_react_wrapper：预算扣减由编排层（E3
+# _map_execution_result）按本函数返回的 rounds_used 单点显式做（落点 B）。
+
+
+# Prompt Cache 方案 A：主体常量，零论文级 / 任务级动态变量（CP-E2-1 字节级一致断言）。
+# 动态上下文（work_dir / execution_steps / 修复回合反馈）一律走 HumanMessage。
+_EXECUTION_SYSTEM_PROMPT_BODY = """你是复现执行工程师，负责在隔离沙箱中执行论文复现代码并收集真实运行结果。HumanMessage 提供 work_dir、execution_steps 与环境依赖信息；修复回合时额外提供上一轮错误摘要。
+
+可用工具：
+- prepare_environment(): 在工作目录下创建隔离 venv 并安装复现计划声明的依赖。任何 run_in_sandbox 之前必须先调用一次。
+- run_in_sandbox(command): 在沙箱 venv 中执行一条命令，返回真实 exit_code 与 stdout/stderr 尾部。支持顶层 && / ; 复合与 cd（限工作区内），裸 python/pip 自动指向 venv 解释器。
+- request_user_input(question, is_sensitive, purpose_key): 缺少继续执行所需的信息（凭证/参数/路径）时向用户索要一条信息。必须单独一轮调用（不与其他工具放在同一轮 tool_calls），且尽量在执行训练等重活之前问。
+
+工作纪律：
+1. 先调 prepare_environment 准备环境；依赖装不全（install_failed_packages 非空）时可用 run_in_sandbox 执行 pip install 兜底或调整版本。
+2. 按 execution_steps 逐条执行：每条命令跑完先检查返回 JSON 的 exit_code / stderr_tail 再决定下一步；一次只跑一条命令。
+3. 识别到认证失败 / 缺凭证迹象（authentication failed、401 unauthorized、403 forbidden、could not read username、terminal prompts disabled 等）时，立即调 request_user_input（is_sensitive=true，给出合适的 purpose_key，如 "git_credential:github.com" / "hf_token"）索取凭证后重试，不要反复盲试。
+4. 命令失败时可做少量有把握的就地修正（如补装缺失包、修正相对路径）后重试；无法解决时如实收尾，交由编排层分类处理。
+5. 预算意识：max_rounds=10；不要重复执行同一条命令空转。
+
+成功判定纪律（强约束）：
+- 你不判定复现是否成功——成功与否由编排层基于工具执行的真实 exit_code 与指标做确定性判定。
+- 不得在结果中宣称"复现成功"；只如实汇报执行了哪些命令、各自 exit_code 与观察到的现象。
+
+输出要求：
+- 执行收尾时必须在 <result>...</result> 标签内输出严格 JSON，字段如下：
+  {
+    "steps_attempted": int,        // 实际执行的命令条数
+    "all_exit_zero": bool,         // 已执行命令是否全部 exit_code=0（如实填写）
+    "summary": str,                // 执行过程与结果的中文如实描述
+    "notes": str | null            // 降级/遗留问题等（可选）
+  }
+- 不得捏造未执行的命令；不要在 <result> 之外再夹杂其它 JSON 块。
+"""
+
+
+@dataclass
+class ExecAgentOutput:
+    """``_run_execution_agent`` 的轻量返回结构（喂 E3 编排层收尾 + 预算扣减）。
+
+    - prep / run_results：工具执行的**真实** sandbox 结果（收集器 + messages 回读
+      合并，非 agent 自述）；prep 取最后一次 prepare（agent 可能重试）；
+    - rounds_used：子图实际 round（与 wrapper 同口径 max(1, round)；降级路径 0）；
+    - llm_calls：子图内 LLM 调用数（= rounds_used，喂 _dev_loop_llm_calls 累加）。
+    """
+
+    prep: Optional[SandboxPrepareResult]
+    run_results: List[SandboxRunResult]
+    rounds_used: int
+    llm_calls: int
+
+
+def _format_execution_task_context() -> str:
+    """system prompt 尾部稳定段落（常量，无任何动态变量；与 coding 范式结构对齐）。"""
+    payload: Dict[str, Any] = {"node": NODE_NAME}
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _build_execution_system_prompt() -> str:
+    """组装 execution 的 system prompt（Prompt Cache 方案 A，CP-E2-1）。
+
+    主体 + 尾部段落均为常量：不同任务 / 不同论文间**整条 SystemMessage 字节级一致**
+    （比 CP-F3-1 更强——execution 连尾部都无动态变量，动态上下文全走 HumanMessage）。
+    """
+    return (
+        _EXECUTION_SYSTEM_PROMPT_BODY
+        + "\n--- 当前任务上下文 ---\n"
+        + _format_execution_task_context()
+    )
+
+
+def _build_execution_agent_context(
+    state: GlobalState,
+    work_dir: str,
+    plan: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """curated 动态上下文（HumanMessage 通道，json.dumps sort_keys 字节幂等）。
+
+    修复回合（fix_loop_count > 0 且已有上一轮 execution_result）注入摘要级反馈，
+    帮助 agent 避开上一轮已知错误（stderr 尾部裁剪防撑爆 context）。
+    """
+    plan = plan if isinstance(plan, dict) else {}
+    payload: Dict[str, Any] = {
+        "work_dir": work_dir,
+        "execution_steps": plan.get("execution_steps"),
+        "environment": plan.get("environment"),
+    }
+    fix_count = state.get("fix_loop_count", 0) or 0
+    exec_result = state.get("execution_result")
+    if exec_result and fix_count > 0:
+        errors = list(exec_result.get("errors") or [])
+        logs = exec_result.get("logs") or ""
+        if not isinstance(logs, str):
+            logs = str(logs)
+        payload["fix_round"] = fix_count
+        payload["last_error_summary"] = {
+            "errors": [e if isinstance(e, str) else str(e) for e in errors],
+            "stderr_tail": _tail(logs),
+        }
+    return payload
+
+
+def _tool_message_text(msg: ToolMessage) -> str:
+    """提取 ToolMessage 文本内容（兼容 content parts 形式）。"""
+    content = getattr(msg, "content", "")
+    if isinstance(content, list):
+        content = "".join(
+            c if isinstance(c, str) else (c.get("text") or "") if isinstance(c, dict) else ""
+            for c in content
+        )
+    return content if isinstance(content, str) else str(content)
+
+
+def _parse_tool_message_payload(text: str) -> Optional[Dict[str, Any]]:
+    """解析工具 ToolMessage 的 JSON 内容（容忍 _truncate_tool_result 截断）。
+
+    失败 ToolMessage（react_base 兜底前缀）与空内容返回 None（BUG-S1-03 范式）。
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        return None
+    if any(stripped.startswith(p) for p in _FAILED_TOOL_MESSAGE_PREFIXES):
+        return None
+    try:
+        parsed = json.loads(stripped)
+        if isinstance(parsed, dict):
+            return parsed
+    except (TypeError, ValueError):
+        pass
+    # 剥离截断后缀再修复（BUG-S1-02 截断 JSON 修复范式）。
+    trunc_idx = stripped.rfind("... [truncated at")
+    candidate = stripped[:trunc_idx].rstrip() if trunc_idx > 0 else stripped
+    repaired = _repair_truncated_json_prefix(candidate)
+    if repaired is not None:
+        try:
+            parsed = json.loads(repaired)
+            if isinstance(parsed, dict):
+                return parsed
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _rebuild_run_results_from_messages(
+    react_messages: Optional[List[BaseMessage]],
+) -> List[SandboxRunResult]:
+    """从子图 messages 回读 run_in_sandbox 的执行序列（R-S4-10 权威通道）。
+
+    仅回填成功 ToolMessage（过滤 react_base 失败前缀与 tool_error 结构化错误）；
+    存在目标 ToolMessage 但一条都解析不出时打 WARNING（陷阱 3：禁静默吞错）。
+    保真度注记：回读条目的 stdout/stderr 为 mask + 尾部截断后的文本（工具返回
+    JSON 的 tail），弱于收集器的全量原文——故 _merge_with_collector 对收集器
+    覆盖的尾段优先用收集器。
+    """
+    out: List[SandboxRunResult] = []
+    saw_tool_message = False
+    for msg in react_messages or []:
+        if not isinstance(msg, ToolMessage) or getattr(msg, "name", None) != _RUN_TOOL_NAME:
+            continue
+        saw_tool_message = True
+        payload = _parse_tool_message_payload(_tool_message_text(msg))
+        if not isinstance(payload, dict) or payload.get("tool_error"):
+            continue
+        for entry in payload.get("results") or []:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                out.append(SandboxRunResult(
+                    exit_code=int(entry.get("exit_code", -1)),
+                    stdout=str(entry.get("stdout_tail") or ""),
+                    stderr=str(entry.get("stderr_tail") or ""),
+                    duration_seconds=float(entry.get("duration_seconds") or 0.0),
+                    timed_out=bool(entry.get("timed_out")),
+                    output_truncated=bool(entry.get("truncated")),
+                    command=[str(c) for c in (entry.get("command") or [])],
+                ))
+            except (TypeError, ValueError) as exc:
+                logger.warning(
+                    "[%s] %s ToolMessage 回读条目字段异常，跳过: %s",
+                    NODE_NAME, _RUN_TOOL_NAME, exc,
+                )
+    if saw_tool_message and not out:
+        logger.warning(
+            "[%s] 存在 %s ToolMessage 但未回读出任何成功执行记录"
+            "（全部为失败/tool_error/无法解析）", NODE_NAME, _RUN_TOOL_NAME,
+        )
+    return out
+
+
+def _rebuild_prep_results_from_messages(
+    react_messages: Optional[List[BaseMessage]],
+) -> List[SandboxPrepareResult]:
+    """从子图 messages 回读 prepare_environment 结果序列（字段保真弱于收集器：
+    install_log / pip_exe / env_info 不在工具返回 JSON 内，回读为空占位）。"""
+    out: List[SandboxPrepareResult] = []
+    saw_tool_message = False
+    for msg in react_messages or []:
+        if not isinstance(msg, ToolMessage) or getattr(msg, "name", None) != _PREPARE_TOOL_NAME:
+            continue
+        saw_tool_message = True
+        payload = _parse_tool_message_payload(_tool_message_text(msg))
+        if not isinstance(payload, dict) or payload.get("tool_error"):
+            continue
+        if "success" not in payload:
+            continue
+        out.append(SandboxPrepareResult(
+            success=bool(payload.get("success")),
+            venv_dir=str(payload.get("venv_dir") or ""),
+            python_exe=str(payload.get("python_exe") or ""),
+            pip_exe="",
+            env_info={},
+            install_log="",
+            install_failed_packages=[
+                str(p) for p in (payload.get("install_failed_packages") or [])
+            ],
+            error=(str(payload["error"]) if payload.get("error") else None),
+        ))
+    if saw_tool_message and not out:
+        logger.warning(
+            "[%s] 存在 %s ToolMessage 但未回读出任何成功记录"
+            "（全部为失败/tool_error/无法解析）", NODE_NAME, _PREPARE_TOOL_NAME,
+        )
+    return out
+
+
+def _merge_with_collector(
+    rebuilt: List[Any],
+    collected: List[Any],
+    label: str,
+) -> List[Any]:
+    """合并 messages 回读序列（权威、跨 interrupt 完整）与收集器（尾段全保真）。
+
+    机理（B2 实证）：resume 后收集器被重建，只含 post-interrupt 的尾段结果，且
+    与 messages 回读序列的尾段按序一一对应；无 interrupt 时收集器覆盖全序列。
+        - len(collected) >= len(rebuilt)：收集器覆盖全序列（常规路径）→ 全用收集器；
+        - len(collected) <  len(rebuilt)：疑似 interrupt resume（R-S4-10）→ 前段用
+          messages 回读补全 + 尾段用收集器，打 WARNING 留痕。
+    """
+    if not rebuilt:
+        return list(collected)
+    k = len(collected)
+    if k >= len(rebuilt):
+        if k > len(rebuilt):
+            logger.warning(
+                "[%s] %s 收集器条数(%d) > messages 回读条数(%d)"
+                "（部分 ToolMessage 截断不可解析），以收集器为准",
+                NODE_NAME, label, k, len(rebuilt),
+            )
+        return list(collected)
+    if k == 0:
+        return list(rebuilt)
+    logger.warning(
+        "[%s] %s 收集器缺失前段（%d/%d，疑似 interrupt resume 重建收集器，R-S4-10），"
+        "前 %d 条以 messages 回读补全（尾部截断保真度）",
+        NODE_NAME, label, k, len(rebuilt), len(rebuilt) - k,
+    )
+    return list(rebuilt[: len(rebuilt) - k]) + list(collected)
+
+
+def _run_execution_agent(
+    state: GlobalState,
+    work_dir: str,
+    plan: Optional[Dict[str, Any]],
+) -> ExecAgentOutput:
+    """内嵌 ReAct 子图跑"步骤 1+2 的自适应执行"，返回真实 sandbox 结果原料。
+
+    装配纪律（wrapper 内建项手工复刻，dev-plan E2 清单逐项）：
+        - LLM 路由注入：resolve_llm_config(state["llm_config_set"], "execution")
+          → context["_llm"]（子图 _bind_llm 硬依赖）；
+        - 消息装配（Prompt Cache 方案 A）：SystemMessage = 稳定常量；HumanMessage =
+          动态上下文 json.dumps(sort_keys=True, ensure_ascii=False, default=str)；
+        - ReActState 初始化 + rounds 提取（max(1, round)，与 wrapper 同口径）；
+        - 重试层：create_react_subgraph 内部已接 invoke_with_retry，自动获得。
+
+    异常语义：
+        - GraphBubbleUp（interrupt#3 / ParentCommand）**直通上浮**——LangGraph 靠它
+          暂停主图，绝不捕获（BUG-S4-B1-01 同一条红线）；
+        - 其余任何异常 → WARNING + 空结果集降级（编排层对空 run_results 走既有
+          降级分类路径，不炸节点；rounds_used=0 不扣预算）。
+    """
+    collector = _SandboxRunCollector()
+    try:
+        # 装配项 1：LLM 路由注入（缺 llm_config_set → KeyError → 降级路径 + WARNING）。
+        llm = create_llm(resolve_llm_config(state["llm_config_set"], NODE_NAME))
+
+        # 凭证 extra_env（architecture §9.3：.secrets → build_credential_env，
+        # 无条件含 GIT_TERMINAL_PROMPT=0；工具工厂内再防御性收口一次）。
+        extra_env = build_credential_env(load_all_secrets())
+        python_exe_ref: Dict[str, Optional[str]] = {"python_exe": None}
+        tools = [
+            make_prepare_environment_tool(work_dir, plan, collector, extra_env),
+            make_run_in_sandbox_tool(work_dir, collector, extra_env, python_exe_ref),
+            request_user_input,  # interrupt#3（B2 门禁已过，2026-07-04）
+        ]
+
+        # 装配项 2：消息装配（Prompt Cache 方案 A）。
+        system_prompt = _build_execution_system_prompt()
+        context = _build_execution_agent_context(state, work_dir, plan)
+        initial_messages: List[BaseMessage] = [SystemMessage(content=system_prompt)]
+        human_text = json.dumps(context, ensure_ascii=False, sort_keys=True, default=str)
+        initial_messages.append(HumanMessage(content=human_text))
+
+        subgraph = create_react_subgraph(
+            node_name=NODE_NAME,
+            system_prompt=system_prompt,
+            tools=tools,
+            max_rounds=REACT_MAX_ROUNDS_EXECUTION,
+        )
+        # 装配项 3：ReActState 初始化。
+        initial: Dict[str, Any] = {
+            "messages": initial_messages,
+            "round": 0,
+            "max_rounds": REACT_MAX_ROUNDS_EXECUTION,
+            "status": "reasoning",
+            "result": None,
+            "context": {"_llm": llm},
+        }
+        final_state = subgraph.invoke(initial)
+    except GraphBubbleUp:
+        # interrupt#3（request_user_input）等 LangGraph 控制流必须直通上浮，
+        # 交由 LangGraph 暂停主图；resume 时本函数体重跑、子图从 checkpoint 恢复。
+        raise
+    except Exception as exc:  # noqa: BLE001 - 子图任何异常降级（planning 同范式）
+        logger.warning(
+            "[%s] execution ReAct 子图执行失败，降级空结果集: %s: %s",
+            NODE_NAME, type(exc).__name__, exc,
+        )
+        return ExecAgentOutput(prep=None, run_results=[], rounds_used=0, llm_calls=0)
+
+    final_messages = (
+        final_state.get("messages") if isinstance(final_state, dict) else None
+    )
+    # 装配项 4：rounds 提取（与 wrapper 同口径，喂 E3 单点扣减）。
+    rounds_used = (
+        max(1, int(final_state.get("round", 0) or 0))
+        if isinstance(final_state, dict) else 1
+    )
+
+    # R-S4-10：messages 回读为权威序列（跨 interrupt 完整），收集器提供尾段全保真。
+    run_results = _merge_with_collector(
+        _rebuild_run_results_from_messages(final_messages),
+        collector.run_results,
+        "run_results",
+    )
+    prep_results = _merge_with_collector(
+        _rebuild_prep_results_from_messages(final_messages),
+        collector.prep_results,
+        "prep_results",
+    )
+    prep = prep_results[-1] if prep_results else None
+
+    logger.info(
+        "[%s] execution agent 完成: rounds=%d, prep_success=%s, run_results=%d",
+        NODE_NAME, rounds_used,
+        (prep.success if prep is not None else None), len(run_results),
+    )
+    return ExecAgentOutput(
+        prep=prep,
+        run_results=run_results,
+        rounds_used=rounds_used,
+        llm_calls=rounds_used,
+    )
 
 
 # ---------------------------------------------------------------------------

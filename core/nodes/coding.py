@@ -11,7 +11,9 @@
       ``_CODING_SYSTEM_PROMPT_BODY`` 内绝不出现任何论文级动态变量，动态上下文放尾部
       独立段落用 json.dumps(sort_keys=True, ensure_ascii=False) 渲染。
     - ``_get_coding_tools``：B2 的 write/read/list 工具 + deepxiv read_section（回读
-      论文核对实现）+ web_search（查依赖/API）。
+      论文核对实现）+ web_search（查依赖/API）+ sp4 新增 run_command（轻量验证
+      smoke，S4-01）与 request_user_input（interrupt#3 就地问用户，S4-02），
+      共 7 工具（AC-S4-01）。
     - ``_map_coding_result``：3 参签名（含 react_messages），写 code_output_dir +
       current_step；ReAct 失败时走单点 read-modify-write 标记 degraded（must-fix-1）；
       **不写 fix_loop_count**（自增点在 execution 出口，must-fix-2），retry_budget_remaining
@@ -29,12 +31,15 @@ from config import REACT_MAX_ROUNDS_CODING, WORKSPACE_DIR
 from core.errors import make_node_error
 from core.react_base import _make_react_wrapper
 from core.state import GlobalState
+from core.secrets_store import build_credential_env, load_all_secrets
 from core.tools.code_fs_tools import (
     make_list_dir_tool,
     make_read_code_file_tool,
     make_write_code_file_tool,
 )
 from core.tools.deepxiv_tools import read_section_tool, web_search_tool
+from core.tools.interaction_tools import request_user_input
+from core.tools.run_command_tool import make_run_command_tool
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +97,20 @@ _CODING_SYSTEM_PROMPT_BODY = """你是资深机器学习复现工程师，负责
 - list_dir(path): 列出 workspace 下某目录的条目，用于探查参考仓库结构或确认已写文件。
 - read_section(arxiv_id, section_name): 回读论文章节，核对方法 / 超参 / 数据集等实现细节。
 - web_search(query): 查依赖包、API 用法、报错排查等外部信息。
+- run_command(command): 在代码目录下跑一条【轻量验证】命令（语法检查 / import 探测 / 启动探测）。
+- request_user_input(question, is_sensitive, purpose_key): 缺关键信息（凭证 / 参数 / 决策 / 路径）时向用户索要一条信息。
+
+run_command 使用边界（强约束）：
+- 仅用于 smoke 级自查：python -m py_compile 验证语法、python -c "import x" 探测依赖、脚本能否启动。
+- 禁止用它跑完整训练 / 评估 / 下载大数据集——那是下游执行节点的职责，且本工具超时很短（约 2 分钟）会强制终止。
+- 命令用系统解释器执行（无项目 venv），项目依赖缺失导致的 ImportError 属预期，交给下游执行节点判定，不要试图在此 pip install。
+- smoke 通过不等于复现成功：复现成败仅由下游执行节点的完整执行判定，不要因 run_command 退出码 0 就宣称复现完成。
+
+request_user_input 使用纪律（强约束）：
+- 仅在确实无法从已有上下文推断、且信息缺失会阻塞任务时调用；能推断 / 能用合理默认值的不要问。
+- 一次只问一个信息项；多个信息项分多轮逐条问。
+- 本工具会暂停任务等待用户回答：必须【单独一轮】调用——同一轮 tool_calls 中不得混入 write_code_file / run_command 等任何其他工具调用，否则这些调用会被重复执行。
+- 凭证 / 密钥类信息置 is_sensitive=true，并给出稳定 purpose_key（如 "git_credential:github.com" / "hf_token"）以便复用、避免重复打扰用户。
 
 工作策略（推荐顺序，agent 可自主调整）：
 1. 先理解 HumanMessage 中的 code_strategy / execution_steps / deliverables / environment，明确要交付什么、怎么跑。
@@ -253,10 +272,17 @@ def _build_coding_context(state: GlobalState) -> Dict[str, Any]:
 
 
 def _get_coding_tools(state: GlobalState) -> List[Any]:
-    """coding 节点工具集（架构 §2.2.3）。
+    """coding 节点工具集（sp3 架构 §2.2.3 + sp4 架构 §2.4，共 7 工具，AC-S4-01）。
 
     write 工具锚定到 code_output_dir（坑1-A）：相对路径以 code_dir 为基准，越界写被
     工具直接拒。read/list 仍限定 workspace 根（需跨访问 selected_repo.local_path）。
+
+    sp4 新增（S4-01/02）：
+        - run_command：轻量验证 smoke（cwd 同锚定 code_dir；extra_env 注入已收集
+          凭证——GIT_ASKPASS 脚本路径 + GIT_TERMINAL_PROMPT=0 + HF token，见
+          secrets_store.build_credential_env，clone 私有仓库等 smoke 场景可用）；
+        - request_user_input：缺信息就地问用户（interrupt#3，B2 门禁已过：独立
+          轮次副作用恰为 1，单独一轮纪律已写入 system prompt 稳定前缀）。
     """
     code_dir = _resolve_code_output_dir(state)   # 与 build_context / map_result 幂等同值
     return [
@@ -265,6 +291,11 @@ def _get_coding_tools(state: GlobalState) -> List[Any]:
         make_list_dir_tool(),
         read_section_tool(),
         web_search_tool(),
+        make_run_command_tool(
+            base_dir=code_dir,
+            extra_env=build_credential_env(load_all_secrets()),
+        ),
+        request_user_input,
     ]
 
 

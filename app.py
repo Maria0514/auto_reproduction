@@ -313,6 +313,34 @@ def _get_controller() -> GraphController:
     return st.session_state["graph_controller"]
 
 
+# interrupt#3 类型标识（与 core/tools/interaction_tools.py::INTERRUPT_KIND_USER_INPUT
+# 对齐，S4-09/F1；沿用 UI 侧本地字符串 + 单测断言防漂移的先例，不引入工具模块 import）。
+_INTERRUPT_KIND_USER_INPUT: str = "user_input_request"
+
+
+def _should_route_to_user_input_panel(
+    current_page: str,
+    controller: "GraphController",
+    thread_id: Optional[str],
+) -> bool:
+    """[S4-09/F1] 判定是否需把路由强制切到执行监控页的用户输入面板（纯逻辑可直测）。
+
+    interrupt#3（user_input_request）可能在 coding / execution 任一阶段由工具触发，
+    彼时用户可能仍停在 review / progress 页（如 approve 后 plan_review 的 awaiting
+    轮询态）——这些页面不认识第三类 interrupt，会一直「等待中」。故在 main() 页面
+    分发前统一判定：有任务 + 非执行监控页 + 处于 user_input_request interrupt →
+    强制路由到执行监控页（该页 case⑤ 渲染用户输入面板）。
+
+    惰性求值：仅 is_interrupted 为真才读 interrupt_kind（省一次 checkpoint 读）。
+    planning / dev_loop_failure 两类不经本分支（沿用 sp2/sp3 各页自身路由）。
+    """
+    if not thread_id or current_page == STREAMLIT_PAGE_EXECUTION:
+        return False
+    if not controller.is_interrupted(thread_id):
+        return False
+    return controller.interrupt_kind(thread_id) == _INTERRUPT_KIND_USER_INPUT
+
+
 def _init_session_state() -> None:
     """初始化主入口所需的 session_state 字段。"""
     import streamlit as st
@@ -361,6 +389,14 @@ def main() -> None:
     # main 里重复调用会导致 StreamlitDuplicateElementKey（key='default_base_url'）。
 
     current_page = st.session_state.get("current_page", STREAMLIT_PAGE_INPUT)
+
+    # [S4-09/F1] interrupt#3 全局路由：user_input_request → 执行监控页用户输入面板。
+    if _should_route_to_user_input_panel(
+        current_page, controller, st.session_state.get("thread_id")
+    ):
+        st.session_state["current_page"] = STREAMLIT_PAGE_EXECUTION
+        current_page = STREAMLIT_PAGE_EXECUTION
+
     module_name, func_name = _PAGE_MAP.get(current_page, _PAGE_MAP[STREAMLIT_PAGE_INPUT])
     try:
         import importlib

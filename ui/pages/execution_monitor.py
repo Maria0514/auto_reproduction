@@ -24,9 +24,19 @@
     3. state.error 非空             → FATAL 卡片 + 重试 / 返回输入页 + 停轮询；
     4. current_step=="cancelled_by_user" → "任务已终止" 卡片 + 返回输入页 + 停轮询；
     5. is_interrupted 且 interrupt_kind=="dev_loop_failure" → dev_loop 失败决策面板（停轮询）；
-       （is_interrupted 但非 dev_loop_failure，即 planning interrupt → 跳回 review 页）
+       interrupt_kind=="user_input_request" → 用户输入面板（S4-09，停轮询）；
+       （其余，即 planning interrupt → 跳回 review 页）
     6. _should_jump_to_report（reporting 完成且 report_path 非空且非 interrupt）→ 跳结果报告页；
     7. 否则正常渲染（进度 + sandbox + 错误降级）+ 注册 st_autorefresh（仅此路径注册定时器）。
+
+interrupt#3 resume 契约（S4-09，与 core/tools/interaction_tools.py::request_user_input 严格对齐）::
+
+    payload = {"interrupt_kind": "user_input_request", "question", "is_sensitive",
+    "purpose_key"}（architecture §7.1 四键）。UI 渲染 question + 当前阶段一句上下文 +
+    **单输入框**（is_sensitive=True → type="password"）+ 敏感时「记住此凭证」勾选
+    （默认不勾），提交 resume_with(thread_id, {"value": str, "remember": bool})。
+    **非空校验（L-B1-01 防线）**：value.strip() 为空时拒绝提交（不调 resume_with），
+    防止空值经工具端去重/降级路径卡死任务。
 
 interrupt#2 resume 契约（与 core/nodes/execution.py::_route_user_fix_decision 严格对齐）::
 
@@ -63,6 +73,9 @@ __all__ = ["render", "render_execution_monitor_page"]
 # interrupt#2 决策取值（与 core/nodes/execution.py::INTERRUPT_KIND / _route_user_fix_decision
 # 严格对齐——这是本页与 execution 节点的硬契约，不得臆造）。
 _INTERRUPT_KIND_DEV_LOOP: str = "dev_loop_failure"
+# interrupt#3 类型标识（与 core/tools/interaction_tools.py::INTERRUPT_KIND_USER_INPUT
+# 严格对齐——沿用 dev_loop 常量先例：页面留本地字符串，单测断言与工具模块一致防漂移）。
+_INTERRUPT_KIND_USER_INPUT: str = "user_input_request"
 _DECISION_TERMINATE: str = "terminate"
 _DECISION_REVISE_PLAN: str = "revise_plan"
 _DECISION_EXPORT_CODE: str = "export_code"
@@ -78,6 +91,9 @@ _KEY_THREAD_ID = "thread_id"
 _KEY_CURRENT_PAGE = "current_page"
 # 「改计划」决策的修改意见文本框（原生 st.text_area，AppTest 可见可读）。
 _KEY_REVISE_FEEDBACK = "_exec_revise_feedback"
+# user_input_request 面板：单输入框 + 「记住」勾选（原生组件，AppTest 可见可点）。
+_KEY_USER_INPUT_VALUE = "_exec_user_input_value"
+_KEY_USER_INPUT_REMEMBER = "_exec_user_input_remember"
 
 # 阶段中文显示名（coding/execution/reporting + 终止/未知兜底）。
 _STEP_DISPLAY: Dict[str, str] = {
@@ -176,6 +192,24 @@ def _build_decision_payload(
     return payload
 
 
+def _is_valid_user_input(value: object) -> bool:
+    """interrupt#3 提交前非空校验（L-B1-01 防线，纯函数可直测）。
+
+    空值 / 纯空白 / 非 str 一律拒绝——空 value 若放行，工具端会以空串继续（resume 契约
+    的降级路径），既可能把空凭证 remember 进 .secrets 污染去重，也让 agent 拿空值卡死。
+    """
+    return bool(isinstance(value, str) and value.strip())
+
+
+def _build_user_input_resume(value: str, remember: bool) -> Dict[str, Any]:
+    """构造 interrupt#3 resume payload（与 interaction_tools.request_user_input 严格对齐）。
+
+    两键契约（architecture §7.1）：{"value": str, "remember": bool}。value 原样透传
+    （不 strip——凭证内容以用户所见为准），remember 强制 bool。
+    """
+    return {"value": value, "remember": bool(remember)}
+
+
 def _summarize_fix_history(fix_loop_history: object) -> List[Dict[str, str]]:
     """把 fix_loop_history 规整为每轮摘要行（CP-E2-2，纯函数；防御式跳过非 dict 项）。
 
@@ -247,6 +281,8 @@ def _init_page_state() -> None:
     st.session_state.setdefault(_KEY_THREAD_ID, None)
     st.session_state.setdefault(_KEY_CURRENT_PAGE, "execution")
     st.session_state.setdefault(_KEY_REVISE_FEEDBACK, "")
+    st.session_state.setdefault(_KEY_USER_INPUT_VALUE, "")
+    st.session_state.setdefault(_KEY_USER_INPUT_REMEMBER, False)
 
 
 def _reset_to_input_page() -> None:
@@ -501,6 +537,69 @@ def _render_dev_loop_decision_panel(
             )
 
 
+def _render_user_input_panel(
+    controller,
+    thread_id: str,
+    payload: Optional[Dict[str, Any]],
+    current_step: object,
+) -> None:
+    """interrupt#3 用户输入面板（S4-09 / CP-F1-1~2，Maria 硬约束：就一个输入框）。
+
+    渲染 question + 当前阶段一句上下文 + 单输入框（is_sensitive → password）+
+    敏感时「记住此凭证供后续复现复用」勾选（默认不勾）→ 非空校验通过才
+    resume_with(thread_id, {"value", "remember"})。
+
+    安全纪律（与 interaction_tools 一致）：logger 只打 purpose_key / is_sensitive，
+    绝不打 value / question 全文。
+    """
+    payload = payload or {}
+    question = str(payload.get("question") or "（任务需要你补充一项信息才能继续）")
+    is_sensitive = bool(payload.get("is_sensitive"))
+    purpose_key = payload.get("purpose_key")
+
+    st.title("论文自动复现 — 需要你补充信息")
+    step = str(current_step or "")
+    step_display = _STEP_DISPLAY.get(step, step or "执行中")
+    st.caption(f"当前阶段：{step_display} · 任务已暂停，提交后自动继续。")
+
+    # 问题正文（原生 st.info，AppTest 可断言）。
+    st.info(question)
+
+    # --- 单输入框（敏感 → password；Maria 硬约束：无按类型分渲染） ---
+    value = st.text_input(
+        "你的回答",
+        key=_KEY_USER_INPUT_VALUE,
+        type="password" if is_sensitive else "default",
+    )
+
+    # --- 敏感时「记住」勾选（默认不勾；remember 语义绑定 purpose_key） ---
+    remember = False
+    if is_sensitive:
+        remember = st.checkbox(
+            "记住此凭证供后续复现复用",
+            key=_KEY_USER_INPUT_REMEMBER,
+            value=False,
+        )
+        if purpose_key:
+            st.caption(
+                f"勾选后将以 `{purpose_key}` 为键保存到本地凭证存储（0600 权限），"
+                "后续任务命中即不再询问。"
+            )
+
+    # --- 提交（原生 st.button；非空校验不过 → 拒绝 resume，L-B1-01 防线） ---
+    if st.button("提交", key="btn_user_input_submit", use_container_width=True):
+        if not _is_valid_user_input(value):
+            st.error("输入不能为空：请填写内容后再提交（空值无法恢复任务）。")
+            return
+        logger.info(
+            "[execution_monitor] 提交 user_input resume thread=%s purpose_key=%s "
+            "is_sensitive=%s remember=%s",
+            thread_id, purpose_key, is_sensitive, bool(remember),
+        )
+        controller.resume_with(thread_id, _build_user_input_resume(value, remember))
+        st.rerun()
+
+
 # =========================================================================== #
 # 页面主入口
 # =========================================================================== #
@@ -554,9 +653,16 @@ def render() -> None:
             payload = controller.get_interrupt_payload(thread_id)
             _render_dev_loop_decision_panel(controller, thread_id, payload)
             return  # 决策面板分支不注册 autorefresh（停轮询，等用户决策）
+        if kind == _INTERRUPT_KIND_USER_INPUT:
+            # interrupt#3（S4-09）：用户输入面板，同页不同面板，同样停轮询等提交。
+            payload = controller.get_interrupt_payload(thread_id)
+            _render_user_input_panel(
+                controller, thread_id, payload, state.get("current_step")
+            )
+            return
         # planning interrupt（不应在执行监控页出现，但防御性跳回计划审核页）。
         logger.info(
-            "[execution_monitor] interrupt_kind=%s 非 dev_loop_failure，跳回 review 页", kind
+            "[execution_monitor] interrupt_kind=%s 非本页可承载面板，跳回 review 页", kind
         )
         st.session_state[_KEY_CURRENT_PAGE] = "review"
         st.rerun()
