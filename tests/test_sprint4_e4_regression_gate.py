@@ -15,12 +15,16 @@
          全部两条 step、且 R-S4-10 WARNING 留痕非静默）；
       3) 稳定性连跑 3 次结论一致（interrupt/重跑幂等类判据，CP-E4-3 纪律）。
 
-    另含 1 条 **characterization 用例**（L-E4-01 挂账）：credential 闭环
-    「agent 就地重试成功」场景下编排层 B 档判定的现状锚定——merged run_results
-    含 pre-interrupt 失败 run（exit 128）→ exit 非全 0 → 判 failure →
-    credential_required → interrupt#2。该行为与架构 §9.1「凭证闭环 → 成功」的
-    叙事存在张力（用户刚提供完凭证、重试已成功，却再次被问询），是否为设计
-    预期待架构师/PM 裁决；本用例只锚定现状，**不代表验收该行为正确**。
+    另含 L-E4-01（credential 闭环判定口径，2026-07-04 已裁决）相关用例：
+    B 档判定改为 **effective runs**（同命令 argv 精确匹配取最后一次，
+    ``_effective_runs``）——
+      - 边界锚定：resume 后失败命令未重试（不同命令一成一败）→ 仍 failure →
+        interrupt#2（原 characterization 用例，语义更新后保留）；
+      - 主叙事翻转：resume 后同 argv 重试 fetch 成功 → success 单回合闭环、
+        无第二次 interrupt、logs 仍含 exit=128 失败证据；
+      - 无 interrupt 的子图内同命令重试成功 → success（口径不依赖 interrupt 边界）。
+    单元级边界（末次 stderr / argv 变体 / _effective_runs 本体）见
+    tests/test_sprint4_le401_fix.py。
 
 全离线（InMemorySaver + 脚本 LLM + mock run_in_venv），零 API 配额。
 脚本 LLM 沿用 B2 范式：路由完全基于输入 messages 的 ToolMessage 计数（replay 安全）。
@@ -121,10 +125,12 @@ class CountingRunner:
     """run_in_venv mock：按命令名分桶计数（AC-S4-14「副作用恰为 1」的观测点）。
 
     跨 interrupt/resume 持久（模块级 patch 的同一实例），故计数覆盖节点整个生命周期。
+    spec 值支持两种形态：dict（每次尝试同一结果）或 list[dict]（按第 N 次尝试取第 N 个，
+    越界取末个——L-E4-01 剧本「首败次成」用）。
     """
 
-    def __init__(self, specs: Dict[str, Dict[str, Any]]) -> None:
-        self.specs = specs  # 关键 token → {exit_code, stdout, stderr}
+    def __init__(self, specs: Dict[str, Any]) -> None:
+        self.specs = specs  # 关键 token → {exit_code, stdout, stderr} 或其 list
         self.counts: Dict[str, int] = {}
         self.calls: List[List[str]] = []
 
@@ -134,7 +140,10 @@ class CountingRunner:
         for token, s in self.specs.items():
             if any(token in str(c) for c in command):
                 self.counts[token] = self.counts.get(token, 0) + 1
-                spec = s
+                if isinstance(s, list):
+                    spec = s[min(self.counts[token] - 1, len(s) - 1)]
+                else:
+                    spec = s
                 break
         return SandboxRunResult(
             exit_code=spec.get("exit_code", 0),
@@ -150,8 +159,14 @@ class CountingRunner:
 class GateScriptLLM(BaseChatModel):
     """CP-E4-2 剧本（B2 范式：路由基于 ToolMessage 名称计数，replay 安全）。
 
-    mode="param":      run(prep_data) → request_user_input(非敏感参数) → run(train) → 收尾
-    mode="credential": run(fetch, 认证失败) → request_user_input(敏感凭证) → run(train) → 收尾
+    mode="param":            run(prep_data) → request_user_input(非敏感参数) → run(train) → 收尾
+    mode="credential":       run(fetch, 认证失败) → request_user_input(敏感凭证) → run(train) → 收尾
+                             （fetch 未重试——L-E4-01 新口径下的「不同命令一成一败」边界剧本）
+    mode="credential_retry": run(fetch, 认证失败) → request_user_input(敏感凭证)
+                             → run(fetch 同 argv 重试成功) → run(train) → 收尾
+                             （L-E4-01 裁决主叙事：凭证闭环单回合 success）
+    mode="inline_retry":     run(fetch 失败) → run(fetch 同 argv 重试成功) → run(train) → 收尾
+                             （无任何 interrupt——证明 effective 口径不依赖 interrupt 边界）
     """
 
     mode: str
@@ -177,6 +192,42 @@ class GateScriptLLM(BaseChatModel):
             return AIMessage(content="", tool_calls=[
                 {"name": name, "args": args, "id": cid, "type": "tool_call"},
             ])
+
+        def _final(steps: int, all_zero: bool) -> AIMessage:
+            body = json.dumps({
+                "steps_attempted": steps, "all_exit_zero": all_zero,
+                "summary": "用户补充信息后重试完成", "notes": None,
+            }, ensure_ascii=False, sort_keys=True)
+            return AIMessage(content=(
+                f"{config.REACT_RESULT_TAG_OPEN}{body}{config.REACT_RESULT_TAG_CLOSE}"
+            ))
+
+        if self.mode == "inline_retry":
+            if n_run == 0:
+                ai = _call("run_in_sandbox", {"command": "python fetch.py"}, "c_run1")
+            elif n_run == 1:
+                ai = _call("run_in_sandbox", {"command": "python fetch.py"}, "c_run2")
+            elif n_run == 2:
+                ai = _call("run_in_sandbox", {"command": "python train.py"}, "c_run3")
+            else:
+                ai = _final(3, True)
+            return ChatResult(generations=[ChatGeneration(message=ai)])
+
+        if self.mode == "credential_retry":
+            if n_run == 0:
+                ai = _call("run_in_sandbox", {"command": "python fetch.py"}, "c_run1")
+            elif n_req == 0:
+                ai = _call("request_user_input", {
+                    "question": "克隆私有仓库需要 git token，请提供",
+                    "is_sensitive": True, "purpose_key": "",
+                }, "c_rui")
+            elif n_run == 1:
+                ai = _call("run_in_sandbox", {"command": "python fetch.py"}, "c_run2")
+            elif n_run == 2:
+                ai = _call("run_in_sandbox", {"command": "python train.py"}, "c_run3")
+            else:
+                ai = _final(3, True)
+            return ChatResult(generations=[ChatGeneration(message=ai)])
 
         first_cmd = "python prep_data.py" if self.mode == "param" else "python fetch.py"
         if n_run == 0:
@@ -315,23 +366,22 @@ def test_cp_e4_2_flow_stable_across_3_runs(monkeypatch, tmp_path, caplog):
 
 
 # ===========================================================================
-# L-E4-01 characterization：credential 就地重试成功后编排层现状（待架构师/PM 裁决）
+# L-E4-01（已裁决 2026-07-04）：credential 闭环判定口径 —— effective runs
+# （同命令 argv 精确匹配取最后一次）。边界锚定 + 主叙事翻转两条用例。
 # ===========================================================================
 
 
 def test_le401_characterization_credential_inline_retry_still_judged_failure(
     monkeypatch, tmp_path,
 ):
-    """【现状锚定，非验收通过】credential 闭环（架构 §9.1）在真实 execution() 节点上的
-    实际收尾：agent 就地 request_user_input 拿到凭证 → 重试成功（train exit 0 + 指标），
-    但 merged run_results 含 pre-interrupt 认证失败 run（exit 128）→ B 档 exit 非全 0
-    → 判 failure → _classify_execution 命中 credential_required（不可修复）→ await →
-    self-loop 重入 → **interrupt#2 再次问询用户**。
+    """【边界锚定，L-E4-01 裁决后语义】本剧本 fetch(exit 128) → interrupt#3 → resume 后
+    agent **未重试 fetch** 直接跑 train(exit 0)——effective runs 口径（同命令 argv 精确
+    匹配取最后一次）下，fetch 的最后一次尝试仍是 exit 128，属「不同命令一成一败」，
+    B 档判定**仍为 failure** → credential_required → interrupt#2 再次问询。
 
-    张力（L-E4-01，E4 验收发现，挂账待裁决）：用户刚通过 interrupt#3 提供完凭证、
-    重试已成功，编排层却以「缺少凭证」再次 interrupt#2——凭证闭环无法在单回合内
-    以 success 收尾。AC-S4-14 本身（副作用恰 1 + 合并完整）不受影响，此处同时断言。
-    若架构师裁决改判定口径（如按每条命令的最终尝试判定），本用例断言需随之翻转。
+    这不是裁决前的旧张力：新口径只在「同命令重试成功」时闭环 success（见下方
+    test_le401_fix_* 主叙事翻转用例）；agent 拿到凭证却不重试失败命令时，再次问询
+    是正确语义（凭证问题未被证明已解决）。AC-S4-14（副作用恰 1）在本场景同时断言。
     """
     wd = _make_workdir_with_venv(tmp_path, "cred")
     runner = CountingRunner({
@@ -358,16 +408,18 @@ def test_le401_characterization_credential_inline_retry_still_judged_failure(
         f"resume 后认证失败 run 必须恰为 1（不重放），实际 {runner.counts}"
     assert runner.counts.get("train.py") == 1
 
-    # —— 现状锚定（L-E4-01）：重试成功仍判 failure → interrupt#2 再次问询。
+    # —— 边界锚定（L-E4-01 裁决后）：fetch 未重试 → 其末次尝试仍 exit 128 →
+    #    effective runs 非全 0 → failure → interrupt#2 再次问询（正确语义）。
     assert "__interrupt__" in out2, \
-        "现状：credential 就地重试成功后仍触发 interrupt#2（若此断言翻红=判定口径已改，更新挂账）"
+        "L-E4-01 边界：凭证到手但失败命令未重试，应仍触发 interrupt#2"
     ivs2 = _interrupt_values(graph, cfg)
     assert ivs2 and ivs2[0]["interrupt_kind"] == INTERRUPT_KIND_DEV_LOOP
     assert ivs2[0]["error_category"] == "credential_required"
 
     values = graph.get_state(cfg).values
     er = values["execution_result"]
-    assert er["success"] is False, "现状：merged 含 exit 128 → B 档 failure"
+    assert er["success"] is False, \
+        "L-E4-01 边界：fetch 末次尝试 exit 128（未重试）→ effective 非全 0 → failure"
     # credential 不耗 fix_loop_count（CP-E3-2 契约在端到端场景保持）。
     assert values.get("fix_loop_count", 0) == 0
     # AC-S4-11：凭证明文不进 logs / payload（resume 值已 register_sensitive_value）。
@@ -379,6 +431,90 @@ def test_le401_characterization_credential_inline_retry_still_judged_failure(
     final = graph.get_state(cfg).values
     assert final["user_fix_decision"] == "terminate"
     assert runner.counts.get("fetch.py") == 1, "interrupt#2 resume 重跑同样不重放 sandbox"
+
+
+def test_le401_fix_credential_inline_retry_success_single_round(
+    monkeypatch, tmp_path,
+):
+    """L-E4-01 裁决主叙事翻转：agent 经 interrupt#3 拿到凭证后**就地重试 fetch
+    （同 argv，exit 0）** 再跑 train（exit 0）→ effective runs 全 0 + 指标 →
+    success=True 单回合闭环，**无第二次 interrupt**；logs 聚合仍用全量序列，
+    exit=128 失败证据不丢（架构 §9.1 凭证闭环叙事由此成立）。
+    """
+    wd = _make_workdir_with_venv(tmp_path, "cred_fix")
+    runner = CountingRunner({
+        "fetch.py": [
+            {"exit_code": 128,
+             "stderr": f"fatal: Authentication failed for 'https://u:{_TOKEN}@github.com/x'"},
+            {"exit_code": 0, "stdout": "fetch ok with token"},
+        ],
+        "train.py": {"exit_code": 0, "stdout": '<METRICS>{"acc": 0.9}</METRICS>'},
+    })
+    _wire(monkeypatch, runner, GateScriptLLM(mode="credential_retry"))
+
+    graph = _build_self_loop_graph(InMemorySaver())
+    cfg = {"configurable": {"thread_id": f"e4-credfix-{uuid.uuid4().hex[:8]}"}}
+
+    paused = graph.invoke(_base_state(wd), cfg)
+    assert "__interrupt__" in paused
+    ivs = _interrupt_values(graph, cfg)
+    assert ivs[0]["interrupt_kind"] == INTERRUPT_KIND_USER_INPUT
+    assert ivs[0]["is_sensitive"] is True
+    assert runner.counts.get("fetch.py") == 1
+
+    final = graph.invoke(Command(resume={"value": _TOKEN, "remember": False}), cfg)
+
+    # —— 主断言：单回合 success 闭环，无第二次 interrupt（不再重复问询凭证）。
+    assert "__interrupt__" not in final, \
+        "L-E4-01 修复后：同命令重试成功应单回合闭环，不得再触发 interrupt#2"
+
+    # AC-S4-14 不回归：pre-interrupt 失败 run 不重放，重试是新调用（fetch 恰 2 次）。
+    assert runner.counts == {"fetch.py": 2, "train.py": 1}, \
+        f"副作用计数应为 fetch×2 + train×1，实际 {runner.counts}"
+
+    values = graph.get_state(cfg).values
+    er = values["execution_result"]
+    assert er["success"] is True, "effective runs（fetch 末次 + train）全 0 + 指标 → success"
+    assert er["metrics"] == {"acc": 0.9}
+    assert values.get("_dev_loop_route") in (None, ""), "成功路径不进修复循环"
+    assert values.get("fix_loop_count", 0) == 0
+
+    # logs 仍用全量序列：exit=128 失败证据保留（三条 step 完整聚合）。
+    logs = er["logs"]
+    assert "exit=128" in logs, f"失败证据（exit=128）不得被 effective 过滤掉出 logs：{logs[:400]}"
+    assert "[step#0" in logs and "[step#1" in logs and "[step#2" in logs
+    # AC-S4-11：凭证明文不进 logs。
+    assert _TOKEN not in logs
+
+
+def test_le401_fix_inline_retry_without_interrupt_success(monkeypatch, tmp_path):
+    """L-E4-01 边界③：**无任何 interrupt** 的子图内同命令重试成功 → success。
+
+    证明 effective runs 口径是判定层通用语义，不依赖 interrupt/resume 边界
+    （agent 自主重试瞬态失败同样单回合闭环）。
+    """
+    wd = _make_workdir_with_venv(tmp_path, "inline")
+    runner = CountingRunner({
+        "fetch.py": [
+            {"exit_code": 1, "stderr": "ConnectionResetError: [Errno 104] peer reset"},
+            {"exit_code": 0, "stdout": "fetch ok on retry"},
+        ],
+        "train.py": {"exit_code": 0, "stdout": '<METRICS>{"acc": 0.9}</METRICS>'},
+    })
+    _wire(monkeypatch, runner, GateScriptLLM(mode="inline_retry"))
+
+    graph = _build_self_loop_graph(InMemorySaver())
+    cfg = {"configurable": {"thread_id": f"e4-inline-{uuid.uuid4().hex[:8]}"}}
+
+    final = graph.invoke(_base_state(wd), cfg)
+    assert "__interrupt__" not in final, "无 interrupt 剧本应一次跑完"
+
+    assert runner.counts == {"fetch.py": 2, "train.py": 1}
+    er = graph.get_state(cfg).values["execution_result"]
+    assert er["success"] is True, \
+        "子图内同 argv 重试成功（无 interrupt）→ effective 全 0 → success"
+    assert er["metrics"] == {"acc": 0.9}
+    assert "exit=1" in er["logs"], "首败证据仍留在 logs（全量聚合）"
 
 
 if __name__ == "__main__":

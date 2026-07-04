@@ -247,7 +247,7 @@ def _get_coding_tools(state: GlobalState) -> List[Any]:
 
 2. **planning 已验证同范式**：`planning.py` 就是"手写复合节点：内部跑 ReAct 子图（S2-13 抓取用户仓库）→ 构造 payload → 函数体内 `interrupt()` → 5 类决策路由"（L764-829 实证）。execution 沿用：手写编排 → 内嵌 ReAct 子图跑执行 → 确定性收尾 → 修复边界 → interrupt#2/self-loop。**零新范式，纯复用**。
 
-3. **确定性收尾不交给 agent**：`_classify_execution` / `_build_execution_result`（B 档 success = exit 全 0 且 ≥1 指标）保持确定性，**避免 agent 谎报成功**（PRD §4.2.2 明确要求）。agent 只决策"跑哪些命令、看结果、要不要问用户"。
+3. **确定性收尾不交给 agent**：`_classify_execution` / `_build_execution_result`（B 档 success = exit 全 0 且 ≥1 指标）保持确定性，**避免 agent 谎报成功**（PRD §4.2.2 明确要求）。agent 只决策"跑哪些命令、看结果、要不要问用户"。口径注记："exit 全 0"指 **effective runs**（同命令 argv 精确匹配以最后一次为准，`_effective_runs`，L-E4-01 裁决 2026-07-04；§9.1 重试→成功叙事由此闭环）；logs 聚合与 runtime 仍用全量序列，失败证据不丢。
 
 ### 3.3 分层落点表
 

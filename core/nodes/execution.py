@@ -180,6 +180,18 @@ def _tail(text: Optional[str], limit: int = _STDERR_TAIL_CHARS) -> str:
     return s[-limit:] if len(s) > limit else s
 
 
+def _effective_runs(run_results: List[SandboxRunResult]) -> List[SandboxRunResult]:
+    """同命令(argv 精确匹配)多次尝试只保留最后一次(L-E4-01 裁决:重试以最后一次为准)。
+
+    保序;仅用于判定/分类/metrics 视图,logs 聚合仍用全量序列(失败证据不丢)。
+    """
+    last: Dict[Tuple[str, ...], int] = {}
+    for i, r in enumerate(run_results):
+        last[tuple(str(c) for c in (r.command or []))] = i
+    keep = set(last.values())
+    return [r for i, r in enumerate(run_results) if i in keep]
+
+
 # ---------------------------------------------------------------------------
 # 步骤 3：错误分类（架构 §2.3.2）
 # ---------------------------------------------------------------------------
@@ -202,7 +214,11 @@ def _classify_execution(
         3') stderr 关键字（硬件/数据缺失/未公开资源先于通用 runtime）；
         4) import / syntax / path（可修复）；
         5) 兜底 RUNTIME（可修复，给一次机会；MAX_FIX_LOOP_COUNT 上限拦截，缓解 R-S3-04）。
+
+    L-E4-01：判定视图先经 ``_effective_runs`` 过滤（同命令取最后一次），
+    representative_stderr 因此取同命令最后一次尝试的 stderr（语义更对）。
     """
+    run_results = _effective_runs(run_results)
     if prep is None and not run_results:
         return ExecutionFeedback(
             ErrorCategory.DEPENDENCY,
@@ -462,7 +478,11 @@ def _parse_metrics(
     """三档降级解析（结构化约定优先 → 正则兜底 → LLM 抽取兜底）。
 
     返回 (metrics, llm_calls_used)。llm_calls_used > 0 仅当档 3 LLM 抽取触发（must-fix-2）。
+
+    L-E4-01：metrics 来自 effective 序列（同命令最后一次）stdout 串接，
+    同时解锁档 3 的 all-exit-0 门（重试成功后不再被历史失败 run 卡住）。
     """
+    run_results = _effective_runs(run_results)
     stdout = "\n".join((r.stdout or "") for r in run_results)
 
     # 档 1（首选）：结构化标签。
@@ -1338,10 +1358,12 @@ def _build_execution_result(
     - B 档判定只认真实 exit_code（收集器/回读），agent 自述无从进入（R-S4-01）；
     - prep=None（sp4 E3）：有运行结果视为中性（复用既有 venv），无运行结果视为失败；
     - logs 回 state 前统一 ``mask_value``（sp4 §9.4 落点：install_log + stdout/stderr
-      原文在此收口脱敏，AC-S4-11）。
+      原文在此收口脱敏，AC-S4-11）；
+    - L-E4-01：exit_ok 对 effective runs（同命令最后一次）求 all-0；
+      logs 聚合与 runtime_seconds 仍用全量 run_results（失败证据/真实耗时不丢）。
     """
     prep_ok = bool(prep.success) if prep is not None else bool(run_results)
-    exit_ok = prep_ok and all(r.exit_code == 0 for r in run_results)
+    exit_ok = prep_ok and all(r.exit_code == 0 for r in _effective_runs(run_results))
     success = bool(exit_ok and len(metrics) >= 1)
 
     # artifacts 收集（越界等异常不应炸节点）。
