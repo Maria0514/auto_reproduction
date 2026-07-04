@@ -80,6 +80,10 @@ def request_user_input(
     if purpose_key:
         cached = lookup_secret(purpose_key)
         if cached is not None:
+            # L-B1-02 修复：cache-hit 也按调用方敏感语义补登记，防止 .secrets 条目
+            # is_sensitive=False 而本次调用视为敏感时，缓存值游离于 mask 集之外。
+            if is_sensitive:
+                register_sensitive_value(cached)
             logger.info(
                 "request_user_input: purpose_key 命中 .secrets 缓存，跳过 interrupt: "
                 "purpose_key=%s",

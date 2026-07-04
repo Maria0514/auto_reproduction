@@ -120,29 +120,40 @@ def _patch_sandbox(
     artifacts: Optional[List[str]] = None,
     counter: Optional[Dict[str, int]] = None,
 ) -> Dict[str, int]:
-    """patch execution_module 内引用的 sandbox 三函数。返回调用计数 dict。"""
+    """patch execution 的 sandbox 执行入口，返回调用计数 dict。
+
+    【sp4 E4 mock 落点适配 2026-07-04】E3（S4-03）把主函数步骤 1+2 换成
+    ``_run_execution_agent`` 内嵌 ReAct 子图，``prepare_venv``/``run_in_venv``
+    不再被主函数直接调用——mock 落点上移为 patch ``_run_execution_agent``。
+    断言语义不降的等价映射：
+      - 每次 agent 调用 = sp3 旧流程一次 prepare + 消费一条 run_results
+        （本文件 plan 恒 1 step/回合），cnt["prepare"]/cnt["run"] 的
+        「sandbox 副作用计数」语义与 sp3 逐字等价（重跑幂等断言原样保留）；
+      - rounds_used=0：保持 sp3「metrics LLM 抽取以外零扣减」的预算断言
+        字节级不变；E3 新增的子图 rounds 扣减由 tests/test_sprint4_e3.py
+        CP-E3-1 专项覆盖（非本文件职责）。
+    """
     cnt = counter if counter is not None else {"prepare": 0, "run": 0}
     prep_obj = prep if prep is not None else FakePrepareResult()
     runs = run_results if run_results is not None else [FakeRunResult(exit_code=0, stdout="<METRICS>{\"accuracy\": 0.9}</METRICS>")]
     arts = artifacts if artifacts is not None else []
     run_iter = iter(runs)
 
-    def fake_prepare_venv(*args: Any, **kwargs: Any) -> FakePrepareResult:
+    def fake_run_execution_agent(state: Any, work_dir: Any, plan: Any):
         cnt["prepare"] = cnt.get("prepare", 0) + 1
-        return prep_obj
-
-    def fake_run_in_venv(*args: Any, **kwargs: Any) -> FakeRunResult:
         cnt["run"] = cnt.get("run", 0) + 1
         try:
-            return next(run_iter)
+            rr = next(run_iter)
         except StopIteration:
-            return runs[-1] if runs else FakeRunResult()
+            rr = runs[-1] if runs else FakeRunResult()
+        return execution_module.ExecAgentOutput(
+            prep=prep_obj, run_results=[rr], rounds_used=0, llm_calls=0,
+        )
 
     def fake_collect_artifacts(*args: Any, **kwargs: Any) -> List[str]:
         return list(arts)
 
-    monkeypatch.setattr(execution_module, "prepare_venv", fake_prepare_venv)
-    monkeypatch.setattr(execution_module, "run_in_venv", fake_run_in_venv)
+    monkeypatch.setattr(execution_module, "_run_execution_agent", fake_run_execution_agent)
     monkeypatch.setattr(execution_module, "collect_artifacts", fake_collect_artifacts)
     return cnt
 

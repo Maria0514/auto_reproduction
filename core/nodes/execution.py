@@ -1,8 +1,10 @@
 """execution 节点（S3-03 + S3-04 + S3-07）：sandbox 执行 + 错误分类 + B 档判定 + 修复循环边界 + interrupt#2。
 
-节点形态：**手写复合节点**（与 ``planning.py`` 同构，非 ReAct wrapper）。七步骨架（架构 §2.3.1）：
-    1. prepare_venv（sandbox）准备 venv + 装依赖；
-    2. 逐条 run_in_venv 执行 reproduction_plan.execution_steps 并聚合；
+节点形态：**手写复合节点**（与 ``planning.py`` 同构，非 ReAct wrapper）。七步骨架（架构 §2.3.1，
+sp4 §3.4 步骤 1+2 换内嵌子图）：
+    1+2.（sp4 S4-03）_run_execution_agent 内嵌 ReAct 子图自主编排 prepare_environment /
+         run_in_sandbox / request_user_input（interrupt#3）；收尾只认工具执行的真实
+         sandbox 结果（收集器 + messages 回读），不认 agent 自述；
     3. _classify_execution 错误分类（节点本地 ExecutionFeedback，不污染 NodeError 三态）；
     4. _parse_metrics 三档解析（结构化标签 → 正则 → LLM 抽取兜底）；
     5. _build_execution_result B 档 success 判定（exit 0 且 ≥1 指标）；
@@ -103,6 +105,9 @@ class ErrorCategory(str, Enum):
     PATH = "path"
     RUNTIME = "runtime"
     # —— 不可自动修复类（不进重试，走 interrupt#2 / 降级）——
+    # sp4 §9.2：缺凭证/认证失败（不进 AUTO_FIXABLE、映射 permanent、不耗 fix_loop_count；
+    # 首选路径是 agent 子图内就地 request_user_input，本分类是收尾兜底）。
+    CREDENTIAL_REQUIRED = "credential_required"
     DATA_MISSING = "data_missing"
     HARDWARE = "hardware"
     TIMEOUT = "timeout"
@@ -151,6 +156,13 @@ _DATA_MISSING_KEYWORDS = (
     "missing dataset",
     "data directory",
 )
+# sp4 §9.2（逐字）：凭证缺失/认证失败关键字，判定顺序先于 DATA_MISSING / HARDWARE。
+_CREDENTIAL_KEYWORDS = (
+    "could not read username", "authentication failed",
+    "terminal prompts disabled", "permission denied (publickey)",
+    "fatal: could not read", "invalid username or password",
+    "401 unauthorized", "403 forbidden",
+)
 _UNRESOLVED_RESOURCE_KEYWORDS = (
     "pretrained weights not found",
     "checkpoint not found",
@@ -174,20 +186,33 @@ def _tail(text: Optional[str], limit: int = _STDERR_TAIL_CHARS) -> str:
 
 
 def _classify_execution(
-    prep: SandboxPrepareResult,
+    prep: Optional[SandboxPrepareResult],
     run_results: List[SandboxRunResult],
 ) -> ExecutionFeedback:
     """基于 prep / exit_code / stderr 关键字 / timed_out 的执行错误分类。
 
     判定优先级（顺序敏感）：
-        0) 全部 exit 0 且 venv 成功 → NONE（成功）；
+        0) prep=None（sp4 E3：agent 未调 prepare / 子图降级）——无任何真实运行结果时
+           视作"环境未准备"走既有降级分类（DEPENDENCY 可修复，与 sp3 venv 失败同口径）；
+           有运行结果时视 prep 为中性（agent 复用既有 venv 跑通了命令），按 exit/stderr 判定；
+        0') 全部 exit 0 且 venv 成功 → NONE（成功）；
         1) 超时优先（疑似死循环，不可修复）；
         2) 依赖装不上（可修复，送回 coding 调整版本/换包）；
-        3) stderr 关键字（硬件/数据缺失/未公开资源先于通用 runtime）；
+        3) 凭证缺失/认证失败（sp4 §9.2，**先于** DATA_MISSING / HARDWARE，不可自动修复）；
+        3') stderr 关键字（硬件/数据缺失/未公开资源先于通用 runtime）；
         4) import / syntax / path（可修复）；
         5) 兜底 RUNTIME（可修复，给一次机会；MAX_FIX_LOOP_COUNT 上限拦截，缓解 R-S3-04）。
     """
-    exit_ok = bool(prep.success) and all(r.exit_code == 0 for r in run_results)
+    if prep is None and not run_results:
+        return ExecutionFeedback(
+            ErrorCategory.DEPENDENCY,
+            True,
+            "沙箱环境未准备（agent 未调用 prepare_environment 或执行子图降级）",
+            "检查依赖声明是否可解析 / LLM 配置是否完整后重试",
+            "",
+        )
+    prep_ok = bool(prep.success) if prep is not None else True  # 有真实运行结果 → prep 中性
+    exit_ok = prep_ok and all(r.exit_code == 0 for r in run_results)
     if exit_ok:
         return ExecutionFeedback(ErrorCategory.NONE, False, "执行成功", "", "")
 
@@ -202,8 +227,8 @@ def _classify_execution(
             _tail(timed_out.stderr or timed_out.stdout),
         )
 
-    # 2) 依赖装不上（可修复）。
-    if not prep.success and prep.install_failed_packages:
+    # 2) 依赖装不上（可修复）。prep=None 时跳过（exit_ok=False 必然来自 run_results）。
+    if prep is not None and not prep.success and prep.install_failed_packages:
         return ExecutionFeedback(
             ErrorCategory.DEPENDENCY,
             True,
@@ -212,7 +237,7 @@ def _classify_execution(
             _tail(prep.install_log or prep.error),
         )
     # venv 创建本身失败（无 failed_packages 但 prep 失败）→ 当依赖问题处理（可修复）。
-    if not prep.success:
+    if prep is not None and not prep.success:
         return ExecutionFeedback(
             ErrorCategory.DEPENDENCY,
             True,
@@ -227,7 +252,18 @@ def _classify_execution(
     rep = _tail(raw_stderr or (failed.stdout if failed else ""))
     stderr = raw_stderr.lower()
 
-    # 3) 硬件/数据缺失/未公开资源（不可修复）先于通用 runtime。
+    # 3) 凭证缺失/认证失败（sp4 §9.2：先于 DATA_MISSING / HARDWARE，不可自动修复，
+    #    不耗 fix_loop_count——auto_fixable=False 走 interrupt#2 兜底路径）。
+    if any(k in stderr for k in _CREDENTIAL_KEYWORDS):
+        return ExecutionFeedback(
+            ErrorCategory.CREDENTIAL_REQUIRED,
+            False,
+            "缺少凭证 / 认证失败（需用户提供凭证后重试）",
+            "通过 UI 提供对应凭证（git token / HF token / 私有源账号）后重试，超出自动修复范围",
+            rep,
+        )
+
+    # 3') 硬件/数据缺失/未公开资源（不可修复）先于通用 runtime。
     if any(k in stderr for k in _HARDWARE_KEYWORDS):
         return ExecutionFeedback(
             ErrorCategory.HARDWARE,
@@ -1266,12 +1302,17 @@ def _run_execution_agent(
 
 
 def _aggregate_logs(
-    prep: SandboxPrepareResult,
+    prep: Optional[SandboxPrepareResult],
     run_results: List[SandboxRunResult],
 ) -> str:
-    """聚合 install_log + 各步骤 stdout/stderr（受 sandbox output_truncated 护栏约束）。"""
+    """聚合 install_log + 各步骤 stdout/stderr（受 sandbox output_truncated 护栏约束）。
+
+    脱敏注记（sp4 §9.4 / L-D1-01）：本函数返回**原文**；回 state 前由
+    ``_build_execution_result`` 统一 ``mask_value``（消费侧兜底——prepare 层
+    install_log 与收集器 stdout/stderr 均为未脱敏原文）。
+    """
     parts: List[str] = []
-    if prep.install_log:
+    if prep is not None and prep.install_log:
         parts.append(f"[install_log]\n{prep.install_log}")
     for i, r in enumerate(run_results):
         cmd = " ".join(r.command) if isinstance(r.command, (list, tuple)) else str(r.command)
@@ -1286,14 +1327,21 @@ def _aggregate_logs(
 
 
 def _build_execution_result(
-    prep: SandboxPrepareResult,
+    prep: Optional[SandboxPrepareResult],
     run_results: List[SandboxRunResult],
     feedback: ExecutionFeedback,
     metrics: Dict[str, Any],
     work_dir: str,
 ) -> ExecutionResult:
-    """构造 ExecutionResult，B 档 success = (exit 全 0) and len(metrics) >= 1。"""
-    exit_ok = bool(prep.success) and all(r.exit_code == 0 for r in run_results)
+    """构造 ExecutionResult，B 档 success = (exit 全 0) and len(metrics) >= 1。
+
+    - B 档判定只认真实 exit_code（收集器/回读），agent 自述无从进入（R-S4-01）；
+    - prep=None（sp4 E3）：有运行结果视为中性（复用既有 venv），无运行结果视为失败；
+    - logs 回 state 前统一 ``mask_value``（sp4 §9.4 落点：install_log + stdout/stderr
+      原文在此收口脱敏，AC-S4-11）。
+    """
+    prep_ok = bool(prep.success) if prep is not None else bool(run_results)
+    exit_ok = prep_ok and all(r.exit_code == 0 for r in run_results)
     success = bool(exit_ok and len(metrics) >= 1)
 
     # artifacts 收集（越界等异常不应炸节点）。
@@ -1312,11 +1360,11 @@ def _build_execution_result(
     return ExecutionResult(
         success=success,
         metrics=metrics,
-        logs=_aggregate_logs(prep, run_results),
+        logs=mask_value(_aggregate_logs(prep, run_results)) or "",
         errors=errors,
         artifacts=artifacts,
         runtime_seconds=float(sum(r.duration_seconds for r in run_results)),
-        environment_info=dict(prep.env_info or {}),
+        environment_info=dict(prep.env_info or {}) if prep is not None else {},
     )
 
 
@@ -1340,13 +1388,19 @@ def _map_execution_result(
     feedback: ExecutionFeedback,
     state: GlobalState,
     llm_calls_used: int = 0,
+    react_rounds_used: int = 0,
 ) -> dict:
     """把 ExecutionResult 映射为 GlobalState 局部更新（must-fix-1 单点 read-modify-write）。
 
     - execution_result / current_step；
     - 失败时把细分类写进 NodeError.error_message 的 [error_category=...] 前缀（error_type 严格三态）；
     - node_errors / degraded_nodes 走 read-modify-write；
-    - llm_calls_used > 0（档 3 LLM 抽取触发）时单点回写 retry_budget_remaining + 累加 _dev_loop_llm_calls（must-fix-2）。
+    - **落点 B 唯一扣减点**（sp4 §4.3/§4.4，AC-S4-04）：
+      ``retry_budget_remaining -= (react_rounds_used + llm_calls_used)``、
+      ``_dev_loop_llm_calls += 同额``，单点 read-modify-write + INFO 日志。
+      react_rounds_used = 子图实际 rounds（E2 契约 llm_calls==rounds_used）；
+      llm_calls_used = metrics 档 3 LLM 抽取次数（must-fix-2 保留）。
+      guard 命中路径不经过本函数的扣减（rounds=0 / 直接构造 updates）→ 不重扣。
     """
     node_errors = list(state.get("node_errors", []))  # read-modify-write（must-fix-1）
     degraded_nodes = list(state.get("degraded_nodes", []))
@@ -1377,16 +1431,20 @@ def _map_execution_result(
     updates["node_errors"] = node_errors
     updates["degraded_nodes"] = degraded_nodes
 
-    # must-fix-2：仅 metrics 档 3 LLM 抽取触发时单点回写预算 + 累加子预算计数。
-    if llm_calls_used and llm_calls_used > 0:
+    # 落点 B 唯一扣减点（sp4 §4.4）：子图 rounds + metrics 档 3 LLM 抽取合并单点扣减。
+    total_calls = max(0, int(react_rounds_used or 0)) + max(0, int(llm_calls_used or 0))
+    if total_calls > 0:
         prev_budget = state.get("retry_budget_remaining", 0) or 0
-        updates["retry_budget_remaining"] = max(0, prev_budget - llm_calls_used)
+        updates["retry_budget_remaining"] = max(0, prev_budget - total_calls)
         prev_calls = state.get("_dev_loop_llm_calls", 0) or 0
-        updates["_dev_loop_llm_calls"] = prev_calls + llm_calls_used
+        updates["_dev_loop_llm_calls"] = prev_calls + total_calls
         logger.info(
-            "[%s] metrics LLM 抽取兜底消耗 %d 次：retry_budget %d->%d, _dev_loop_llm_calls %d->%d",
+            "[%s] LLM 预算单点扣减: react_rounds=%d + metric_llm_calls=%d = %d，"
+            "retry_budget %d->%d, _dev_loop_llm_calls %d->%d",
             NODE_NAME,
+            react_rounds_used,
             llm_calls_used,
+            total_calls,
             prev_budget,
             updates["retry_budget_remaining"],
             prev_calls,
@@ -1447,17 +1505,25 @@ def _build_dev_loop_interrupt_payload(
     feedback: ExecutionFeedback,
     state: GlobalState,
 ) -> Dict[str, Any]:
-    """interrupt#2 payload（含 interrupt_kind="dev_loop_failure"，与 interrupt#1 区分，§2.5.4）。"""
+    """interrupt#2 payload（含 interrupt_kind="dev_loop_failure"，与 interrupt#1 区分，§2.5.4）。
+
+    sp4 §9.4（AC-S4-11）：payload 键结构逐字保持 sp3 不动（AC-S4-05 命门），
+    仅对日志派生的**值**（error_summary / execution_errors / representative_stderr）
+    过 ``mask_value``——这些字段可能内嵌 stderr 原文（如 token URL）。
+    """
     return {
         "interrupt_kind": INTERRUPT_KIND,
         "fix_loop_count": state.get("fix_loop_count", 0) or 0,
         "error_category": feedback.category.value,
-        "error_summary": feedback.summary,
+        "error_summary": mask_value(feedback.summary) or "",
         "fix_hint": feedback.fix_hint,
         "auto_fixable": feedback.auto_fixable,
         "fix_loop_history": list(state.get("fix_loop_history", [])),
-        "execution_errors": list(exec_result.get("errors") or []),
-        "representative_stderr": feedback.representative_stderr,
+        "execution_errors": [
+            mask_value(e if isinstance(e, str) else str(e)) or ""
+            for e in (exec_result.get("errors") or [])
+        ],
+        "representative_stderr": mask_value(feedback.representative_stderr) or "",
         "options": ["terminate", "revise_plan", "export_code"],
     }
 
@@ -1621,8 +1687,9 @@ def _has_committed_result_for_round(state: GlobalState) -> bool:
 def execution(state: GlobalState) -> dict:
     """步骤 6：sandbox 执行 + 错误分类 + B 档判定 + 修复耗尽/不可修复时 interrupt#2。
 
-    七步骨架（架构 §2.3.1）：prepare_venv → run_in_venv 聚合 → _classify_execution →
-    _parse_metrics → _build_execution_result → _map_execution_result → _maybe_interrupt_or_return。
+    七步骨架（架构 §2.3.1 + sp4 §3.4）：_run_execution_agent（内嵌 ReAct 子图，步骤 1+2）→
+    _classify_execution → _parse_metrics → _build_execution_result → _map_execution_result →
+    _maybe_interrupt_or_return。
     """
     work_dir = state.get("code_output_dir")  # C1 集成约定：直接读，不自拼目录。
 
@@ -1662,47 +1729,13 @@ def execution(state: GlobalState) -> dict:
 
     plan = state.get("reproduction_plan") or {}
 
-    # 步骤 1：准备 venv + 装依赖。
-    try:
-        prep = prepare_venv(
-            work_dir=work_dir,
-            requirements=_extract_requirements(plan),
-            requirements_files=None,
-        )
-    except SandboxCreationError as exc:
-        logger.warning("[%s] prepare_venv 越界/创建失败: %s", NODE_NAME, exc)
-        feedback = ExecutionFeedback(
-            ErrorCategory.DEPENDENCY, True, f"sandbox 准备失败: {exc}",
-            "检查 work_dir 是否在 workspace 下 / 依赖是否可解析", "",
-        )
-        exec_result = ExecutionResult(
-            success=False, metrics={}, logs=str(exc), errors=[
-                f"[error_category={feedback.category.value}] {feedback.summary}"
-            ],
-            artifacts=[], runtime_seconds=0.0, environment_info={},
-        )
-        updates = _map_execution_result(exec_result, feedback, state)
-        return _maybe_interrupt_or_return(
-            updates, exec_result, feedback, state, already_committed=False
-        )
-
-    # 步骤 2：逐条执行 execution_steps 并聚合。
-    # current_dir 模拟连续 shell 会话的 cwd：cd 更新它、跨子命令/跨 step 持续（LLM 规划时
-    # 假设 `cd 进仓库后后续步骤都在仓库里`）。始终经 workspace 边界校验，越界拒绝。
-    steps = plan.get("execution_steps") or []
-    run_results: List[SandboxRunResult] = []
-    current_dir = work_dir
-    if prep.success:
-        for step in steps:
-            sub_results, current_dir = _run_step_subcommands(
-                step, prep.python_exe, current_dir
-            )
-            if not sub_results:
-                continue
-            run_results.extend(sub_results)
-            # 某 step（任一子命令）失败即停（后续步骤通常依赖前序成功，避免噪声）。
-            if any(r.exit_code != 0 or r.timed_out for r in sub_results):
-                break
+    # 步骤 1+2（sp4 S4-03，架构 §3.4）：内嵌 ReAct 子图自主编排 prepare_environment /
+    # run_in_sandbox / request_user_input。interrupt#3（GraphBubbleUp）直通上浮暂停主图，
+    # resume 时本函数体整体重跑、子图从 checkpoint 恢复（工具历史不重放，B2 门禁）。
+    # 收尾只认工具执行的真实 sandbox 结果（收集器 + messages 回读），不认 agent 自述（R-S4-01）。
+    agent_out = _run_execution_agent(state, work_dir, plan)
+    prep = agent_out.prep  # 可能为 None（agent 未调 prepare / 子图降级）→ 下游 Optional 分支
+    run_results = agent_out.run_results
 
     # 步骤 3：错误分类。
     feedback = _classify_execution(prep, run_results)
@@ -1713,8 +1746,13 @@ def execution(state: GlobalState) -> dict:
     # 步骤 5：构造 ExecutionResult + B 档 success。
     exec_result = _build_execution_result(prep, run_results, feedback, metrics, work_dir)
 
-    # 步骤 6：单点 read-modify-write 写 state（含 must-fix-2 预算回写）。
-    updates = _map_execution_result(exec_result, feedback, state, llm_calls_used=llm_calls_used)
+    # 步骤 6：单点 read-modify-write 写 state（落点 B 唯一扣减点：子图 rounds + metrics 抽取，§4.4；
+    # 降级路径 rounds_used=0 → 零扣减，与 guard 命中同口径）。
+    updates = _map_execution_result(
+        exec_result, feedback, state,
+        llm_calls_used=llm_calls_used,
+        react_rounds_used=agent_out.rounds_used,
+    )
 
     # 步骤 7：修复循环边界判定（首次进入：sandbox 刚跑、未过 checkpoint 边界 → already_committed=False）。
     return _maybe_interrupt_or_return(

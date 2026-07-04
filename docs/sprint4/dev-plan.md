@@ -474,11 +474,11 @@ graph TD
 5. **修复循环边界零改动**：`_maybe_interrupt_or_return` / `_has_committed_result_for_round`（L1006）/ `_ROUTE_AWAIT_INTERRUPT` self-loop / interrupt#2 payload **逐字不动**（AC-S4-05 命门）。
 
 **自测检查点**：
-- [ ] CP-E3-1 **预算对账（AC-S4-04）**：一次 execution 后 `retry_budget_remaining` 递减恰 = 子图 rounds + metric_llm_calls；`_dev_loop_llm_calls` 累加同额；guard 命中重入路径零扣减（rounds=0）；触顶 60 → interrupt#2（复用 sp3 CP-C3-9/10 断言范式改造）
-- [ ] CP-E3-2 **credential 分类（AC-S4-07）**：8 关键字参数化命中 `CREDENTIAL_REQUIRED`；`auto_fixable=False`、error_type=permanent、**不消耗 fix_loop_count**（进 `_maybe_interrupt_or_return` 走 interrupt#2 兜底路径而非 retry_coding）；判定顺序先于 data_missing/hardware（构造双关键字 stderr 断言）
-- [ ] CP-E3-3 B 档判定只认编排层：收集器 exit 全 0 + ≥1 指标 → success；agent 自述成功但收集器有非 0 → failure（CP-E2-3 端到端闭环）
-- [ ] CP-E3-4 logs / interrupt payload 无凭证明文（注入已知 token 后断言，AC-S4-11 节点内分支）
-- [ ] CP-E3-5 通信契约不变（AC-S4-08 / Q-D）：失败时 `execution_result` + `[error_category=...]` 前缀 + `fix_loop_history` 逐字同 sp3 schema，coding `_digest_execution_feedback`（coding.py L162）无需任何改动即可消费（跑一次 coding 侧解析断言）
+- [x] CP-E3-1 **预算对账（AC-S4-04）**：一次 execution 后 `retry_budget_remaining` 递减恰 = 子图 rounds + metric_llm_calls；`_dev_loop_llm_calls` 累加同额；guard 命中重入路径零扣减（rounds=0）；触顶 60 → interrupt#2（复用 sp3 CP-C3-9/10 断言范式改造）
+- [x] CP-E3-2 **credential 分类（AC-S4-07）**：8 关键字参数化命中 `CREDENTIAL_REQUIRED`；`auto_fixable=False`、error_type=permanent、**不消耗 fix_loop_count**（进 `_maybe_interrupt_or_return` 走 interrupt#2 兜底路径而非 retry_coding）；判定顺序先于 data_missing/hardware（构造双关键字 stderr 断言）
+- [x] CP-E3-3 B 档判定只认编排层：收集器 exit 全 0 + ≥1 指标 → success；agent 自述成功但收集器有非 0 → failure（CP-E2-3 端到端闭环）
+- [x] CP-E3-4 logs / interrupt payload 无凭证明文（注入已知 token 后断言，AC-S4-11 节点内分支）
+- [x] CP-E3-5 通信契约不变（AC-S4-08 / Q-D）：失败时 `execution_result` + `[error_category=...]` 前缀 + `fix_loop_history` 逐字同 sp3 schema，coding `_digest_execution_feedback`（coding.py L162）无需任何改动即可消费（跑一次 coding 侧解析断言）
 
 #### 任务 E4：sp3 回归守门 + execution 侧 Q-C 复验（AC-S4-05/14）
 
@@ -493,9 +493,9 @@ graph TD
 - 全量非 e2e 回归零退化（基线 1119 + 本 Sprint 新增）；interrupt/重跑幂等类用例**连跑 3 次**（复现率高类判据），异常升 5 次。
 
 **自测检查点**：
-- [ ] CP-E4-1 sp3 C3/D1/E2 既有用例全绿（AC-S4-05）；mock 落点适配清单逐条记录（改哪条 / 为何 / 断言语义不降）
-- [ ] CP-E4-2 execution 侧 AC-S4-14 断言 PASS（sandbox 副作用恰为 1 + 收集器在 resume 后结果完整；若收集器丢前序 → 启用 E1 兜底通道并复测）
-- [ ] CP-E4-3 全量非 e2e 回归零退化，interrupt 类用例连跑 3 次 0 flaky
+- [x] CP-E4-1 sp3 C3/D1/E2 既有用例全绿（AC-S4-05）；mock 落点适配清单逐条记录（改哪条 / 为何 / 断言语义不降）
+- [x] CP-E4-2 execution 侧 AC-S4-14 断言 PASS（sandbox 副作用恰为 1 + 收集器在 resume 后结果完整；若收集器丢前序 → 启用 E1 兜底通道并复测）
+- [x] CP-E4-3 全量非 e2e 回归零退化，interrupt 类用例连跑 3 次 0 flaky
 
 ---
 

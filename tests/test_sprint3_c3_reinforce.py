@@ -122,6 +122,14 @@ def _patch_sandbox(
     prep_raises: Optional[Exception] = None,
     counter: Optional[Dict[str, int]] = None,
 ) -> Dict[str, int]:
+    # 【sp4 E4 mock 落点适配 2026-07-04】E3 把步骤 1+2 换成 _run_execution_agent
+    # 内嵌子图，mock 落点上移（同 tests/test_sprint3_c3.py 适配注记）：
+    #   - 每次 agent 调用 = 一次 prepare + 消费一条 run（1 step/回合），计数语义等价；
+    #   - rounds_used=0 保持 sp3 预算断言不变（子图 rounds 扣减由 CP-E3-1 覆盖）；
+    #   - prep_raises（R-9）：sp4 真实链路中 prepare_environment 工具捕获
+    #     SandboxCreationError 转结构化错误 → 收集器无 prep → agent 收尾
+    #     prep=None + 空 run_results（等价于 sp3 的 prepare 抛错分支，
+    #     _classify_execution 步骤 0 同样归 DEPENDENCY 可修复）。
     cnt = counter if counter is not None else {"prepare": 0, "run": 0}
     prep_obj = prep if prep is not None else FakePrepareResult()
     runs = run_results if run_results is not None else [
@@ -130,24 +138,26 @@ def _patch_sandbox(
     arts = artifacts if artifacts is not None else []
     run_iter = iter(runs)
 
-    def fake_prepare_venv(*args: Any, **kwargs: Any) -> FakePrepareResult:
+    def fake_run_execution_agent(state: Any, work_dir: Any, plan: Any):
         cnt["prepare"] = cnt.get("prepare", 0) + 1
         if prep_raises is not None:
-            raise prep_raises
-        return prep_obj
-
-    def fake_run_in_venv(*args: Any, **kwargs: Any) -> FakeRunResult:
+            # 工具层吞掉 SandboxCreationError → 无 prep、不再跑 run（run 计数保持 0）。
+            return execution_module.ExecAgentOutput(
+                prep=None, run_results=[], rounds_used=0, llm_calls=0,
+            )
         cnt["run"] = cnt.get("run", 0) + 1
         try:
-            return next(run_iter)
+            rr = next(run_iter)
         except StopIteration:
-            return runs[-1] if runs else FakeRunResult()
+            rr = runs[-1] if runs else FakeRunResult()
+        return execution_module.ExecAgentOutput(
+            prep=prep_obj, run_results=[rr], rounds_used=0, llm_calls=0,
+        )
 
     def fake_collect_artifacts(*args: Any, **kwargs: Any) -> List[str]:
         return list(arts)
 
-    monkeypatch.setattr(execution_module, "prepare_venv", fake_prepare_venv)
-    monkeypatch.setattr(execution_module, "run_in_venv", fake_run_in_venv)
+    monkeypatch.setattr(execution_module, "_run_execution_agent", fake_run_execution_agent)
     monkeypatch.setattr(execution_module, "collect_artifacts", fake_collect_artifacts)
     return cnt
 

@@ -222,22 +222,28 @@ def _e2e_base_state(**overrides: Any) -> Dict[str, Any]:
 
 
 def _patch_sandbox_fail(monkeypatch: pytest.MonkeyPatch, *, stderr: str) -> Dict[str, int]:
-    """patch sandbox 让本回合执行失败（用于触发 interrupt#2）。"""
+    """patch sandbox 让本回合执行失败（用于触发 interrupt#2）。
+
+    【sp4 E4 mock 落点适配 2026-07-04】E3 把步骤 1+2 换成 _run_execution_agent
+    内嵌子图，mock 落点上移（同 tests/test_sprint3_c3.py 适配注记）：每次 agent
+    调用 = 一次 prepare + 一次失败 run，「首次失败 sandbox 副作用恰为 1 / resume
+    不重跑」断言语义逐字保留；rounds_used=0 保持预算断言不变。
+    """
     cnt = {"prepare": 0, "run": 0}
 
-    def fake_prepare_venv(*a: Any, **k: Any) -> FakePrepareResult:
+    def fake_run_execution_agent(state: Any, work_dir: Any, plan: Any):
         cnt["prepare"] += 1
-        return FakePrepareResult()
-
-    def fake_run_in_venv(*a: Any, **k: Any) -> FakeRunResult:
         cnt["run"] += 1
-        return FakeRunResult(exit_code=1, stderr=stderr)
+        return exec_node.ExecAgentOutput(
+            prep=FakePrepareResult(),
+            run_results=[FakeRunResult(exit_code=1, stderr=stderr)],
+            rounds_used=0, llm_calls=0,
+        )
 
     def fake_collect_artifacts(*a: Any, **k: Any) -> List[str]:
         return []
 
-    monkeypatch.setattr(exec_node, "prepare_venv", fake_prepare_venv)
-    monkeypatch.setattr(exec_node, "run_in_venv", fake_run_in_venv)
+    monkeypatch.setattr(exec_node, "_run_execution_agent", fake_run_execution_agent)
     monkeypatch.setattr(exec_node, "collect_artifacts", fake_collect_artifacts)
     return cnt
 

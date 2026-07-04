@@ -96,29 +96,34 @@ def _patch_sandbox(
     run_results: Optional[List[FakeRunResult]] = None,
     counter: Optional[Dict[str, int]] = None,
 ) -> Dict[str, int]:
-    """patch execution 模块内的 sandbox 三入口，返回调用计数器。"""
+    """patch execution 的 sandbox 执行入口，返回调用计数器。
+
+    【sp4 E4 mock 落点适配 2026-07-04】E3 把步骤 1+2 换成 _run_execution_agent
+    内嵌子图，mock 落点上移（同 tests/test_sprint3_c3.py 适配注记）：每次 agent
+    调用 = 一次 prepare + 消费一条 run（1 step/回合），「sandbox 副作用恰为 1/2」
+    的 self-loop / resume 幂等断言语义逐字保留；rounds_used=0 保持预算断言不变。
+    """
     cnt = counter if counter is not None else {"prepare": 0, "run": 0}
     runs = run_results if run_results is not None else [
         FakeRunResult(exit_code=0, stdout='<METRICS>{"accuracy": 0.9}</METRICS>')
     ]
     run_iter = iter(runs)
 
-    def fake_prepare_venv(*args: Any, **kwargs: Any) -> FakePrepareResult:
+    def fake_run_execution_agent(state: Any, work_dir: Any, plan: Any):
         cnt["prepare"] = cnt.get("prepare", 0) + 1
-        return FakePrepareResult()
-
-    def fake_run_in_venv(*args: Any, **kwargs: Any) -> FakeRunResult:
         cnt["run"] = cnt.get("run", 0) + 1
         try:
-            return next(run_iter)
+            rr = next(run_iter)
         except StopIteration:
-            return runs[-1] if runs else FakeRunResult()
+            rr = runs[-1] if runs else FakeRunResult()
+        return execution_module.ExecAgentOutput(
+            prep=FakePrepareResult(), run_results=[rr], rounds_used=0, llm_calls=0,
+        )
 
     def fake_collect_artifacts(*args: Any, **kwargs: Any) -> List[str]:
         return []
 
-    monkeypatch.setattr(execution_module, "prepare_venv", fake_prepare_venv)
-    monkeypatch.setattr(execution_module, "run_in_venv", fake_run_in_venv)
+    monkeypatch.setattr(execution_module, "_run_execution_agent", fake_run_execution_agent)
     monkeypatch.setattr(execution_module, "collect_artifacts", fake_collect_artifacts)
     return cnt
 

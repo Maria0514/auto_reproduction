@@ -111,6 +111,10 @@ def _patch_sandbox(
     run_results: Optional[List[FakeRunResult]] = None,
     counter: Optional[Dict[str, int]] = None,
 ) -> Dict[str, int]:
+    # 【sp4 E4 mock 落点适配 2026-07-04】E3 把步骤 1+2 换成 _run_execution_agent
+    # 内嵌子图，mock 落点上移（同 tests/test_sprint3_c3.py 适配注记）：每次 agent
+    # 调用 = 一次 prepare + 消费一条 run；rounds_used=0 保持 must-fix-2「仅 metrics
+    # 档 3 抽取扣减」的预算断言字节级不变（子图 rounds 扣减由 CP-E3-1 覆盖）。
     cnt = counter if counter is not None else {"prepare": 0, "run": 0}
     prep_obj = prep if prep is not None else FakePrepareResult()
     runs = run_results if run_results is not None else [
@@ -118,19 +122,18 @@ def _patch_sandbox(
     ]
     run_iter = iter(runs)
 
-    def fake_prepare_venv(*args: Any, **kwargs: Any) -> FakePrepareResult:
+    def fake_run_execution_agent(state: Any, work_dir: Any, plan: Any):
         cnt["prepare"] = cnt.get("prepare", 0) + 1
-        return prep_obj
-
-    def fake_run_in_venv(*args: Any, **kwargs: Any) -> FakeRunResult:
         cnt["run"] = cnt.get("run", 0) + 1
         try:
-            return next(run_iter)
+            rr = next(run_iter)
         except StopIteration:
-            return runs[-1] if runs else FakeRunResult()
+            rr = runs[-1] if runs else FakeRunResult()
+        return execution_module.ExecAgentOutput(
+            prep=prep_obj, run_results=[rr], rounds_used=0, llm_calls=0,
+        )
 
-    monkeypatch.setattr(execution_module, "prepare_venv", fake_prepare_venv)
-    monkeypatch.setattr(execution_module, "run_in_venv", fake_run_in_venv)
+    monkeypatch.setattr(execution_module, "_run_execution_agent", fake_run_execution_agent)
     monkeypatch.setattr(execution_module, "collect_artifacts", lambda *a, **k: [])
     return cnt
 

@@ -468,10 +468,11 @@ def test_characterization_empty_value_remember_dedup_deadlock(
 def test_hardening_cache_hit_sensitive_masked_via_secrets_no_reregister(
     secrets_workspace, fake_interrupt,
 ):
-    """偏差 e 声称核证：cache-hit 不重复 register_sensitive_value——mask 覆盖
-    由 `.secrets` is_sensitive=True 条目直接提供（mask_value 敏感值全集 =
-    .secrets is_sensitive 项 ∪ 进程内 set）。模拟重启恢复（进程内 set 为空）
-    后 cache-hit，值仍可被脱敏。"""
+    """【锚定翻转 2026-07-04·L-B1-02 修复】原锚定"cache-hit 不重复 register"——
+    该行为在 .secrets 条目 is_sensitive=False 而调用方 is_sensitive=True 时
+    构成 mask 缺口（E3 验收核实 E3 层兜底无法覆盖），故 B1 修复为 cache-hit
+    按调用方敏感语义补登记。断言翻转：补登记生效（进程内 set 含缓存值）；
+    mask 经 .secrets is_sensitive=True 条目直接覆盖的机制不变、双通道并存。"""
     remember_secret("hf_token", "CACHED-SENS-TOK-B1", True)
     secrets_store._SENSITIVE_VALUES.clear()  # 模拟进程重启：内存旁路清零
 
@@ -481,9 +482,31 @@ def test_hardening_cache_hit_sensitive_masked_via_secrets_no_reregister(
     })
     assert result == "CACHED-SENS-TOK-B1"
     assert fake.calls == []
-    assert list(iter_sensitive_values()) == [], "cache-hit 路径确实不重复 register"
+    assert list(iter_sensitive_values()) == ["CACHED-SENS-TOK-B1"], \
+        "L-B1-02 修复：cache-hit 敏感调用补登记进程内 set"
     assert mask_value("leak CACHED-SENS-TOK-B1 end") == "leak **** end", \
-        "mask 必须经 .secrets is_sensitive=True 条目直接覆盖（开发声称的机制）"
+        "mask 经 .secrets is_sensitive=True 条目直接覆盖的机制不变"
+
+
+def test_lb102_fix_cache_hit_sensitivity_mismatch_masked(
+    secrets_workspace, fake_interrupt,
+):
+    """L-B1-02 缺口场景直证：.secrets 条目 is_sensitive=False（如前次以非敏感
+    语义记住）而本次调用 is_sensitive=True → 修复前缓存值游离于 mask 集之外，
+    修复后 cache-hit 补登记，mask_value 可脱敏。"""
+    remember_secret("proxy_url", "MISMATCH-TOK-B1", False)  # 条目非敏感
+    secrets_store._SENSITIVE_VALUES.clear()
+    assert mask_value("x MISMATCH-TOK-B1 y") == "x MISMATCH-TOK-B1 y", \
+        "前置确认：.secrets 非敏感条目不进 mask 集（缺口成立前提）"
+
+    fake = fake_interrupt({"value": "X", "remember": False})
+    result = request_user_input.invoke({
+        "question": "q", "is_sensitive": True, "purpose_key": "proxy_url",
+    })
+    assert result == "MISMATCH-TOK-B1"
+    assert fake.calls == [], "cache-hit 不 interrupt"
+    assert mask_value("x MISMATCH-TOK-B1 y") == "x **** y", \
+        "L-B1-02 修复生效：调用方敏感语义补登记后可脱敏"
 
 
 def test_hardening_no_value_or_question_plaintext_in_logs(

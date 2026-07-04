@@ -105,9 +105,16 @@ def _patch_sandbox(
     run_results: Optional[List[FakeRunResult]] = None,
     llm_extract: Optional[Any] = None,
 ) -> Dict[str, int]:
-    """patch execution 模块内 sandbox 三入口 + _llm_extract_metrics，返回调用计数器。
+    """patch execution 的 sandbox 执行入口 + _llm_extract_metrics，返回调用计数器。
 
     run_results 列表按调用顺序逐个返回，耗尽后重复返回最后一个（支持「连续失败」场景）。
+
+    【sp4 E4 mock 落点适配 2026-07-04】E3 把主函数步骤 1+2 换成 _run_execution_agent
+    内嵌子图，本 mock 版（非 e2e）落点上移（同 tests/test_sprint3_c3.py 适配注记）：
+    每次 agent 调用 = 一次 prepare + 消费一条 run（1 step/回合），计数语义与 sp3
+    逐字等价；rounds_used=0 保持预算断言不变（子图 rounds 扣减由 CP-E3-1 覆盖）。
+    注意：TestRealChainE2E._patch_sandbox_real（真实子图 e2e 路径）**不适配**——
+    sp4 工具体内调用的仍是 execution 模块级 prepare_venv/run_in_venv，patch 依旧生效。
     """
     cnt: Dict[str, int] = {"prepare": 0, "run": 0, "collect": 0}
     prep_obj = prep if prep is not None else FakePrepareResult()
@@ -116,23 +123,22 @@ def _patch_sandbox(
     ]
     run_iter = iter(runs)
 
-    def fake_prepare_venv(*args: Any, **kwargs: Any) -> FakePrepareResult:
+    def fake_run_execution_agent(state: Any, work_dir: Any, plan: Any):
         cnt["prepare"] += 1
-        return prep_obj
-
-    def fake_run_in_venv(*args: Any, **kwargs: Any) -> FakeRunResult:
         cnt["run"] += 1
         try:
-            return next(run_iter)
+            rr = next(run_iter)
         except StopIteration:
-            return runs[-1] if runs else FakeRunResult()
+            rr = runs[-1] if runs else FakeRunResult()
+        return execution_module.ExecAgentOutput(
+            prep=prep_obj, run_results=[rr], rounds_used=0, llm_calls=0,
+        )
 
     def fake_collect_artifacts(*args: Any, **kwargs: Any) -> List[str]:
         cnt["collect"] += 1
         return []
 
-    monkeypatch.setattr(execution_module, "prepare_venv", fake_prepare_venv)
-    monkeypatch.setattr(execution_module, "run_in_venv", fake_run_in_venv)
+    monkeypatch.setattr(execution_module, "_run_execution_agent", fake_run_execution_agent)
     monkeypatch.setattr(execution_module, "collect_artifacts", fake_collect_artifacts)
     # 默认让 LLM 抽取不触发（零扣减），隔离预算行为；档1 <METRICS> 命中时本就不触发。
     monkeypatch.setattr(
