@@ -1377,7 +1377,11 @@ def _build_execution_result(
 
     errors: List[str] = []
     if not success:
-        errors = [f"[error_category={feedback.category.value}] {feedback.summary}"]
+        # summary 可能内嵌 stderr 原文（同 §9.4 payload 落点），入 state 前 mask。
+        errors = [
+            mask_value(f"[error_category={feedback.category.value}] {feedback.summary}")
+            or ""
+        ]
 
     return ExecutionResult(
         success=success,
@@ -1434,12 +1438,15 @@ def _map_execution_result(
 
     if not exec_result["success"]:
         three_state = _map_category_to_error_type(feedback.category)
+        # BUG-S4-G2-01：summary/stderr 可能内嵌敏感值原文，入 node_errors 前 mask
+        # （消费侧兜底，同 §9.4 payload/logs 落点范式）。
         node_errors.append(
             make_node_error(
                 NODE_NAME,
                 three_state,
-                f"[error_category={feedback.category.value}] {feedback.summary}",
-                feedback.representative_stderr or None,
+                mask_value(f"[error_category={feedback.category.value}] {feedback.summary}")
+                or "",
+                mask_value(feedback.representative_stderr or None),
             )
         )
         logger.warning(
@@ -1447,7 +1454,7 @@ def _map_execution_result(
             NODE_NAME,
             feedback.category.value,
             three_state,
-            feedback.summary,
+            mask_value(feedback.summary),
         )
 
     updates["node_errors"] = node_errors
@@ -1491,7 +1498,7 @@ def _append_fix_record(
     history.append(
         FixLoopRecord(
             round_number=round_no,
-            error_summary=feedback.summary,
+            error_summary=mask_value(feedback.summary) or "",
             error_category=feedback.category.value,
             fix_strategy=feedback.fix_hint,
             timestamp=datetime.now(timezone.utc).isoformat(),

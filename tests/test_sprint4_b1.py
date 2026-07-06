@@ -47,6 +47,7 @@ _LOGGER_NAME = "core.tools.interaction_tools"
 # CP-B1-5 锚定常量：request_user_input 的 docstring（= 工具 schema description，
 # 参与 Prompt Cache 稳定前缀）。逐字节比较——模块侧任何改动（含空白 / 标点）
 # 都会翻转本断言，防止动态变量 / 无意识 drift 破坏字节级幂等。
+# 2026-07-06 同步：Returns 行随 ADJ-S4-G2-02 裁决措辞 A 修正（有意识改动，非 drift）。
 _EXPECTED_TOOL_DESCRIPTION = (
     "当缺少继续任务所需的信息（凭证 / 参数 / 决策 / 路径）时，向用户索要一条信息。\n"
     "\n"
@@ -61,7 +62,7 @@ _EXPECTED_TOOL_DESCRIPTION = (
     "            用作 .secrets 的 key + 去重（同 key 命中已存则直接返回，不再打断用户）。\n"
     "\n"
     "    Returns:\n"
-    "        用户输入的字符串值（敏感值不进 state / checkpoint）。"
+    "        用户输入的字符串值（敏感值不进 GlobalState 业务字段，日志/报告/UI 投影面统一脱敏）。"
 )
 
 

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import logging
+import os
 import sqlite3
 from pathlib import Path
 from typing import Optional
@@ -14,6 +16,8 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 
 import config
 from core.errors import PermanentError
+
+logger = logging.getLogger(__name__)
 
 
 def get_checkpointer(db_path: Optional[str] = None) -> SqliteSaver:
@@ -42,6 +46,17 @@ def get_checkpointer(db_path: Optional[str] = None) -> SqliteSaver:
         )
 
     conn = sqlite3.connect(db_path, check_same_thread=False)
+    # ADJ-S4-G2-02 裁决 (a+)：checkpoint 帧含敏感 resume 值明文（已知接受限制），
+    # DB 权限收敛 0600 与 .secrets 对齐（威胁模型唯一真实暴露面增量 = 同机其他
+    # OS 用户可读默认 0644 建库）。置于 WAL PRAGMA 前：-wal/-shm 创建时继承主库
+    # 权限，无需单独处理。POSIX 强制；非 POSIX 打 WARNING 不强制（沿
+    # secrets_store._write_entries 范式）。
+    os.chmod(db_path, 0o600)
+    if os.name != "posix":
+        logger.warning(
+            "非 POSIX 平台无法强制 checkpoint DB 0600 权限（MVP 不强制）: path=%s",
+            db_path,
+        )
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
 
