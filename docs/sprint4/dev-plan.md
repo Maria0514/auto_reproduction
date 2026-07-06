@@ -185,9 +185,11 @@ graph TD
 **关键约束**：不新增交互超时常量（Q-F1 Maria 已定一直暂停）；沿用 sp1~sp3 字面量风格（无 env 覆盖）。
 
 **自测检查点**：
-- [ ] CP-A1-1 三常量可导入且值 / 类型逐项断言（`REACT_MAX_ROUNDS_EXECUTION==10` int / `RUN_COMMAND_TIMEOUT==120` int / `SECRETS_FILE_NAME==".secrets"` str）
-- [ ] CP-A1-2 边界断言：`RUN_COMMAND_TIMEOUT < SANDBOX_EXEC_TIMEOUT`（120 < 1800，AC-S4-02 直接验收点）+ `REACT_MAX_ROUNDS_EXECUTION <= MAX_DEV_LOOP_LLM_CALLS`（10 ≤ 60，单次子图 invoke 不可能一次击穿子预算）
-- [ ] CP-A1-3 既有常量基线不动（`MAX_TOTAL_LLM_CALLS==120` / `MAX_FIX_LOOP_COUNT==10` / `MAX_DEV_LOOP_LLM_CALLS==60` / `DEV_LOOP_MIN_CALLS_PER_ROUND==2` / `REACT_MAX_ROUNDS_CODING==12`；git diff 实证纯追加）
+- [x] CP-A1-1 三常量可导入且值 / 类型逐项断言（`REACT_MAX_ROUNDS_EXECUTION==10` int / `RUN_COMMAND_TIMEOUT==120` int / `SECRETS_FILE_NAME==".secrets"` str）
+- [x] CP-A1-2 边界断言：`RUN_COMMAND_TIMEOUT < SANDBOX_EXEC_TIMEOUT`（120 < 1800，AC-S4-02 直接验收点）+ `REACT_MAX_ROUNDS_EXECUTION <= MAX_DEV_LOOP_LLM_CALLS`（10 ≤ 60，单次子图 invoke 不可能一次击穿子预算）
+- [x] CP-A1-3 既有常量基线不动（`MAX_TOTAL_LLM_CALLS==120` / `MAX_FIX_LOOP_COUNT==10` / `MAX_DEV_LOOP_LLM_CALLS==60` / `DEV_LOOP_MIN_CALLS_PER_ROUND==2` / `REACT_MAX_ROUNDS_CODING==12`；git diff 实证纯追加）
+
+（2026-07-05 按 test-reports/2026-07-02_a1-a2-d1-acceptance.md 验收 PASS 补勾）
 
 ---
 
@@ -210,9 +212,11 @@ graph TD
 **关键约束（must-fix-1 + B2/B3 治理）**：两字段均单值 / Dict 单点写，**无 reducer**；必须显式声明 + 默认值，否则节点写入被 LangGraph 静默丢弃。
 
 **自测检查点**：
-- [ ] CP-A2-1 `GlobalState.__annotations__` 含两字段，类型正确；`create_initial_state` 默认值正确（老形态 + 新形态入参均覆盖）
-- [ ] CP-A2-2 **must-fix-1 grep 断言沿用**：`node_errors` / `degraded_nodes` / `fix_loop_history` 三字段仍无 `Annotated` / `operator.add`（沿用 sp3 CP-A2-3 双证：grep 零命中 + `get_origin is list`）
-- [ ] CP-A2-3 全量非 e2e 回归零退化（基线 1119 passed，确认追加字段不破坏既有初始化 / 反序列化）
+- [x] CP-A2-1 `GlobalState.__annotations__` 含两字段，类型正确；`create_initial_state` 默认值正确（老形态 + 新形态入参均覆盖）
+- [x] CP-A2-2 **must-fix-1 grep 断言沿用**：`node_errors` / `degraded_nodes` / `fix_loop_history` 三字段仍无 `Annotated` / `operator.add`（沿用 sp3 CP-A2-3 双证：grep 零命中 + `get_origin is list`）
+- [x] CP-A2-3 全量非 e2e 回归零退化（基线 1119 passed，确认追加字段不破坏既有初始化 / 反序列化）
+
+（2026-07-05 按 test-reports/2026-07-02_a1-a2-d1-acceptance.md 验收 PASS 补勾）
 
 ---
 
@@ -243,11 +247,13 @@ graph TD
 - MVP 不加密（明文 0600），不做过期 / 轮换（PRD 非目标）。
 
 **自测检查点**：
-- [ ] CP-A3-1 remember → lookup 闭环：落盘后命中返回原值；文件权限恰为 0600（`stat.S_IMODE == 0o600`）；不勾记住则不落盘
-- [ ] CP-A3-2 `.secrets` 在 gitignore 内（`git check-ignore` 断言，AC-S4-09 部分）；JSON 损坏 / 文件缺失 lookup 返回 None + caplog WARNING（失败非静默）
-- [ ] CP-A3-3 `mask_value`：已记住敏感值 + 进程内未记住敏感值均被替换为 `****`；非敏感项不 mask；子串 / 多值 / 长短值混合场景无明文残留（AC-S4-12 地基）
-- [ ] CP-A3-4 `build_credential_env`：无凭证时仍含 `GIT_TERMINAL_PROMPT=0`；`git_credential:github.com` 生成 GIT_ASKPASS 脚本（0700、workspace 下、token 不出现在 env 值以外任何路径 / 命令行）；`hf_token` 双变量映射正确
-- [ ] CP-A3-5 模块内 logger 全部输出经审计无 value 明文（caplog 断言）
+- [x] CP-A3-1 remember → lookup 闭环：落盘后命中返回原值；文件权限恰为 0600（`stat.S_IMODE == 0o600`）；不勾记住则不落盘
+- [x] CP-A3-2 `.secrets` 在 gitignore 内（`git check-ignore` 断言，AC-S4-09 部分）；JSON 损坏 / 文件缺失 lookup 返回 None + caplog WARNING（失败非静默）
+- [x] CP-A3-3 `mask_value`：已记住敏感值 + 进程内未记住敏感值均被替换为 `****`；非敏感项不 mask；子串 / 多值 / 长短值混合场景无明文残留（AC-S4-12 地基）
+- [x] CP-A3-4 `build_credential_env`：无凭证时仍含 `GIT_TERMINAL_PROMPT=0`；`git_credential:github.com` 生成 GIT_ASKPASS 脚本（0700、workspace 下、token 不出现在 env 值以外任何路径 / 命令行）；`hf_token` 双变量映射正确
+- [x] CP-A3-5 模块内 logger 全部输出经审计无 value 明文（caplog 断言）
+
+（2026-07-05 按 test-reports/2026-07-02_a3-d2-acceptance.md 验收 PASS 补勾）
 
 ---
 
@@ -277,11 +283,13 @@ graph TD
 3. **docstring 纪律**（三重约束，进工具 schema 参与 Prompt Cache）：仅在信息缺失阻塞任务时调用 / 一次只问一项 / **单独一轮调用、不与写文件/运行命令同轮**（架构 §8.3 缓解 2）；docstring 内零动态变量。
 
 **自测检查点**：
-- [ ] CP-B1-1 mock interrupt：调用触发 payload 契约完整（interrupt_kind / question / is_sensitive / purpose_key 四键，purpose_key 空串转 None）
-- [ ] CP-B1-2 resume `{"value": "x", "remember": False}` → 返回 "x" 不落盘；`{"value": "x", "remember": True, purpose_key 非空}` → 落 `.secrets` 后返回；非法 resume（None / 缺 value / 非 dict）→ 返回空串 + caplog WARNING
-- [ ] CP-B1-3 purpose_key 命中 `.secrets` → **不 interrupt**（mock interrupt 0 次调用断言）直接返回缓存值（AC-S4-09 后半）
-- [ ] CP-B1-4 敏感值旁路断言：is_sensitive=True 的值经 `register_sensitive_value` 进程内可查、`mask_value` 可脱敏；工具返回值是纯 str（非 JSON）
-- [ ] CP-B1-5 docstring 字节级稳定（模块级常量断言，无动态变量）
+- [x] CP-B1-1 mock interrupt：调用触发 payload 契约完整（interrupt_kind / question / is_sensitive / purpose_key 四键，purpose_key 空串转 None）
+- [x] CP-B1-2 resume `{"value": "x", "remember": False}` → 返回 "x" 不落盘；`{"value": "x", "remember": True, purpose_key 非空}` → 落 `.secrets` 后返回；非法 resume（None / 缺 value / 非 dict）→ 返回空串 + caplog WARNING
+- [x] CP-B1-3 purpose_key 命中 `.secrets` → **不 interrupt**（mock interrupt 0 次调用断言）直接返回缓存值（AC-S4-09 后半）
+- [x] CP-B1-4 敏感值旁路断言：is_sensitive=True 的值经 `register_sensitive_value` 进程内可查、`mask_value` 可脱敏；工具返回值是纯 str（非 JSON）
+- [x] CP-B1-5 docstring 字节级稳定（模块级常量断言，无动态变量）
+
+（2026-07-05 按 test-reports/2026-07-03_b1-acceptance.md 验收 PASS 补勾）
 
 #### 任务 B2：interrupt#3 重跑幂等 harness 首验（Q-C1，软前置门）
 
@@ -301,10 +309,12 @@ graph TD
 - 结论落 `docs/sprint4/test-reports/2026-MM-DD_b2-interrupt3-idempotency.md`（含给 C2/E2 的挂载建议：request_user_input 是否必须独立一轮、collector 类实现在 resume 后的可见性）。
 
 **自测检查点**：
-- [ ] CP-B2-1 harness 跑通：interrupt#3 → resume → 值回到 agent → 收尾（AC-S4-06 mock 层首证）
-- [ ] CP-B2-2 **断言点 1 结论落档**：前序独立轮次的副作用工具在 resume 后**副作用恰为 1**（AC-S4-14 核心断言）——若 >1，判定架构 §8.3 缓解 1（LangGraph 节点级 resume 定位）失效，**触发架构师咨询，C2/E2 暂停挂载**
-- [ ] CP-B2-3 断言点 2/3 结论落档（同轮混调行为 + messages 完整性），连跑 3 次一致
-- [ ] CP-B2-4 报告归档 `docs/sprint4/test-reports/`（含 resume 重放语义实证 + 对 collector 方案的影响评估，供 E1/E2 消费）
+- [x] CP-B2-1 harness 跑通：interrupt#3 → resume → 值回到 agent → 收尾（AC-S4-06 mock 层首证）
+- [x] CP-B2-2 **断言点 1 结论落档**：前序独立轮次的副作用工具在 resume 后**副作用恰为 1**（AC-S4-14 核心断言）——若 >1，判定架构 §8.3 缓解 1（LangGraph 节点级 resume 定位）失效，**触发架构师咨询，C2/E2 暂停挂载**
+- [x] CP-B2-3 断言点 2/3 结论落档（同轮混调行为 + messages 完整性），连跑 3 次一致
+- [x] CP-B2-4 报告归档 `docs/sprint4/test-reports/`（含 resume 重放语义实证 + 对 collector 方案的影响评估，供 E1/E2 消费）
+
+（2026-07-05 按 test-reports/2026-07-04_b2-interrupt3-idempotency.md 验收 PASS 补勾——门禁通过，C2/E2 已获准挂载）
 
 ---
 
@@ -376,9 +386,11 @@ graph TD
 - `run_in_venv`（L696）已有 extra_env，零改动。
 
 **自测检查点**：
-- [ ] CP-D1-1 签名向后兼容：不传 extra_env 时行为与 sp3 逐字一致（既有 B1 护栏 38 条 + HOTFIX-2 隔离 9 条全绿零退化）
-- [ ] CP-D1-2 透传断言：spy `_run_subprocess`，venv 创建 + pip install（含瞬态重试第 2 次）全路径均收到 extra_env；`_build_sandbox_env` 合并语义（白名单之上显式覆盖）不被绕过
-- [ ] CP-D1-3 注入值不落 `install_log` 明文（构造含 token 的 extra_env + mock pip 输出回显，断言 prepare 结果中已 mask 或不含——若 prepare_venv 层不做 mask 则由 E3 收尾统一 mask，此 CP 验证链路上至少一处兜住，落点写进报告）
+- [x] CP-D1-1 签名向后兼容：不传 extra_env 时行为与 sp3 逐字一致（既有 B1 护栏 38 条 + HOTFIX-2 隔离 9 条全绿零退化）
+- [x] CP-D1-2 透传断言：spy `_run_subprocess`，venv 创建 + pip install（含瞬态重试第 2 次）全路径均收到 extra_env；`_build_sandbox_env` 合并语义（白名单之上显式覆盖）不被绕过
+- [x] CP-D1-3 注入值不落 `install_log` 明文（构造含 token 的 extra_env + mock pip 输出回显，断言 prepare 结果中已 mask 或不含——若 prepare_venv 层不做 mask 则由 E3 收尾统一 mask，此 CP 验证链路上至少一处兜住，落点写进报告）
+
+（2026-07-05 按 test-reports/2026-07-02_a1-a2-d1-acceptance.md 验收 PASS 补勾；CP-D1-3 判定"PASS（非阻断，附挂账 L-D1-01）"）
 
 #### 任务 D2：HOTFIX-2 备忘闭环——`PIP_*` 白名单 vs 显式注入复核（S4-06 配套）
 
@@ -394,8 +406,10 @@ graph TD
 3. 结论 + 改动（若有）落地，同步 G3 handoff。
 
 **自测检查点**：
-- [ ] CP-D2-1 架构师确认记录在案（方案 + 理由）；若改白名单：既有 `test_sandbox_env_isolation.py` 9 条相应更新且语义不弱化；若不改：`mask_value` 覆盖面结论落档
-- [ ] CP-D2-2 无论何案：构造 `PIP_INDEX_URL` 含 `user:token@` 的环境，断言 token 不出现在沙箱子进程可见 env 或已被显式注入路径接管（AC-S4-11 的 pip 分支地基）
+- [x] CP-D2-1 架构师确认记录在案（方案 + 理由）；若改白名单：既有 `test_sandbox_env_isolation.py` 9 条相应更新且语义不弱化；若不改：`mask_value` 覆盖面结论落档
+- [x] CP-D2-2 无论何案：构造 `PIP_INDEX_URL` 含 `user:token@` 的环境，断言 token 不出现在沙箱子进程可见 env 或已被显式注入路径接管（AC-S4-11 的 pip 分支地基）
+
+（2026-07-05 按 test-reports/2026-07-02_a3-d2-acceptance.md 验收 PASS 补勾）
 
 ---
 
@@ -476,7 +490,7 @@ graph TD
 **自测检查点**：
 - [x] CP-E3-1 **预算对账（AC-S4-04）**：一次 execution 后 `retry_budget_remaining` 递减恰 = 子图 rounds + metric_llm_calls；`_dev_loop_llm_calls` 累加同额；guard 命中重入路径零扣减（rounds=0）；触顶 60 → interrupt#2（复用 sp3 CP-C3-9/10 断言范式改造）
 - [x] CP-E3-2 **credential 分类（AC-S4-07）**：8 关键字参数化命中 `CREDENTIAL_REQUIRED`；`auto_fixable=False`、error_type=permanent、**不消耗 fix_loop_count**（进 `_maybe_interrupt_or_return` 走 interrupt#2 兜底路径而非 retry_coding）；判定顺序先于 data_missing/hardware（构造双关键字 stderr 断言）
-- [x] CP-E3-3 B 档判定只认编排层：收集器 exit 全 0 + ≥1 指标 → success；agent 自述成功但收集器有非 0 → failure（CP-E2-3 端到端闭环）
+- [x] CP-E3-3 B 档判定只认编排层：收集器 exit 全 0 + ≥1 指标 → success；agent 自述成功但收集器有非 0 → failure（CP-E2-3 端到端闭环）（L-E4-01 裁决后口径 = `_effective_runs` 有效执行视图——同命令 argv 精确匹配取最后一次，agent 就地重试成功不判 failure；见架构 §3.2 注记与 commit 86c5325）
 - [x] CP-E3-4 logs / interrupt payload 无凭证明文（注入已知 token 后断言，AC-S4-11 节点内分支）
 - [x] CP-E3-5 通信契约不变（AC-S4-08 / Q-D）：失败时 `execution_result` + `[error_category=...]` 前缀 + `fix_loop_history` 逐字同 sp3 schema，coding `_digest_execution_feedback`（coding.py L162）无需任何改动即可消费（跑一次 coding 侧解析断言）
 
@@ -639,7 +653,7 @@ R-S4-01~08 沿用架构 §15（等级 / 缓解不复述，仅标注 dev-plan 落
 | `_dev_loop_llm_calls` 语义 | 收窄为"execution 侧累计"（落点 B）；state 字段注释同步微调（A2 顺带），数值行为对 sp3 用例向后兼容（coding 本就不写它） |
 | coding `_get_coding_tools` | 5 → 7 工具；既有 5 工具工厂调用零改动 |
 | `.gitignore` | 零改动（`workspace/` 已覆盖 `.secrets` 默认落点，CP-A3-2 断言即可） |
-| `core/graph.py` / `core/react_base.py` / `core/checkpointer.py` / `core/nodes/planning.py` / `core/nodes/reporting.py` | **零改动**（架构 §13 钉死；G1 以 git diff + 结构测试双证） |
+| `core/graph.py` / `core/react_base.py` / `core/checkpointer.py` / `core/nodes/planning.py` / `core/nodes/reporting.py` | **零改动**（架构 §13 钉死；G1 以 git diff + 结构测试双证）**[勘误 2026-07-05] `core/react_base.py` 已由 BUG-S4-B1-01 修复（commit ae09733，GraphBubbleUp 直通、8 行纯追加）豁免零改动承诺；G1 的 git diff 基线以 ae09733 后状态为准，严禁为对齐本表述还原该修复（还原即复活 interrupt#3 永不暂停 bug）** |
 
 ---
 
@@ -672,7 +686,7 @@ R-S4-01~08 沿用架构 §15（等级 / 缓解不复述，仅标注 dev-plan 落
 | 新增 | `tests/test_sprint4_b2_interrupt3_idempotency.py` / `tests/test_sprint4_*`（各任务 CP）/ `tests/test_sprint4_e2e.py` | B2 / 各任务 / G2 |
 | 新增 | `docs/sprint4/test-reports/*`（B2 幂等实证 / e2e / Prompt Cache） | B2 / G2 / G3 |
 | 新增 | `docs/sprint4/handoff-to-test-engineer.md`（含 D2 备忘闭环结论） | G3 |
-| **零改动** | `core/graph.py` / `core/react_base.py` / `core/checkpointer.py` / `core/errors.py` / `core/nodes/planning.py` / `core/nodes/reporting.py` / `core/llm_client.py` / sp1/sp2 既有节点与工具 | — |
+| **零改动** | `core/graph.py` / `core/react_base.py` / `core/checkpointer.py` / `core/errors.py` / `core/nodes/planning.py` / `core/nodes/reporting.py` / `core/llm_client.py` / sp1/sp2 既有节点与工具 **[勘误 2026-07-05] `core/react_base.py` 已由 BUG-S4-B1-01 修复（commit ae09733，GraphBubbleUp 直通、8 行纯追加）豁免零改动承诺；G1 的 git diff 基线以 ae09733 后状态为准，严禁为对齐本表述还原该修复（还原即复活 interrupt#3 永不暂停 bug）** | — |
 
 ---
 

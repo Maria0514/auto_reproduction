@@ -682,6 +682,8 @@ def _append_fix_record(state, round_no, feedback) -> List[FixLoopRecord]:
 
 #### 2.5.3 execution 后条件路由函数 `_route_after_execution`
 
+> **[更正注记 2026-07-05] 本节字面遗漏 `await_dev_loop_interrupt → execution` self-loop 一路（interrupt#2 命门）：实际落地为含 self-loop 的路由（execution→execution 边存在），权威契约 = `core/graph.py::_route_after_execution` 与 execution.py 实际返回字段，勿按本节字面重建路由（漏接则 interrupt#2 永不触发，L-C3-01）。**
+
 ```python
 def _route_after_execution(state: GlobalState) -> str:
     """execution 出边路由（4 路）。判定基于 execution 返回后写入 state 的字段。
@@ -732,7 +734,7 @@ def _route_user_fix_decision(decision, updates, state) -> dict:
         updates["_planning_user_feedback"] = _build_revise_context(state)
         # 关键：清掉 reproduction_plan.approved，否则 planning 重入后 _route_after_planning 直接 next
         updates["reproduction_plan"] = {**(state.get("reproduction_plan") or {}), "approved": False}
-        # 注意：不重置 fix_loop_count（保留修复历史；重规划后是否清零归 §7 回问点 2）
+        # revise_plan 回 planning 时 fix_loop_count 清零、fix_loop_history 保留（§7 决策 2，2026-06-16 终裁）
     elif kind == "export_code":
         updates["user_fix_decision"] = "export_code"
         updates = _mark_degraded_for_report(updates, state, reason="export_code")  # 标 degraded → reporting
@@ -766,6 +768,8 @@ def _route_after_coding(state: GlobalState) -> str:
 ```
 
 #### 2.5.6 主图加边完整代码
+
+> **[更正注记 2026-07-05] 本节字面遗漏 `await_dev_loop_interrupt → execution` self-loop 一路（interrupt#2 命门）：实际落地为含 self-loop 的路由（execution→execution 边存在，条件边映射为 5 目标而非下文的 4 目标），权威契约 = `core/graph.py::_route_after_execution` 与 execution.py 实际返回字段，勿按本节字面重建路由（漏接则 interrupt#2 永不触发，L-C3-01）。**
 
 ```python
 def build_graph(checkpointer=None):

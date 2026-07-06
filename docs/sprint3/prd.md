@@ -7,7 +7,7 @@
 **作者**：产品经理代理
 **状态**：正式版
 
-> **默认参数变更注记（2026-06-30，Maria 拍板）**：修复循环相关三常量默认值已放大以支撑真实生产环境收敛（3 轮在真实环境收敛不了问题）：`MAX_FIX_LOOP_COUNT` 3 → **10**、`MAX_DEV_LOOP_LLM_CALLS` 20 → **60**、`MAX_TOTAL_LLM_CALLS` 50 → **120**（强约束 `MAX_DEV_LOOP_LLM_CALLS < MAX_TOTAL_LLM_CALLS` 不变，60 < 120）。本文档正文涉及这些数值处已就地更新为新值；§8 的 Q-S3-03/04 决策记录保留 Sprint 3 立项时（拍板上限=3 / 子预算=20）的历史叙述，仅作为立项考据，**当前生效值以本注记与配置表为准**。
+> **默认参数变更注记（2026-06-30，Maria 拍板）**：修复循环相关三常量默认值已放大以支撑真实生产环境收敛（3 轮在真实环境收敛不了问题）：`MAX_FIX_LOOP_COUNT` 3 → **10**、`MAX_DEV_LOOP_LLM_CALLS` 20 → **60**、`MAX_TOTAL_LLM_CALLS` 50 → **120**（强约束 `MAX_DEV_LOOP_LLM_CALLS < MAX_TOTAL_LLM_CALLS` 不变，60 < 120）。本文档正文涉及这些数值处已就地更新为新值；§8 全部决策记录（含 Q-S3-03/04/06 等）为立项时点叙述（如拍板上限=3 / 子预算=20），数值以正文与 config.py 为准，仅作为立项考据，**当前生效值以本注记与配置表为准**。
 
 ---
 
@@ -475,7 +475,7 @@ Sprint 3 PRD 必须显式钉死以下 2 项，并列入验收：
 
 ## 5. 预算与配置
 
-### 5.1 预算模型（Q-S3-04，共享池 + 子预算 20 + 入口预算门）
+### 5.1 预算模型（Q-S3-04，共享池 + 子预算 60 + 入口预算门）
 
 Sprint 3 预算模型由 Maria 拍板四要素（兼容性矩阵 §B.3 推荐方案）：
 
@@ -516,9 +516,9 @@ Sprint 3 预算模型由 Maria 拍板四要素（兼容性矩阵 §B.3 推荐方
 
 > mock execution 连续失败（可自动修复类错误）：① 每个 coding→execution 完整回合 `fix_loop_count` 自增 1（粒度 Q-S3-03）；② `fix_loop_history` 每回合 append 一条 `FixLoopRecord`；③ 当 `fix_loop_count` 达 `MAX_FIX_LOOP_COUNT`（默认 10）时被拦截，不再回 coding，转入第二个 interrupt（AC-S3-07）。自动化断言计数粒度与上限拦截（**断言引用常量而非硬编码上限值**）。
 
-**AC-S3-04：预算扣减回写 + 子预算 20 + 入口预算门**（对应 S3-08、must-fix-2）
+**AC-S3-04：预算扣减回写 + 子预算 60 + 入口预算门**（对应 S3-08、must-fix-2）
 
-> ① 修复循环每回合按实际 LLM 调用次数主动单点回写 `retry_budget_remaining`（不再零扣减）；② `MAX_DEV_LOOP_LLM_CALLS == 20` 存在于 config 且 `< MAX_TOTAL_LLM_CALLS`，修复循环累计 LLM 调用达 20 时终止；③ 入口预算门：mock `retry_budget_remaining` 不足以启动一回合时，直接降级（标 `degraded` + 走 dev_loop 失败处理），不进修复循环空转。三项自动化断言。
+> ① 修复循环每回合按实际 LLM 调用次数主动单点回写 `retry_budget_remaining`（不再零扣减）；② `MAX_DEV_LOOP_LLM_CALLS == 60` 存在于 config 且 `< MAX_TOTAL_LLM_CALLS`，修复循环累计 LLM 调用达 60 时终止；③ 入口预算门：mock `retry_budget_remaining` 不足以启动一回合时，直接降级（标 `degraded` + 走 dev_loop 失败处理），不进修复循环空转。三项自动化断言。
 
 **AC-S3-05：list 字段单点合并、无 reducer、无丢失**（对应 S3-09、must-fix-1）
 

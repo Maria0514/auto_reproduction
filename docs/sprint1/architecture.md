@@ -7,6 +7,8 @@
 **作者**：架构师代理
 **状态**：正式版
 
+> **[历史快照声明 2026-07-05]** 本文档为 Sprint 1 时点（2026-05）架构快照，后续 Sprint 2/3/4 已演进，以下关键断言已失效，现状以 `docs/technical-architecture.md` 与代码为准：① `llm_config` 字段已被 `llm_config_set` 取代（S2 breaking change，无 state 直读路径）；② 预算常量已放大：`MAX_TOTAL_LLM_CALLS` 50→120、`MAX_FIX_LOOP_COUNT` 3→10（2026-06-30），另有修复循环子预算 `MAX_DEV_LOOP_LLM_CALLS=60`；③ `FixLoopRecord.error_category` 实际枚举见 `core/nodes/execution.py::ErrorCategory`（无 oom/other，OOM 归 hardware）；④ 决策 4.6「所有节点 ReAct 化」仅部分落地：planning=手写复合+内嵌 ReAct、execution=手写编排+内嵌 ReAct 子图（sp4）、reporting=纯函数；⑤ §4.6 引用的 `deepxiv_sdk_repo/react_reader.py` 不存在，ReAct 参考实现在 `deepxiv_sdk_repo/deepxiv_sdk/agent/`。
+
 ---
 
 ## 目录
@@ -1395,7 +1397,7 @@ def check_context_limit(text: str, max_tokens: int) -> bool:
 **优先级理由**：
 
 - `paper_analysis`（`max_rounds=12`，前缀最重、上下文反复扫描）ROI 最高，优先改造。
-- 其余 ReAct 节点（含 `paper_intake`，`max_rounds=8`）次之。
+- 其余 ReAct 节点（含 `paper_intake`，`max_rounds=5`）次之。
 - 总改动工时预估 0.5-1 天，无新依赖、无 provider 分支、无主图拓扑变化。
 
 **风险（4 条）**：
@@ -2973,6 +2975,6 @@ def test_e2e_checkpoint_persistence():
 
 **文档结束**
 
-*本文档为 Sprint 1 核心架构设计文档正式版。所有模块的数据结构定义以技术架构文档第 4 章为权威来源，异常层次以第 12.2 节为权威来源。开发者读完本文档后可直接开始编码，无需回头查阅全局架构文档。*
+*本文档为 Sprint 1 核心架构设计文档正式版。所有模块的数据结构定义以技术架构文档第 4 章为权威来源，异常层次以第 12.2 节为权威来源。本文档记录 Sprint 1 时点设计全貌；当前开发请以 technical-architecture.md 与代码为准。*
 
 *2026-05-07 更新：架构升级为 ReAct agent 模式——新增 core/react_base.py 通用 ReAct 子图基础设施，paper_intake 和 paper_analysis 从固定流程函数改为 ReAct agent 实现。新增关键设计决策 KD-4.6。*

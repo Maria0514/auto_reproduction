@@ -7,6 +7,8 @@
 **作者**：产品经理代理
 **状态**：正式版
 
+> **[历史快照声明 2026-07-05]** 本文档为 Sprint 2 立项时点快照，注意：① 文中多处以 `MAX_TOTAL_LLM_CALLS=50` 作现在时论证，该值已于 2026-06-30 放大为 120；② §1.2/§8 预告的 `dev_loop` 子图与 `coding_only` 节点从未落地——Sprint 3 Q-S3-05 决策不单建 coding_only，Sprint 4 路线丙进一步否决子图方案，现状为 7 节点主图+条件边（见 technical-architecture.md §3.2）；③ §1.2 范围排除项中的 `shell_tools.py`/`file_tools.py` 最终以 `code_fs_tools.py`+`run_command_tool.py` 形态落地。
+
 ---
 
 ## 目录
