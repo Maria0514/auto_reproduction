@@ -88,7 +88,7 @@ from core import react_base, secrets_store  # noqa: E402
 from core.graph import build_graph  # noqa: E402
 from core.state import GlobalState  # noqa: E402
 from core.tools.interaction_tools import INTERRUPT_KIND_USER_INPUT  # noqa: E402
-from sandbox.local_venv import SandboxRunResult  # noqa: E402
+from sandbox.local_venv import SandboxPrepareResult, SandboxRunResult  # noqa: E402
 
 execution_module = importlib.import_module("core.nodes.execution")
 coding_module = importlib.import_module("core.nodes.coding")
@@ -1163,10 +1163,15 @@ def _make_real_llm_config():
 
 
 class TestSprint4RealChainE2E:
-    """G2 真实链路转正骨架（AC-S4-08/11/13）——**真跑待 Maria 授权**。
+    """G2 真实链路转正骨架（AC-S4-08/11/13）——**任何真跑须 Maria 授权**。
 
-    本次交付只保证：`-m e2e --collect-only` 正确收集、默认回归 deselected、
+    交付基线：`-m e2e --collect-only` 正确收集、默认回归 deselected、
     凭证缺失 skip；绝不在未授权时真跑（耗 LLM token + deepxiv 日配额）。
+
+    [转正记录 2026-07-06] Maria 授权"全跑"后由主控执行：real_s4_1 有效 3/3 PASS
+    （含 2 处 harness 直修，3 次作废跑留档）、real_s4_3 3/3 PASS；real_s4_2 待
+    Maria 提供私有仓库资源。详见
+    `docs/sprint4/test-reports/2026-07-06_g2-real-run-conversion.md`。
 
     基调（沿用 sp3 TestRealChainE2E）：真实 LLM + 真实 deepxiv + mock sandbox；
     靶论文 HippoRAG（大概率已缓存）。复跑要求（dev-plan §G2）：interrupt 链路类
@@ -1187,8 +1192,28 @@ class TestSprint4RealChainE2E:
         interrupt#3(execution) → resume(假 token) → interrupt#2 → terminate。
         预估消耗：1 次 paper_analysis 级 LLM token + deepxiv read_section 配额
         （HippoRAG 已缓存则近零）。
+
+        [harness 修复 2026-07-06，主控直修] 首版漏 `_isolate_workspace`：workspace
+        落 pytest tmp_path 违反 sandbox 护栏 3（work_dir 须在 config.WORKSPACE_DIR
+        下），prepare_environment 永远"越界"失败 → 修复循环空转烧穿 retry_budget，
+        agent 根本收不到 mock 认证失败（真跑 run1/run2 因此 FAIL，非 LLM 服从度）。
+        修复 = 补 `_isolate_workspace` + `_prepare_code_dir` 预置 + `prepare_venv`
+        确定性 fake（mock sandbox 本意，不真跑 pip）。
         """
         from core.state import create_initial_state
+
+        ws = tmp_path / "ws_real1"
+        _isolate_workspace(monkeypatch, ws)
+        _prepare_code_dir(ws)
+
+        def fake_prepare(work_dir, *a, **k):
+            venv = Path(work_dir) / ".venv"
+            return SandboxPrepareResult(
+                success=True, venv_dir=str(venv),
+                python_exe=str(venv / "bin" / "python"),
+                pip_exe=str(venv / "bin" / "pip"),
+                env_info={"python_version": "3.11 (mock)"},
+            )
 
         def stateful_run(python_exe, command, work_dir, *a, **k):
             if not list(secrets_store.iter_sensitive_values()):
@@ -1204,6 +1229,7 @@ class TestSprint4RealChainE2E:
                 duration_seconds=0.1, timed_out=False,
                 output_truncated=False, command=list(command))
 
+        monkeypatch.setattr(execution_module, "prepare_venv", fake_prepare)
         monkeypatch.setattr(execution_module, "run_in_venv", stateful_run)
         monkeypatch.setattr(execution_module, "collect_artifacts", lambda *a, **k: [])
 
@@ -1214,30 +1240,42 @@ class TestSprint4RealChainE2E:
             initial = create_initial_state(
                 user_input=PAPER_ARXIV_ID,
                 llm_config=_make_real_llm_config(),
-                workspace_dir=str(tmp_path),
+                workspace_dir=str(ws),
             )
             kinds: List[str] = []
 
             out = graph.invoke(initial, cfg)
             assert "__interrupt__" in out, "真实链路应在 planning 暂停"
             kinds.append(_interrupt_values(graph, cfg)[0]["interrupt_kind"])
+            assert kinds[0] == INTERRUPT_KIND_PLANNING
 
+            # [harness 修复 2 / 2026-07-06] 固定 4 步剧本扛不住真实 LLM 非确定行为
+            # （run3 实证：coding 真 run_command 对真 github 用假哨兵 token clone
+            # 失败 → agent 合理地对同 purpose_key 再次 #3 问询，terminate 误打进
+            # request_user_input 被降级空串）。改容忍循环：#3 一律喂哨兵值、见 #2
+            # 才 terminate、上限 8 防死循环。断言收敛到 AC-S4-13 本质 = 三种
+            # interrupt 同线程各至少一次、路由互不串扰、terminate 干净收尾。
             out = graph.invoke(Command(resume={"decision": "approve"}), cfg)
-            assert "__interrupt__" in out, (
-                "approve 后应出现 interrupt#3（真实 agent 面对认证失败按 prompt "
-                "纪律主动问询；未触发属 LLM 服从度问题，按 3~5 次复现率统计）"
-            )
-            kinds.append(_interrupt_values(graph, cfg)[0]["interrupt_kind"])
-
-            out = graph.invoke(
-                Command(resume={"value": _SENTINEL, "remember": False}), cfg)
-            assert "__interrupt__" in out, "凭证到手后 CUDA OOM 应触发 interrupt#2"
-            kinds.append(_interrupt_values(graph, cfg)[0]["interrupt_kind"])
-
-            graph.invoke(Command(resume={"decision": "terminate"}), cfg)
-            assert graph.get_state(cfg).next == ()
-            assert kinds == [INTERRUPT_KIND_PLANNING, INTERRUPT_KIND_USER_INPUT,
-                             INTERRUPT_KIND_DEV_LOOP], f"interrupt 序列: {kinds}"
+            for _ in range(8):
+                assert "__interrupt__" in out, (
+                    "approve 后链路应依次经 interrupt#3（LLM 服从度依赖，按 3~5 "
+                    f"次复现率统计）与 interrupt#2 暂停；实际序列: {kinds}"
+                )
+                kind = _interrupt_values(graph, cfg)[0]["interrupt_kind"]
+                kinds.append(kind)
+                if kind == INTERRUPT_KIND_USER_INPUT:
+                    out = graph.invoke(
+                        Command(resume={"value": _SENTINEL, "remember": False}), cfg)
+                elif kind == INTERRUPT_KIND_DEV_LOOP:
+                    graph.invoke(Command(resume={"decision": "terminate"}), cfg)
+                    break
+                else:
+                    pytest.fail(f"approve 后不应再现 planning interrupt: {kinds}")
+            assert graph.get_state(cfg).next == (), f"terminate 后应到 END: {kinds}"
+            assert INTERRUPT_KIND_USER_INPUT in kinds, (
+                f"链路未出现 interrupt#3（LLM 服从度问题，按复现率统计）: {kinds}")
+            assert kinds[-1] == INTERRUPT_KIND_DEV_LOOP, (
+                f"最终应停在 interrupt#2 后 terminate: {kinds}")
         finally:
             try:
                 conn.close()
