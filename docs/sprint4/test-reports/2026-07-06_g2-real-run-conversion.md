@@ -106,6 +106,21 @@
 
 ## 后续动作
 
-- **real_s4_2（AC-S4-08 真跑）**：仍挂，待 Maria 提供 `SP4_E2E_PRIVATE_REPO_URL` + `SP4_E2E_GIT_TOKEN` 后由主控补跑（<2 分钟，零 LLM/deepxiv 配额），另行追加归档。
+- **real_s4_2（AC-S4-08 真跑）**：仍挂，待 Maria 提供 `SP4_E2E_PRIVATE_REPO_URL` + `SP4_E2E_GIT_TOKEN` 后由主控补跑（<2 分钟，零 LLM/deepxiv 配额），另行追加归档。→ **已补跑转正，见下方补记**
 - dev-plan CP-G2-1/2/3（真跑维度）与 CP-G3-1 勾选、TODO / handoff 更新由主控统一收口；本报告可作勾选依据（AC-S4-13/11 双层转正、AC-S4-08 mock 层 PASS + 真跑挂 #2）。
 - execution PC 守门线 0.8461 建议由 G3 handoff 固化为规格数字。
+
+---
+
+## 补记（2026-07-07，主控）：real_s4_2 转正，6/6 全部完成
+
+- Maria 提供私有仓库 `https://github.com/Maria0514/sky-take-out`（无凭证 ls-remote
+  探测确认 private）+ fine-grained PAT（仅该仓库 Contents Read-only），经 `.env`
+  注入后由主控执行。
+- **real_s4_2 PASS（1.85s，1 次，零 LLM/deepxiv 配额）**：真 token 经
+  `.secrets` → `build_credential_env` → `extra_env` → `GIT_ASKPASS` 注入，
+  真实 `git clone --depth 1` 私有仓库 exit 0 + `.git` 落地；token 零明文断言
+  全过（命令行 / stdout / stderr）。**AC-S4-08 真跑转正，待授权清单 6/6 全部完成。**
+- 凭证卫生（主控执行）：测试经 `remember_secret` 写入 `workspace/.secrets` 的真
+  token 条目与 `workspace/.git_askpass_github.com.sh`（0700，含真 token）均已删除，
+  复查零残留；已提醒 Maria 吊销该 PAT 并清理 `.env` 两行。
