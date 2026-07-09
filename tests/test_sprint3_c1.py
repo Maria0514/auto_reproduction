@@ -41,6 +41,7 @@ coding_module = importlib.import_module("core.nodes.coding")
 from core.nodes.coding import (  # noqa: E402
     NODE_NAME,
     CODING_OUTPUT_SCHEMA,
+    _CODING_HONESTY_SECTION,
     _CODING_SYSTEM_PROMPT_BODY,
     _build_coding_context,
     _build_coding_system_prompt,
@@ -378,7 +379,11 @@ def test_cp_c1_6_system_prompt_body_no_dynamic(monkeypatch, tmp_path: Path) -> N
     body_a = sp_a.split(sep)[0]
     body_b = sp_b.split(sep)[0]
     assert body_a == body_b, "去尾部段落后主体应字节级一致"
-    assert body_a == body, "主体应等于 _CODING_SYSTEM_PROMPT_BODY 常量"
+    # sp5 T-S5-1-6：T-S5-1-3 在主体与尾部间插入静态诚实红线段 _CODING_HONESTY_SECTION
+    # （跨任务字节恒定，同属稳定前缀），断言目标由单常量改为两常量拼接，语义不降。
+    assert body_a == body + _CODING_HONESTY_SECTION, (
+        "主体应等于 _CODING_SYSTEM_PROMPT_BODY + _CODING_HONESTY_SECTION 常量拼接"
+    )
 
 
 # ============================== CP-C1-7 ==============================

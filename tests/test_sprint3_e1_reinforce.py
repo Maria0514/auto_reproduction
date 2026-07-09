@@ -59,7 +59,15 @@ def test_sp2_private_helpers_still_present():
 
 
 def test_interrupt_kind_is_the_only_new_public_method():
-    """CP-E1-1：相对 sp2 公开方法全集，E1 仅多出 interrupt_kind（不得多/少其它公开方法）。"""
+    """CP-E1-1：相对 sp2 公开方法全集，仅多出规格批准的新增方法（不得多/少其它公开方法）。
+
+    [S5-08 适配] 预期新增集从 {interrupt_kind}（sp3 E1）扩为 {interrupt_kind,
+    is_finished}——is_finished 为 sprint5 T-S5-0-2 按 dev-plan 规格新增的只读方法
+    （架构 sprint5 §7.8 裁决）。
+    [S5-07 适配] 预期新增集再扩入 get_activity_tail——sprint5 T-S5-4-2 按 dev-plan
+    规格新增的只读方法（架构 sprint5 §4 Q-S5-8 落点：活动流尾部快照）。
+    守门语义不变：仍钉死精确新增集合，未经规格批准的公开方法仍会被拦截。
+    """
     public = {
         n
         for n, _ in inspect.getmembers(GraphController, predicate=inspect.isfunction)
@@ -67,8 +75,9 @@ def test_interrupt_kind_is_the_only_new_public_method():
     }
     sp2_public = set(_SP2_PUBLIC_GOLDEN)
     new_methods = public - sp2_public
-    assert new_methods == {"interrupt_kind"}, (
-        f"E1 应只新增 interrupt_kind，实际新增 {new_methods}；缺失 {sp2_public - public}"
+    assert new_methods == {"interrupt_kind", "is_finished", "get_activity_tail"}, (
+        f"相对 sp2 应只新增 interrupt_kind + is_finished + get_activity_tail，"
+        f"实际新增 {new_methods}；缺失 {sp2_public - public}"
     )
 
 

@@ -156,6 +156,9 @@ def test_i3_current_page_transition_across_reruns():
     controller.poll_state.return_value = _make_state(current_step="planning")
     # 第 1 次 False，第 2 次 True（模拟工作线程跑到 interrupt）
     controller.is_interrupted.side_effect = [False, True, True, True]
+    # [S5-08 适配] case④ 改按 payload kind 分发：planning 旧形态（payload=None，
+    # 无 interrupt_kind 键）→ review，断言目标不变。
+    controller.get_interrupt_payload.return_value = None
 
     with patch("app._get_controller", return_value=controller), patch(
             "ui.pages.analysis_progress.st_autorefresh"):
@@ -207,6 +210,9 @@ def test_i456_terminal_states_stop_polling(scene_state, scene_interrupted, scene
     controller.get_worker_error.return_value = scene_worker_error
     controller.poll_state.return_value = scene_state
     controller.is_interrupted.return_value = scene_interrupted
+    # [S5-08 适配] I6_interrupted 场景走 case④ kind 分发：planning 旧形态（payload=None）
+    # → review + 停轮询，断言目标不变。
+    controller.get_interrupt_payload.return_value = None
 
     with patch("app._get_controller", return_value=controller), patch(
             "ui.pages.analysis_progress.st_autorefresh") as ar:
@@ -261,6 +267,8 @@ def _mk_chain_ctrl(state=None, interrupted=False, worker_error=None):
     c.poll_state.return_value = state
     c.is_interrupted.return_value = interrupted
     c.get_worker_error.return_value = worker_error
+    # [S5-08 适配] case④ 改按 payload kind 分发：planning 旧形态（payload=None）→ review。
+    c.get_interrupt_payload.return_value = None
     return c
 
 

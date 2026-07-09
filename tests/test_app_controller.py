@@ -26,6 +26,7 @@ from app import (
     _refresh_llm_config_set,
     _OVERRIDE_NODES as _OVERRIDE_NODES_FROM_APP,
 )
+from core.activity_stream import ActivityStreamHandler
 from core.errors import LLMError
 
 
@@ -192,9 +193,14 @@ def test_cp_d2_2_start_task_returns_thread_id_and_worker_exits(patched_controlle
     assert worker.is_alive() is False  # invoke 完成后自然退出
 
     # invoke 用了 _make_config 注入的 config（含 checkpoint_ns）。
+    # [S5-07/T-S5-4-2 适配] _worker_run 现按规格追加 callbacks=[ActivityStreamHandler]
+    # （活动流注入，架构 sprint5 §4 Q-S5-8）：configurable 部分仍严格全等（语义不降），
+    # 并钉死 config 键集合 = {configurable, callbacks}（不得再夹带其它键）。
     assert len(fake_graph.invoke_calls) == 1
     _, cfg = fake_graph.invoke_calls[0]
-    assert cfg == _make_config(thread_id)
+    assert cfg["configurable"] == _make_config(thread_id)["configurable"]
+    assert set(cfg) == {"configurable", "callbacks"}
+    assert [type(h) for h in cfg["callbacks"]] == [ActivityStreamHandler]
 
 
 # ----------------------------------------------------------------------
@@ -286,7 +292,11 @@ def test_cp_d2_5_resume_with_spawns_new_worker_and_saver(patched_controller):
 
     assert isinstance(arg, Command)
     assert arg.resume == {"decision": "approve"}
-    assert cfg == _make_config(thread_id)
+    # [S5-07/T-S5-4-2 适配] 同 CP-D2-2：resume 路径亦按规格注入 callbacks，
+    # configurable 严格全等 + config 键集合钉死（语义不降）。
+    assert cfg["configurable"] == _make_config(thread_id)["configurable"]
+    assert set(cfg) == {"configurable", "callbacks"}
+    assert [type(h) for h in cfg["callbacks"]] == [ActivityStreamHandler]
 
 
 # ----------------------------------------------------------------------

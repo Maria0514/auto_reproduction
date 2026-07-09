@@ -137,15 +137,22 @@ def _make_controller_mock(
     interrupt_kind: Optional[str] = None,
     interrupt_payload: Optional[Dict[str, Any]] = None,
     worker_error: Optional[Exception] = None,
+    is_finished: bool = False,
 ) -> MagicMock:
     """构造 GraphController mock：脚本化 poll_state / is_interrupted / interrupt_kind /
-    get_interrupt_payload / get_worker_error，其余为桩。"""
+    get_interrupt_payload / get_worker_error / is_finished，其余为桩。
+
+    [S5-08 适配] is_finished 默认 False：case⑥bis 新增 controller.is_finished 消费点，
+    MagicMock 默认 truthy 会把「reporting 进行中」误判为「图已到 END」，改变
+    test_cp_e2_5_no_jump_when_report_path_missing 的既有语义（正常渲染继续轮询）。
+    """
     controller = MagicMock()
     controller.poll_state.return_value = state
     controller.is_interrupted.return_value = is_interrupted
     controller.interrupt_kind.return_value = interrupt_kind
     controller.get_interrupt_payload.return_value = interrupt_payload
     controller.get_worker_error.return_value = worker_error
+    controller.is_finished.return_value = is_finished
     return controller
 
 

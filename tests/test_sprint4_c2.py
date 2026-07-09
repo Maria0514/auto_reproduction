@@ -56,6 +56,7 @@ coding_module = importlib.import_module("core.nodes.coding")
 
 from core.nodes.coding import (  # noqa: E402
     NODE_NAME,
+    _CODING_HONESTY_SECTION,
     _CODING_SYSTEM_PROMPT_BODY,
     _build_coding_system_prompt,
     _get_coding_tools,
@@ -201,7 +202,12 @@ def test_cp_c2_2_prompt_body_byte_identical_guard():
     body_a = _build_coding_system_prompt(ctx_a).split(sep)[0]
     body_b = _build_coding_system_prompt(ctx_b).split(sep)[0]
     assert body_a == body_b, "去尾部段落后主体应字节级一致"
-    assert body_a == _CODING_SYSTEM_PROMPT_BODY, "主体应等于常量（新增段进稳定前缀）"
+    # sp5 T-S5-1-6：诚实红线段 _CODING_HONESTY_SECTION（T-S5-1-3）为静态段、
+    # 同属稳定前缀，断言目标改为两常量拼接，语义不降。
+    assert body_a == _CODING_SYSTEM_PROMPT_BODY + _CODING_HONESTY_SECTION, (
+        "主体应等于 _CODING_SYSTEM_PROMPT_BODY + _CODING_HONESTY_SECTION"
+        "（新增段进稳定前缀）"
+    )
 
 
 def test_cp_c2_2_new_tool_sections_in_stable_prefix():

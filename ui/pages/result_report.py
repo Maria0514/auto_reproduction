@@ -7,9 +7,13 @@ dev-plan：sprint3/dev-plan.md 任务 E3（CP-E3-1~4，L601-621）。
 
     纯只读终态页：``poll_state`` 读 ``report_path`` → 读该 Markdown 文件 →
     ``st.markdown`` 完整渲染。在 Markdown 全文之上额外提供结构化区块：
-        - 顶部三形态结论卡片（复现成功 / 仅生成代码 / 未成功复现 + 降级原因）；
-        - 指标对比表（论文 baseline / 计划 expected vs 本次复现，**B 档仅展示不硬判定**，
-          与 Q-S3-01 一致，绝不出现「达标 / 不达标」结论）；
+        - 顶部结论卡片（三形态骨架不动；full_success 按 conclusion.level 两级措辞，
+          sp5 T-S5-3-5 与报告正文同口径：science → "复现成功（科学复现）"；
+          engineering → "代码跑通（工程复现），论文实验结论未验证"，AC-S5-07
+          措辞红线：engineering 卡片禁"复现成功"字样）；
+        - 指标对比表（论文 baseline vs 本次复现，**B 档仅展示不硬判定**，
+          与 Q-S3-01 一致，绝不出现「达标 / 不达标」结论；sp5 AC-S5-09：
+          计划 expected 已定性化，对比表删 expected 列，与报告正文同口径）；
         - artifact 清单（``execution_result.artifacts``，可定位）；
         - 修复历程（``fix_loop_history`` 逐轮）；
         - 代码位置（``code_output_dir``）+ deliverables（``reproduction_plan.deliverables``）。
@@ -49,9 +53,12 @@ from typing import Any, Dict, List, Optional, Tuple
 import streamlit as st
 
 from config import STREAMLIT_PAGE_INPUT
-# 复用 reporting 节点的三形态判定（reporting.py 仅 import config + core.state，轻量，
-# 不拉起 LLM / langchain 重链路）——形态卡片与报告正文同一判定，杜绝两份不一致结论。
-from core.nodes.reporting import _determine_report_form
+# 复用 reporting 节点的三形态判定 + 两级结论判定（reporting.py 仅 import config +
+# core.state，轻量，不拉起 LLM / langchain 重链路）——形态卡片与报告正文同一判定，
+# 杜绝两份不一致结论（sp5 T-S5-3-5：full_success 卡片按 conclusion.level 两级措辞）。
+from core.nodes.reporting import _determine_conclusion, _determine_report_form
+# S5-09 术语治理（T-S5-3-5）：内部枚举经 humanize 转用户可读中文再渲染。
+from ui.term_map import humanize
 
 logger = logging.getLogger(__name__)
 
@@ -66,21 +73,37 @@ _KEY_CURRENT_PAGE = "current_page"
 _KEY_INPUT_SUBMITTED = "_input_submitted"
 
 
-# 三形态 → 结论卡片文案 / 配色（mock 风格：原生 HTML div 写死十六进制，避开 shadcn
+# 结论卡片文案 / 配色（mock 风格：原生 HTML div 写死十六进制，避开 shadcn
 # iframe Tailwind tree-shake 坑，与 plan_review / analysis_progress 同范式）。
 # (标题, 描述, 背景, 边框, 文字色)。
+#
+# sp5 T-S5-3-5 口径差同步（与 reporting._render_full_success 报告正文同措辞，
+# AC-S5-07 红线）：三形态骨架不动，full_success 拆两级卡片——
+#     science      → "复现成功（科学复现）"；
+#     engineering  → "代码跑通（工程复现），论文实验结论未验证"
+#                    （标题与描述均禁"复现成功"字样）。
 _FORM_CARD_SPEC: Dict[str, Tuple[str, str, str, str, str]] = {
-    "full_success": (
-        "✅ 复现成功",
-        "代码已在隔离环境中成功执行并解析出关键指标。下方指标对比仅做论文值与复现值的"
-        "并列展示，仅供参考对比，不做硬性结论判定。",
+    "full_success_science": (
+        "✅ 复现成功（科学复现）",
+        "代码已在隔离环境中成功执行，且「计划目标回验」全部条目符合计划预期、"
+        "无诚实性标注。下方指标对比仅做论文值与复现值的并列展示，仅供参考对比，"
+        "不做硬性结论判定。",
+        "#dcfce7",
+        "#16a34a",
+        "#166534",
+    ),
+    "full_success_engineering": (
+        "☑️ 代码跑通（工程复现），论文实验结论未验证",
+        "代码已在隔离环境中成功执行并解析出指标，但论文的实验结论尚未得到验证"
+        "（详见报告全文的「重要声明」与「计划目标回验」节）。下方指标对比仅做"
+        "论文值与复现值的并列展示，仅供参考对比，不做硬性结论判定。",
         "#dcfce7",
         "#16a34a",
         "#166534",
     ),
     "code_only": (
         "📦 仅生成代码",
-        "本次运行处于 code_only 模式，系统仅生成复现代码，未在沙箱中实际执行，因此无执行指标。",
+        "本次运行处于「仅生成代码」模式，系统仅生成复现代码，未在沙箱中实际执行，因此无执行指标。",
         "#eff6ff",
         "#2563eb",
         "#1e40af",
@@ -93,6 +116,23 @@ _FORM_CARD_SPEC: Dict[str, Tuple[str, str, str, str, str]] = {
         "#991b1b",
     ),
 }
+
+
+def _conclusion_card_key(form: str, state: Dict) -> str:
+    """三形态 → 卡片 spec key（纯函数，模块级可直测）。
+
+    full_success 按 ``reporting._determine_conclusion`` 两级分卡（science /
+    engineering；success=True 下不会是 none），与报告正文同一判定；其余形态
+    原样透传，未知形态兜底 degraded（与旧 ``.get(form, degraded)`` 行为一致）。
+    """
+    state = state or {}
+    if form != "full_success":
+        return form if form in _FORM_CARD_SPEC else "degraded"
+    conclusion = _determine_conclusion(
+        state, state.get("execution_result"), state.get("honesty_audit")
+    )
+    level = (conclusion or {}).get("level")
+    return "full_success_science" if level == "science" else "full_success_engineering"
 
 
 # =========================================================================== #
@@ -121,11 +161,15 @@ def _load_report_markdown(report_path: Optional[str]) -> Tuple[Optional[str], Op
 
 
 def _metric_comparison_rows(state: Dict) -> List[Dict[str, Any]]:
-    """构造指标对比表行（论文 baseline / 计划 expected vs 本次复现，仅并列不判定）。
+    """构造指标对比表行（论文 baseline vs 本次复现，仅并列不判定）。
 
-    与 reporting._render_metrics_comparison 同口径：指标名全集取三方并集（事实层指标名
+    与 reporting._render_metrics_comparison 同口径：指标名全集取两方并集（事实层指标名
     保留英文不翻译），任一方缺该指标用 None 占位（render 层渲染为「—」）。**绝不**计算
     达标/不达标——B 档展示口径（Q-S3-01）。
+
+    sp5 T-S5-3-5（AC-S5-09 口径差同步）：删"计划 expected"列——S5-05 计划预期已
+    定性化（expected_results 改 List[Dict] 描述形态，不再有数值预期；旧 dict 形态
+    也不渲染），报告正文 ``_comparison_table`` 已同步删列，UI 表与其保持一致。
 
     防御式 .get：state 为 None / 各子结构非 dict 均不抛，返回空列表。
     """
@@ -138,12 +182,8 @@ def _metric_comparison_rows(state: Dict) -> List[Dict[str, Any]]:
     baseline = analysis.get("baseline_results") if isinstance(analysis, dict) else {}
     baseline = baseline or {}
 
-    plan = state.get("reproduction_plan") or {}
-    expected = plan.get("expected_results") if isinstance(plan, dict) else {}
-    expected = expected or {}
-
     metric_names: List[str] = []
-    for src in (repro_metrics, baseline, expected):
+    for src in (repro_metrics, baseline):
         if isinstance(src, dict):
             for k in src.keys():
                 if str(k) not in metric_names:
@@ -155,7 +195,6 @@ def _metric_comparison_rows(state: Dict) -> List[Dict[str, Any]]:
             {
                 "指标 (Metric)": name,
                 "论文 baseline": baseline.get(name) if isinstance(baseline, dict) else None,
-                "计划 expected": expected.get(name) if isinstance(expected, dict) else None,
                 "本次复现值": repro_metrics.get(name) if isinstance(repro_metrics, dict) else None,
             }
         )
@@ -173,10 +212,15 @@ def _fix_loop_rows(state: Dict) -> List[Dict[str, Any]]:
     for rec in history:
         if not isinstance(rec, dict):
             continue
+        # S5-09：error_category 内部枚举经 humanize 转中文（空值保持空串不经表）；
+        # fix_strategy 为自由中文文本（fix_hint 写入源），本就通俗，原样保留。
+        category = rec.get("error_category", "")
         rows.append(
             {
                 "轮次": rec.get("round_number", ""),
-                "错误分类 (error_category)": rec.get("error_category", ""),
+                "错误分类 (error_category)": (
+                    humanize("error_category", category) if category else ""
+                ),
                 "错误摘要": rec.get("error_summary", ""),
                 "修复策略": rec.get("fix_strategy", ""),
             }
@@ -247,10 +291,15 @@ def _reset_to_input_page() -> None:
     st.session_state[_KEY_THREAD_ID] = None
 
 
-def _render_conclusion_card(form: str) -> None:
-    """渲染顶部三形态结论卡片（HTML div 写死十六进制，AppTest 看不到 iframe 故用原生 HTML）。"""
+def _render_conclusion_card(form: str, state: Dict) -> None:
+    """渲染顶部结论卡片（HTML div 写死十六进制，AppTest 看不到 iframe 故用原生 HTML）。
+
+    sp5 T-S5-3-5：full_success 经 ``_conclusion_card_key`` 按 conclusion.level
+    两级分卡（与报告正文同判定同措辞）；code_only / degraded 卡片不变。
+    """
+    card_key = _conclusion_card_key(form, state)
     title, desc, bg, border, color = _FORM_CARD_SPEC.get(
-        form, _FORM_CARD_SPEC["degraded"]
+        card_key, _FORM_CARD_SPEC["degraded"]
     )
     # 关键文案同时落到 st.markdown（AppTest 可见纯文本）+ HTML 卡片（视觉）。
     st.markdown(f"### {title}")
@@ -268,10 +317,10 @@ def _render_metrics_section(state: Dict) -> None:
     st.markdown("### 📊 指标对比")
     rows = _metric_comparison_rows(state)
     if not rows:
-        st.caption("无可对比指标：论文 baseline / 计划 expected / 复现 metrics 均为空。")
+        st.caption("无可对比指标：论文 baseline / 复现 metrics 均为空。")
         return
     st.caption(
-        "下表并列论文报告值（baseline / expected）与本次复现值，仅供对比参考，"
+        "下表并列论文报告值（baseline）与本次复现值，仅供对比参考，"
         "不做任何硬性达标结论。"
     )
     # 缺值用「—」占位（与 reporting 报告正文一致），数值原样字符串化。
@@ -322,6 +371,29 @@ def _render_code_and_deliverables_section(state: Dict) -> None:
         st.caption("复现计划未列出 deliverables。")
 
 
+def _render_artifact_paths_section(state: Dict) -> None:
+    """S5-11 产物路径只读展示区（T-S5-3-6 / AC-S5-21，architecture §7.11）。
+
+    ``st.code`` 自带一键复制按钮（零新组件、零新依赖）。防御式 ``.get``：字段缺失
+    渲染占位 caption，不炸页面。只读展示——不做打开目录 / 导出打包 / 文件浏览器
+    （PRD 非目标），零 state 变更。
+    """
+    state = state or {}
+    st.markdown("### 📋 产物路径（可复制）")
+    code_dir = state.get("code_output_dir")
+    if code_dir:
+        st.caption("代码目录（code_output_dir）")
+        st.code(str(code_dir))
+    else:
+        st.caption("代码目录（code_output_dir）：（未记录）")
+    report_path = state.get("report_path")
+    if report_path:
+        st.caption("报告文件（report_path）")
+        st.code(str(report_path))
+    else:
+        st.caption("报告文件（report_path）：（未记录）")
+
+
 def _render_degradation_section(state: Dict) -> None:
     """渲染降级原因区块（degraded 形态专属：降级节点 / 执行错误 / 用户处置决策）。"""
     st.markdown("### ⚠️ 降级原因")
@@ -329,9 +401,10 @@ def _render_degradation_section(state: Dict) -> None:
 
     degraded_nodes = reasons["degraded_nodes"]
     if degraded_nodes:
+        # S5-09：节点名中文化 + 括注内部名（与既有"中文（内部标识）"口径一致）。
         st.markdown(
             "- 降级节点（degraded_nodes）："
-            + ", ".join(f"`{n}`" for n in degraded_nodes)
+            + ", ".join(f"{humanize('node', n)}（{n}）" for n in degraded_nodes)
         )
     else:
         st.markdown("- 降级节点（degraded_nodes）：（无显式降级节点记录）")
@@ -344,7 +417,10 @@ def _render_degradation_section(state: Dict) -> None:
 
     decision = reasons["user_fix_decision"]
     if decision:
-        st.markdown(f"- 用户处置决策（user_fix_decision）：`{decision}`")
+        # S5-09：决策值经 humanize 转中文（terminate/revise_plan/export_code）。
+        st.markdown(
+            f"- 用户处置决策（user_fix_decision）：{humanize('user_fix_decision', decision)}"
+        )
 
 
 def _render_full_report_markdown(report_path: Optional[str]) -> None:
@@ -396,9 +472,9 @@ def render() -> None:
 
     report_path = state.get("report_path")
 
-    # --- 顶部三形态结论卡片（与 reporting._determine_report_form 同一判定）---
+    # --- 顶部结论卡片（三形态骨架 + full_success 两级，与 reporting 同一判定）---
     form = _determine_report_form(state)
-    _render_conclusion_card(form)
+    _render_conclusion_card(form, state)
 
     # --- 降级原因（degraded 形态专属，置于结论卡片之后醒目展示）---
     if form == "degraded":
@@ -421,6 +497,10 @@ def render() -> None:
 
     # --- 代码位置 + deliverables（三形态均展示）---
     _render_code_and_deliverables_section(state)
+    st.divider()
+
+    # --- S5-11 产物路径只读展示（T-S5-3-6 / AC-S5-21：st.code 一键复制）---
+    _render_artifact_paths_section(state)
     st.divider()
 
     # --- 报告 Markdown 全文（CP-E3-1 核心契约：读 report_path → st.markdown 渲染）---

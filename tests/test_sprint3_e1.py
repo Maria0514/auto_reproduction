@@ -89,7 +89,14 @@ def test_cp_e1_1_no_unexpected_public_methods_added():
         for name, obj in inspect.getmembers(GraphController, predicate=inspect.isfunction)
         if not name.startswith("_")
     }
-    expected = set(_GOLDEN_SIGNATURES) | {"interrupt_kind", "get_worker_error"}
+    # [S5-08 适配] sprint5 T-S5-0-2 按 dev-plan 规格新增只读方法 is_finished（架构
+    # sprint5 §7.8 裁决），纳入预期集合；守门语义不变——仍钉死精确公开方法集合，
+    # 任何未经规格批准的新增公开方法仍会被本用例拦截。
+    # [S5-07 适配] sprint5 T-S5-4-2 按 dev-plan 规格新增只读方法 get_activity_tail
+    # （架构 sprint5 §4 Q-S5-8 落点：活动流尾部快照，UI 轮询消费），纳入预期集合；
+    # 守门语义同上不变。
+    expected = set(_GOLDEN_SIGNATURES) | {
+        "interrupt_kind", "get_worker_error", "is_finished", "get_activity_tail"}
     assert public_methods == expected, (
         f"公开方法集合超出预期：多出 {public_methods - expected}，缺失 {expected - public_methods}"
     )

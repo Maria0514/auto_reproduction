@@ -18,6 +18,18 @@
       current_step；ReAct 失败时走单点 read-modify-write 标记 degraded（must-fix-1）；
       **不写 fix_loop_count**（自增点在 execution 出口，must-fix-2），retry_budget_remaining
       由 wrapper 自动 setdefault 回写（不在此覆盖）。
+
+Sprint 5（S5-01，架构 sp5 §5/§6/§7.1）：节点从裸 wrapper 升级为"手写凭证前置门 +
+既有 ReAct wrapper"的复合函数（planning 手写复合同范式，graph.py 节点名/节点数/
+边结构零改动）：
+    - ``_credential_gate``：确定性代码逐项比对 ``plan.required_credentials``——
+      `.secrets` ∪ 会话覆盖层命中即静默通过；缺失项经 interrupt#3 增量五键 payload
+      （四键 + ``allow_degrade=True``，该键只由 gate 设置，agent 工具路径永不含）
+      向用户索要或由用户显式降级（``credential_degradations`` 整 dict 单点回写）；
+    - 幂等命门（架构 sp5 §9.2 纪律①）：missing 按执行开始时快照单项串行 interrupt，
+      **副作用（remember/stash）整体后置到快照收齐之后**，防 LangGraph 按调用序
+      重放 resume 值串位；gate 的 ``interrupt()`` 严禁 try/except 兜底（纪律②，
+      BUG-S4-B1-01 同款 GraphBubbleUp 红线）。
 """
 
 from __future__ import annotations
@@ -25,20 +37,29 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+from langgraph.types import interrupt
 
 from config import REACT_MAX_ROUNDS_CODING, WORKSPACE_DIR
 from core.errors import make_node_error
 from core.react_base import _make_react_wrapper
 from core.state import GlobalState
-from core.secrets_store import build_credential_env, load_all_secrets
+from core.secrets_store import (
+    build_credential_env,
+    load_all_secrets,
+    lookup_secret,
+    register_sensitive_value,
+    remember_secret,
+    stash_session_secret,
+)
 from core.tools.code_fs_tools import (
     make_list_dir_tool,
     make_read_code_file_tool,
     make_write_code_file_tool,
 )
 from core.tools.deepxiv_tools import read_section_tool, web_search_tool
-from core.tools.interaction_tools import request_user_input
+from core.tools.interaction_tools import INTERRUPT_KIND_USER_INPUT, request_user_input
 from core.tools.run_command_tool import make_run_command_tool
 
 logger = logging.getLogger(__name__)
@@ -73,6 +94,11 @@ CODING_OUTPUT_SCHEMA: Dict[str, Any] = {
         "notes": {
             "type": ["string", "null"],
             "description": "降级 / 不确定性 / 遗留问题等元信息（可选）。",
+        },
+        # S5-02（P2）：simulation 声明——仅 finalize 消费，不进 Prompt Cache 前缀。
+        "simulation_notice": {
+            "type": ["string", "null"],
+            "description": "无法真实实验时的模拟声明：中文说明哪部分是模拟、为什么（能真实实验时置 null）。",
         },
     },
     "required": ["files_written", "summary"],
@@ -146,6 +172,22 @@ request_user_input 使用纪律（强约束）：
 """
 
 
+# S5-02（P1）诚实红线独立静态段落（架构 §7.2 / §9.1）。
+# 与 _CODING_SYSTEM_PROMPT_BODY 同为 Prompt Cache 稳定前缀的一部分：跨论文 / 跨任务
+# 字节级恒定，段内严禁任何动态变量（f-string 插值 / format 占位 / 论文级字面量）。
+# 由 _build_coding_system_prompt 插入主体与尾部 "--- 当前任务上下文 ---" 之间。
+_CODING_HONESTY_SECTION = """
+诚实红线（最高优先级约束，违反任意一条即视为造假，比复现失败更严重）：
+1. 禁止把 verifier / 评估器的答案、标签或期望输出以任何形式泄漏给被评估对象——出题人与答题人必须隔离，生成侧代码不得读取答案字段。
+2. 禁止硬编码分数 / 实验结果 / 常量结局——指标必须由真实计算产生，评估结果必须随输入变化，不得预写"复现成功"的剧本。
+3. 不得以改变实验本质的方式规避资源缺失——缺数据 / 缺凭证 / 缺算力时，不得偷换任务、伪造等价数据或缩水评估来制造"已复现"的假象。
+
+simulation 声明义务（与红线同级）：
+- 若确实无法进行真实实验（数据 / 凭证 / 算力等资源缺失），必须如实降级为模拟实现，并且必须在 <result> 中给出 simulation_notice 字段，用中文说明哪部分是模拟、为什么模拟。
+- 能真实实验时 simulation_notice 置 null；严禁把模拟 / 占位结果伪装成真实实验结果。
+"""
+
+
 def _format_task_context() -> str:
     """渲染 system prompt 尾部稳定的任务级上下文段落（无论文级动态变量）。
 
@@ -161,13 +203,15 @@ def _format_task_context() -> str:
 def _build_coding_system_prompt(context: Dict[str, Any]) -> str:
     """组装 coding 的 system prompt（Prompt Cache 方案 A）。
 
-    - 主体 _CODING_SYSTEM_PROMPT_BODY 在不同论文 / 任务间字节级一致。
+    - 主体 _CODING_SYSTEM_PROMPT_BODY + 诚实红线段 _CODING_HONESTY_SECTION（S5-02）
+      在不同论文 / 任务间字节级一致（稳定前缀 = 主体 + 红线段）。
     - 尾部独立段落仅含常量任务标识，无任何论文级动态变量（动态上下文走 HumanMessage）。
-    - 自测断言：截去尾部段落后两次返回值完全相同（CP-C1-6）。
+    - 自测断言：截去尾部段落后两次返回值完全相同（CP-C1-6 / CP-1.3-2）。
     """
     tail = _format_task_context()
     return (
         _CODING_SYSTEM_PROMPT_BODY
+        + _CODING_HONESTY_SECTION
         + "\n--- 当前任务上下文 ---\n"
         + tail
     )
@@ -255,6 +299,16 @@ def _build_coding_context(state: GlobalState) -> Dict[str, Any]:
     payload["arxiv_id"] = (
         paper_meta.get("arxiv_id") if isinstance(paper_meta, dict) else None
     )
+
+    # S5-01（架构 sp5 §7.1）：gate 放行后的降级事实注入——用户已显式降级的凭证
+    # {purpose_key: purpose} 摘要告知 agent，触发 S5-02 simulation_notice 声明义务。
+    # 非空才注入（零降级路径的 HumanMessage 字节零扰动）；走动态上下文通道并由
+    # wrapper 统一 json.dumps(sort_keys=True) 渲染，同一 state 下字节幂等（R-PC4 无扰）。
+    degradations = state.get("credential_degradations") or {}
+    if isinstance(degradations, dict) and degradations:
+        payload["credential_degradations"] = {
+            str(k): str(v) for k, v in degradations.items()
+        }
 
     # === 修复回合：只保留反馈裁剪（code_output_dir 已上移无条件注入）===
     exec_result = state.get("execution_result")
@@ -422,6 +476,10 @@ def _map_coding_result(
     写入字段：
         - code_output_dir: 代码目录绝对路径（首轮新建，修复回合复用同目录，幂等）；
         - current_step: "coding"；
+        - simulation_notice: S5-02 模拟声明透传（coding 单点写，缺失回填 None）。
+          该字段是 LLM 自述声明，无工具事实源，**不做工具历史回填**（BUG-S1-02/03
+          规避自查：backfill 仅适用于有 ToolMessage 事实源的核心字段；simulation_notice
+          缺失即 None 属诚实语义，不是丢字段）；
         - node_errors / degraded_nodes: 仅在 coding 自身 ReAct 失败时写，走单点
           read-modify-write（must-fix-1）。
 
@@ -435,6 +493,13 @@ def _map_coding_result(
     degraded_nodes = list(state.get("degraded_nodes", []))
 
     code_dir = _resolve_code_output_dir(state)            # workspace_dir/<thread>/code，幂等
+
+    # S5-02：simulation_notice 透传（单点写）。非空字符串才落值，其余一律 None。
+    simulation_notice: Optional[str] = None
+    if isinstance(result, dict):
+        raw_notice = result.get("simulation_notice")
+        if isinstance(raw_notice, str) and raw_notice.strip():
+            simulation_notice = raw_notice
 
     # ReAct 失败判定：result 空 / 无 success 写文件记录 → degraded，不死循环。
     if not result or not isinstance(result, dict) or not _has_written_any_file(
@@ -455,6 +520,7 @@ def _map_coding_result(
     return {
         "code_output_dir": code_dir,
         "current_step": NODE_NAME,
+        "simulation_notice": simulation_notice,
         "node_errors": node_errors,
         "degraded_nodes": degraded_nodes,
         # 不写 fix_loop_count（must-fix-2）；
@@ -462,9 +528,150 @@ def _map_coding_result(
     }
 
 
-# ReAct wrapper：把 GlobalState ↔ ReActState 双向映射 + 子图编译 + 预算扣减都封装好，
-# 主图直接 import 该 callable 注册节点即可。
-coding = _make_react_wrapper(
+# ---------------------------------------------------------------------------
+# 凭证前置门（S5-01，架构 sp5 §5 Q-S5-9 / §6 Q-S5-10 / §9.2 幂等纪律）
+# ---------------------------------------------------------------------------
+
+
+def _compute_missing_credentials(
+    state: GlobalState,
+    degradations: Dict[str, str],
+) -> List[Dict[str, str]]:
+    """重算缺失凭证列表（确定性纯查询，声明序稳定，同 key 去重）。
+
+    missing = ``plan.required_credentials`` 逐项：
+        - purpose_key 空 / 项非 dict → 跳过（防御，计划字段经 planning coerce 但
+          旧 checkpoint / 手改计划可能带脏数据）；
+        - 已在 ``degradations``（用户显式降级）→ 排除，不再拦；
+        - ``lookup_secret`` 命中（`.secrets` ∪ 会话覆盖层，两级查找）→ 静默通过；
+        - 其余 → 缺失，保持声明顺序返回 ``{"purpose_key", "purpose"}``。
+
+    ``required_credentials`` 缺失（旧 checkpoint 无该键）或为 ``[]`` → 返回 ``[]``，
+    gate 零开销直通（本函数一次 ``lookup_secret`` 都不会调）。
+    """
+    plan = state.get("reproduction_plan") or {}
+    required = plan.get("required_credentials") if isinstance(plan, dict) else None
+    if not isinstance(required, list) or not required:
+        return []
+    missing: List[Dict[str, str]] = []
+    seen: set = set()
+    for item in required:
+        if not isinstance(item, dict):
+            continue
+        purpose_key = str(item.get("purpose_key") or "").strip()
+        if not purpose_key or purpose_key in seen:
+            continue
+        seen.add(purpose_key)
+        if purpose_key in degradations:
+            continue
+        if lookup_secret(purpose_key) is not None:
+            continue
+        missing.append(
+            {"purpose_key": purpose_key, "purpose": str(item.get("purpose") or "")}
+        )
+    return missing
+
+
+def _credential_gate(state: GlobalState) -> Dict[str, str]:
+    """coding 开工前确定性凭证门（S5-01 主体）。返回最终降级标记整 dict。
+
+    对每个缺失凭证发起 interrupt#3 增量五键 payload（四键契约 +
+    ``allow_degrade=True``——该键**只由本 gate 设置**，agent 经 request_user_input
+    产生的 payload 永远不含，agent 无降级入口红线）；resume 契约
+    ``{"value", "remember", "degrade"}``（degrade 缺省 False）四分支：
+        - 提交且 remember → ``remember_secret`` 落盘（0600）；
+        - 提交不 remember → ``stash_session_secret``（会话覆盖层，不落盘）；
+        - degrade=True → ``credential_degradations[purpose_key] = purpose``，放行；
+        - 非法 resume（缺 value 且非 degrade）→ WARNING 非静默 + 重新 interrupt 同一项。
+
+    幂等命门（架构 sp5 §9.2 纪律①，LangGraph 按 interrupt 调用序重放 resume 值）：
+        - missing 在**本次执行开始时快照**，快照内逐项串行 interrupt（一次一项）；
+        - **副作用整体后置**：remember/stash 在快照全部项收齐（gate 不再暂停）后才
+          统一应用。若逐项立即落副作用，中途暂停后节点重跑时 lookup_secret 会命中
+          已收项使 missing 缩小，重放的 resume 值将按调用序错配到后一项（串位陷阱）；
+          后置副作用保证每次重跑的 interrupt 调用序列与已录 resume 序列严格对位，
+          且「记住」项在 gate 完成后经 `.secrets` 命中、后续节点重跑零 interrupt；
+        - degrade 只累积在本地 dict，由复合节点在返回时整 dict 单点回写 state。
+
+    红线（架构 sp5 §9.2 纪律②，BUG-S4-B1-01 同款）：``interrupt()`` 及其所在
+    函数体**严禁 try/except 兜底**——GraphInterrupt（基类 GraphBubbleUp）必须直通
+    冒泡交 LangGraph 暂停主图（CP-2.2-4 以 AST 断言守门）。
+
+    日志纪律（架构 sp5 §9.3 脱敏出口④）：只打 purpose_key，绝不打 value 明文。
+    """
+    existing = state.get("credential_degradations") or {}
+    degradations: Dict[str, str] = dict(existing) if isinstance(existing, dict) else {}
+
+    missing = _compute_missing_credentials(state, degradations)
+    if not missing:
+        return degradations
+
+    # (purpose_key, value, remember) 收集暂存——副作用后置（见 docstring 幂等命门）。
+    collected: List[Tuple[str, str, bool]] = []
+    for item in missing:
+        purpose_key = item["purpose_key"]
+        purpose = item["purpose"]
+        while True:
+            logger.info(
+                "[%s] credential gate: 缺失凭证，发起 interrupt: purpose_key=%s",
+                NODE_NAME, purpose_key,
+            )
+            # 纪律②：interrupt() 周围严禁 try/except——GraphInterrupt 直通冒泡。
+            resume = interrupt({
+                "interrupt_kind": INTERRUPT_KIND_USER_INPUT,
+                "question": (
+                    f"复现计划声明需要凭证「{purpose_key}」"
+                    f"（用途：{purpose or '计划未说明'}）。"
+                    "请提供该凭证；若确实无法提供，可选择降级为模拟实验。"
+                ),
+                "is_sensitive": True,
+                "purpose_key": purpose_key,
+                # 增量第 5 键：只由 gate 设置（agent 工具路径永不含，红线）。
+                "allow_degrade": True,
+            })
+            if isinstance(resume, dict) and bool(resume.get("degrade")):
+                degradations[purpose_key] = purpose
+                logger.info(
+                    "[%s] credential gate: 用户显式降级为模拟实验: purpose_key=%s",
+                    NODE_NAME, purpose_key,
+                )
+                break
+            if isinstance(resume, dict) and resume.get("value") is not None:
+                value = str(resume.get("value"))
+                if value.strip():
+                    collected.append((purpose_key, value, bool(resume.get("remember"))))
+                    break
+            # 非法 resume（非 dict / 缺 value / 空 value，且非 degrade）→ 非静默，
+            # 重新 interrupt 同一项（while 下一轮；无可重放值时暂停等待用户重填）。
+            logger.warning(
+                "[%s] credential gate: 非法 resume（缺 value 且非 degrade），"
+                "重新 interrupt 同一项: purpose_key=%s, resume_type=%s",
+                NODE_NAME, purpose_key, type(resume).__name__,
+            )
+
+    # 快照内全部项已有着落（gate 本次执行不会再暂停）→ 统一应用副作用。
+    for purpose_key, value, remember in collected:
+        # gate 索要的一律按敏感语义登记（payload is_sensitive=True 契约），
+        # 先登记再落盘：即便落盘失败，本会话 mask 覆盖也已生效（同 B1 范式）。
+        register_sensitive_value(value)
+        if remember:
+            remember_secret(purpose_key, value, is_sensitive=True)
+        else:
+            stash_session_secret(purpose_key, value)
+        logger.info(
+            "[%s] credential gate: 凭证已收集 purpose_key=%s (remember=%s)",
+            NODE_NAME, purpose_key, remember,
+        )
+    return degradations
+
+
+# ---------------------------------------------------------------------------
+# 节点注册面：手写前置门 + 既有 ReAct wrapper 复合（planning 手写复合同范式）
+# ---------------------------------------------------------------------------
+
+# 既有 ReAct wrapper（sp3/sp4 语义原样保留）：GlobalState ↔ ReActState 双向映射 +
+# 子图编译 + 预算扣减。S5-01 起不再直接注册主图，由下方复合函数 coding 委托调用。
+_coding_react = _make_react_wrapper(
     node_name=NODE_NAME,
     build_context=_build_coding_context,
     build_system_prompt=_build_coding_system_prompt,
@@ -473,3 +680,40 @@ coding = _make_react_wrapper(
     max_rounds=REACT_MAX_ROUNDS_CODING,
     result_schema=CODING_OUTPUT_SCHEMA,
 )
+
+
+def coding(state: GlobalState) -> dict:
+    """coding 复合节点 = 凭证前置门（确定性代码）+ 既有 ReAct wrapper（S5-01）。
+
+    graph.py 仍 ``from core.nodes.coding import coding`` 注册，节点名/节点数/
+    边结构零改动。流程：
+        1. ``_credential_gate``：缺凭证 → interrupt#3（GraphInterrupt 直通冒泡，
+           本函数无任何 try/except）；命中 / 已降级 / 无声明 → 零开销直通；
+        2. gate 放行后把（可能新增的）降级标记并入传给 ReAct 的 state 视图——
+           ``_build_coding_context`` 据此注入 HumanMessage 降级摘要（S5-02 义务）；
+        3. ReAct wrapper 原样执行（内部 request_user_input 的 interrupt 同样直通）；
+        4. ``credential_degradations`` 整 dict 单点回写（写入方唯一 = gate；
+           无降级事实且 state 本无该键时不写，保持既有 update 键集零扰动）。
+    """
+    degradations = _credential_gate(state)
+
+    react_state: GlobalState = state
+    if degradations:
+        # 浅拷贝出 ReAct 视图（不就地改 state 入参）：本轮新降级项也要进上下文。
+        react_state = dict(state)  # type: ignore[assignment]
+        react_state["credential_degradations"] = degradations
+
+    update = _coding_react(react_state)
+    if not isinstance(update, dict):
+        update = {}
+    if degradations or state.get("credential_degradations"):
+        update["credential_degradations"] = degradations
+    return update
+
+
+# 既有验收面契约（test_sprint3_d1 CP-D1-2 / test_sprint4_c2 CP-C2-1）把节点 callable
+# 的 __name__/__module__ 钉死为 _make_react_wrapper 产物命名约定。复合 = gate +
+# 同一 wrapper 产物、对外仍是同一注册面，显式继承元数据保持该命名契约（CP-2.2-5）。
+coding.__name__ = _coding_react.__name__          # "react_wrapper_coding"
+coding.__qualname__ = _coding_react.__qualname__
+coding.__module__ = _coding_react.__module__      # "core.react_base"

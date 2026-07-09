@@ -252,13 +252,23 @@ def test_cp_e3_2_form_determination_reuses_reporting():
 
 
 def test_cp_e3_2_full_success_card(tmp_path):
-    """CP-E3-2：full_success 形态 → 结论卡片显示「复现成功」+「不做硬性结论」口径文案。"""
+    """CP-E3-2：full_success 形态 → 结论卡片按 conclusion 两级措辞 +「不做硬性结论」口径。
+
+    sp5 T-S5-3-5 适配（AC-S5-07 口径差同步）：_make_full_success_state 的
+    expected_results 为旧 dict 形态 → goal_checks 全"未验证" → level=engineering →
+    卡片标题「代码跑通（工程复现），论文实验结论未验证」（禁"复现成功"字样）。
+    断言目标从旧卡片「复现成功」换为 engineering 新措辞，语义不弱化（仍断言
+    full_success 形态渲染出结论卡片 + B 档口径）。
+    """
     report = tmp_path / "report.md"
-    report.write_text("# 报告\n复现成功", encoding="utf-8")
+    report.write_text("# 报告\n执行成功", encoding="utf-8")
     at = _run(_make_controller_mock(_make_full_success_state(str(report))))
     assert not at.exception, at.exception
     text = _collect_text(at)
-    assert "复现成功" in text
+    assert "代码跑通（工程复现）" in text
+    assert "论文实验结论未验证" in text
+    # AC-S5-07 红线：engineering 卡片禁"复现成功"字样（报告 md fixture 已避开该词）。
+    assert "复现成功" not in text
     # B 档口径：不做硬性结论判定（Q-S3-01）。
     assert "不做硬性结论" in text or "不做任何硬性" in text
 
@@ -288,10 +298,20 @@ def test_cp_e3_2_degraded_card(tmp_path):
 
 
 def test_cp_e3_2_card_spec_covers_all_three_forms():
-    """CP-E3-2：_FORM_CARD_SPEC 覆盖三形态，各自标题文案正确（防漏形态）。"""
+    """CP-E3-2：_FORM_CARD_SPEC 覆盖三形态（full_success 两级分卡），标题文案正确。
+
+    sp5 T-S5-3-5 适配：full_success 拆 science / engineering 两级卡片（与报告正文
+    _render_full_success 同措辞，AC-S5-07）；断言目标随之更新，语义不弱化（仍防漏形态）。
+    """
     mod = _report_mod()
-    assert set(mod._FORM_CARD_SPEC.keys()) == {"full_success", "code_only", "degraded"}
-    assert "复现成功" in mod._FORM_CARD_SPEC["full_success"][0]
+    assert set(mod._FORM_CARD_SPEC.keys()) == {
+        "full_success_science", "full_success_engineering", "code_only", "degraded",
+    }
+    assert "复现成功（科学复现）" in mod._FORM_CARD_SPEC["full_success_science"][0]
+    # AC-S5-07 红线：engineering 卡片标题/描述均禁"复现成功"字样。
+    eng_title, eng_desc = mod._FORM_CARD_SPEC["full_success_engineering"][:2]
+    assert "代码跑通（工程复现）" in eng_title
+    assert "复现成功" not in eng_title and "复现成功" not in eng_desc
     assert "仅生成代码" in mod._FORM_CARD_SPEC["code_only"][0]
     assert "未成功复现" in mod._FORM_CARD_SPEC["degraded"][0]
 
@@ -339,13 +359,18 @@ def test_cp_e3_3_artifact_and_deliverable_lists():
 
 
 def test_cp_e3_3_fix_loop_rows():
-    """CP-E3-3：修复历程逐轮取数（round/category/summary/strategy），非 dict 项跳过。"""
+    """CP-E3-3：修复历程逐轮取数（round/category/summary/strategy），非 dict 项跳过。
+
+    sp5 T-S5-3-5 适配：error_category 经 humanize 渲染——fixture 的 "runtime_error"
+    不是真实 ErrorCategory 枚举值（真实值为 "runtime"），命中未知值兜底
+    `f"{value}（内部标识）"`（AC-S5-18，原值保留不静默）。断言目标随之更新。
+    """
     mod = _report_mod()
     degraded = _make_degraded_state("/tmp/x.md")
     rows = mod._fix_loop_rows(degraded)
     assert len(rows) == 2
     assert rows[0]["轮次"] == 1
-    assert rows[1]["错误分类 (error_category)"] == "runtime_error"
+    assert rows[1]["错误分类 (error_category)"] == "runtime_error（内部标识）"
     # 鲁棒性：history 含非 dict 项 / 为 None。
     assert mod._fix_loop_rows({"fix_loop_history": [None, "x", {"round_number": 9}]})[0]["轮次"] == 9
     assert mod._fix_loop_rows({}) == []
@@ -376,9 +401,13 @@ def test_cp_e3_3_degraded_sections_rendered(tmp_path):
     assert not at.exception, at.exception
     text = _collect_text(at)
     assert "降级原因" in text
+    # sp5 T-S5-3-5 适配：降级节点渲染为"执行验证（execution）"（中文 + 括注内部名），
+    # 内部名锚点保留，原断言不变。
     assert "execution" in text  # degraded_nodes
     assert "ImportError" in text  # execution_result.errors
-    assert "export_code" in text  # user_fix_decision
+    # sp5 T-S5-3-5 适配：user_fix_decision 经 humanize 渲染为"导出代码（降级交付）"，
+    # 断言目标从内部值 "export_code" 换为中文文案，语义不弱化（仍断言决策已渲染）。
+    assert "导出代码" in text  # user_fix_decision（export_code 的 humanize 文案）
     assert "CUDA OOM" in text  # fix_loop_history 第二轮摘要
     assert "保留" in text or "产物清单" in text  # 保留产物 / artifact
 

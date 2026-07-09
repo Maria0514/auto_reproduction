@@ -52,7 +52,9 @@ from config import (
     DEV_LOOP_MIN_CALLS_PER_ROUND,
     MAX_DEV_LOOP_LLM_CALLS,
     MAX_FIX_LOOP_COUNT,
+    REACT_EXECUTION_ROUNDS_MARGIN,
     REACT_MAX_ROUNDS_EXECUTION,
+    REACT_MAX_ROUNDS_EXECUTION_CAP,
 )
 from core.errors import SandboxCreationError, make_node_error
 from core.llm_client import create_llm, resolve_llm_config
@@ -761,6 +763,10 @@ class _SandboxRunCollector:
 
     prep_results: List[SandboxPrepareResult] = field(default_factory=list)
     run_results: List[SandboxRunResult] = field(default_factory=list)
+    # P5（sp5 S5-06 台账雏形）：逐条真实执行的 (step_index, command, exit_code)。
+    # step_index 是 agent 经 run_in_sandbox 声明的计划步骤归属标签（0 起；-1 =
+    # 未声明/计划外）；归属合法性校验与对账（_reconcile_steps）属 T-S5-2-4。
+    step_ledger: List[Tuple[int, List[str], int]] = field(default_factory=list)
 
 
 def _tool_json(payload: Dict[str, Any]) -> str:
@@ -849,6 +855,11 @@ def make_prepare_environment_tool(
             "python_exe": prep.python_exe,
             "venv_dir": prep.venv_dir,
             "install_failed_packages": [str(p) for p in (prep.install_failed_packages or [])],
+            # P6（sp5 S5-10 key_packages 修复前置）：env_info（python_version /
+            # key_packages）随工具返回 JSON 带出，使 messages 回读可重建（R-S4-10
+            # 回读为权威时不再被空占位覆盖；回读解析属 T-S5-2-6）。仅 ToolMessage
+            # 内容，不进 Prompt Cache 前缀；经 _tool_json 统一序列化（禁 str(dict)）。
+            "env_info": {str(k): str(v) for k, v in (prep.env_info or {}).items()},
             "error": (mask_value(_tail(prep.error)) or None) if prep.error else None,
         })
 
@@ -889,16 +900,23 @@ def make_run_in_sandbox_tool(
         return None
 
     @tool
-    def run_in_sandbox(command: str) -> str:
+    def run_in_sandbox(command: str, step_index: int = -1) -> str:
         """在已准备好的沙箱 venv 中执行一条命令，返回真实执行结果。
 
         入参为单条命令字符串（如 "python train.py --epochs 1"）。支持顶层
         `&&` / `;` 复合命令、`cd`（限工作区内，越界拒绝）、裸 python/pip 自动
-        改写为 venv 解释器、通配符展开；不经过 shell。返回 JSON：exit_code
+        改写为 venv 解释器、通配符展开；不经过 shell。执行复现计划第 i 步
+        （execution_steps 下标，从 0 起）时传 step_index=i 声明该命令的步骤
+        归属；计划外命令（调试/兜底）省略该参数即可。返回 JSON：exit_code
         （首个非 0 子命令的退出码，全 0 则 0）/ timed_out / results（逐子命令
         command、exit_code、stdout_tail、stderr_tail）。请根据 exit_code 与
         stderr_tail 决定下一步，一次只执行一条命令。
         """
+        # 归属标签防御性归一（agent 可能传非法值；台账只收 int，非法回落 -1）。
+        try:
+            declared_step = int(step_index)
+        except (TypeError, ValueError):
+            declared_step = -1
         try:
             python_exe = _resolve_python_exe()
             if not python_exe:
@@ -934,6 +952,10 @@ def make_run_in_sandbox_tool(
             )
 
         collector.run_results.extend(results)  # R-S4-01：真实 dataclass 进收集器
+        for rr in results:  # P5 台账雏形：逐条 (step_index, command, exit_code)
+            collector.step_ledger.append(
+                (declared_step, [str(c) for c in (rr.command or [])], rr.exit_code)
+            )
         if not results:
             return _tool_error_json(
                 "命令为空或无可执行子命令", exit_code=-1, results=[], timed_out=False,
@@ -962,7 +984,7 @@ _EXECUTION_SYSTEM_PROMPT_BODY = """你是复现执行工程师，负责在隔离
 
 可用工具：
 - prepare_environment(): 在工作目录下创建隔离 venv 并安装复现计划声明的依赖。任何 run_in_sandbox 之前必须先调用一次。
-- run_in_sandbox(command): 在沙箱 venv 中执行一条命令，返回真实 exit_code 与 stdout/stderr 尾部。支持顶层 && / ; 复合与 cd（限工作区内），裸 python/pip 自动指向 venv 解释器。
+- run_in_sandbox(command, step_index): 在沙箱 venv 中执行一条命令，返回真实 exit_code 与 stdout/stderr 尾部。支持顶层 && / ; 复合与 cd（限工作区内），裸 python/pip 自动指向 venv 解释器。执行计划第 i 步（下标从 0 起）时以 step_index=i 声明归属；计划外命令（调试/兜底）不带该参数即可。
 - request_user_input(question, is_sensitive, purpose_key): 缺少继续执行所需的信息（凭证/参数/路径）时向用户索要一条信息。必须单独一轮调用（不与其他工具放在同一轮 tool_calls），且尽量在执行训练等重活之前问。
 
 工作纪律：
@@ -970,7 +992,7 @@ _EXECUTION_SYSTEM_PROMPT_BODY = """你是复现执行工程师，负责在隔离
 2. 按 execution_steps 逐条执行：每条命令跑完先检查返回 JSON 的 exit_code / stderr_tail 再决定下一步；一次只跑一条命令。
 3. 识别到认证失败 / 缺凭证迹象（authentication failed、401 unauthorized、403 forbidden、could not read username、terminal prompts disabled 等）时，立即调 request_user_input（is_sensitive=true，给出合适的 purpose_key，如 "git_credential:github.com" / "hf_token"）索取凭证后重试，不要反复盲试。
 4. 命令失败时可做少量有把握的就地修正（如补装缺失包、修正相对路径）后重试；无法解决时如实收尾，交由编排层分类处理。
-5. 预算意识：max_rounds=10；不要重复执行同一条命令空转。
+5. 预算意识：推理轮数有限，本次实际可用轮数以 HumanMessage 上下文中的 max_rounds 数字为准；不要重复执行同一条命令空转。
 
 成功判定纪律（强约束）：
 - 你不判定复现是否成功——成功与否由编排层基于工具执行的真实 exit_code 与指标做确定性判定。
@@ -995,13 +1017,24 @@ class ExecAgentOutput:
     - prep / run_results：工具执行的**真实** sandbox 结果（收集器 + messages 回读
       合并，非 agent 自述）；prep 取最后一次 prepare（agent 可能重试）；
     - rounds_used：子图实际 round（与 wrapper 同口径 max(1, round)；降级路径 0）；
-    - llm_calls：子图内 LLM 调用数（= rounds_used，喂 _dev_loop_llm_calls 累加）。
+    - llm_calls：子图内 LLM 调用数（= rounds_used，喂 _dev_loop_llm_calls 累加）；
+    - step_ledger（sp5 S5-06，T-S5-2-4 消费）：收集器台账 (step_index, command,
+      exit_code) 原样透传，供 _reconcile_steps 做确定性步骤对账。保真注记
+      （R-S4-10 同机理）：interrupt#3 resume 后收集器重建，pre-interrupt 台账段
+      丢失——丢失段的 runs 无声明标签，走归属规则②（归一匹配）兜底；全零归属
+      由 R-2 保守语义（attribution_unavailable）兜底，不误标未执行。
+    - budget_truncated（sp5 S5-06，T-S5-2-5）：轮次预算截断显式标记（Q-S5-7 确定性
+      代理判据 rounds_used >= effective_max_rounds ⇔ force_finish 截断路径）；
+      _run_execution_agent 单点产出（架构 §8 总表），随 exec_result 一次 commit。
+      带默认值 False：降级路径（rounds_used=0）与既有构造点天然为 False。
     """
 
     prep: Optional[SandboxPrepareResult]
     run_results: List[SandboxRunResult]
     rounds_used: int
     llm_calls: int
+    step_ledger: List[Tuple[int, List[str], int]] = field(default_factory=list)
+    budget_truncated: bool = False
 
 
 def _format_execution_task_context() -> str:
@@ -1023,6 +1056,25 @@ def _build_execution_system_prompt() -> str:
     )
 
 
+def _effective_max_rounds(plan: Optional[Dict[str, Any]]) -> int:
+    """预算联动公式（sp5 S5-06，Q-S5-7 / AC-S5-12，确定性 helper 零 LLM）。
+
+    effective_max_rounds = clamp(len(execution_steps) + K, FLOOR, CAP)：
+        - K = REACT_EXECUTION_ROUNDS_MARGIN（prepare 1 + 收尾 <result> 1 + 兜底 3）；
+        - FLOOR = REACT_MAX_ROUNDS_EXECUTION（值 10 不变，sp5 语义收窄为下限）；
+        - CAP = REACT_MAX_ROUNDS_EXECUTION_CAP（= MAX_DEV_LOOP_LLM_CALLS/2，
+          保证初跑耗尽 CAP 后修复循环子预算仍容一个完整回合，账本对账见架构 §3）。
+
+    防御：plan 非 dict / execution_steps 非 list → 按 0 步计（回落 FLOOR），不炸。
+    """
+    steps = plan.get("execution_steps") if isinstance(plan, dict) else None
+    n_steps = len(steps) if isinstance(steps, list) else 0
+    return max(
+        int(REACT_MAX_ROUNDS_EXECUTION),
+        min(n_steps + int(REACT_EXECUTION_ROUNDS_MARGIN), int(REACT_MAX_ROUNDS_EXECUTION_CAP)),
+    )
+
+
 def _build_execution_agent_context(
     state: GlobalState,
     work_dir: str,
@@ -1032,12 +1084,17 @@ def _build_execution_agent_context(
 
     修复回合（fix_loop_count > 0 且已有上一轮 execution_result）注入摘要级反馈，
     帮助 agent 避开上一轮已知错误（stderr 尾部裁剪防撑爆 context）。
+
+    P3（sp5 R-PC4）：轮次预算数字从 system prompt 主体迁出、经本动态通道注入
+    （主体只留非数字表述）。T-S5-2-5 起为 _effective_max_rounds(plan) 联动值
+    ——同一 plan 确定性产出，动态值走动态通道，字节幂等不破坏稳定前缀。
     """
     plan = plan if isinstance(plan, dict) else {}
     payload: Dict[str, Any] = {
         "work_dir": work_dir,
         "execution_steps": plan.get("execution_steps"),
         "environment": plan.get("environment"),
+        "max_rounds": int(_effective_max_rounds(plan)),
     }
     fix_count = state.get("fix_loop_count", 0) or 0
     exec_result = state.get("execution_result")
@@ -1144,8 +1201,13 @@ def _rebuild_run_results_from_messages(
 def _rebuild_prep_results_from_messages(
     react_messages: Optional[List[BaseMessage]],
 ) -> List[SandboxPrepareResult]:
-    """从子图 messages 回读 prepare_environment 结果序列（字段保真弱于收集器：
-    install_log / pip_exe / env_info 不在工具返回 JSON 内，回读为空占位）。"""
+    """从子图 messages 回读 prepare_environment 结果序列。
+
+    sp5 T-S5-2-6（S5-10 key_packages 修复）：P6 起工具返回 payload 带 env_info
+    （python_version / key_packages），回读随之重建——R-S4-10"回读为权威"合并
+    不再用空占位覆盖收集器真值（恒空根因，架构 §7.10）。install_log / pip_exe
+    仍不在工具返回 JSON 内，回读为空占位（保真弱于收集器）。失败 ToolMessage
+    过滤 + 零成功记录 WARNING 纪律（BUG-S1-02/03）不变。"""
     out: List[SandboxPrepareResult] = []
     saw_tool_message = False
     for msg in react_messages or []:
@@ -1157,12 +1219,16 @@ def _rebuild_prep_results_from_messages(
             continue
         if "success" not in payload:
             continue
+        raw_env = payload.get("env_info")
         out.append(SandboxPrepareResult(
             success=bool(payload.get("success")),
             venv_dir=str(payload.get("venv_dir") or ""),
             python_exe=str(payload.get("python_exe") or ""),
             pip_exe="",
-            env_info={},
+            env_info=(
+                {str(k): str(v) for k, v in raw_env.items()}
+                if isinstance(raw_env, dict) else {}
+            ),
             install_log="",
             install_failed_packages=[
                 str(p) for p in (payload.get("install_failed_packages") or [])
@@ -1254,17 +1320,20 @@ def _run_execution_agent(
         human_text = json.dumps(context, ensure_ascii=False, sort_keys=True, default=str)
         initial_messages.append(HumanMessage(content=human_text))
 
+        # sp5 T-S5-2-5（Q-S5-7）：轮次预算与计划步数联动（确定性 helper，两处消费点
+        # 同源同值；HumanMessage 内 max_rounds 数字亦出自同一 helper，见装配项 2）。
+        effective_max_rounds = _effective_max_rounds(plan)
         subgraph = create_react_subgraph(
             node_name=NODE_NAME,
             system_prompt=system_prompt,
             tools=tools,
-            max_rounds=REACT_MAX_ROUNDS_EXECUTION,
+            max_rounds=effective_max_rounds,
         )
         # 装配项 3：ReActState 初始化。
         initial: Dict[str, Any] = {
             "messages": initial_messages,
             "round": 0,
-            "max_rounds": REACT_MAX_ROUNDS_EXECUTION,
+            "max_rounds": effective_max_rounds,
             "status": "reasoning",
             "result": None,
             "context": {"_llm": llm},
@@ -1290,6 +1359,19 @@ def _run_execution_agent(
         if isinstance(final_state, dict) else 1
     )
 
+    # sp5 T-S5-2-5（Q-S5-7 / AC-S5-12）：截断显式化，零 react_base 改动的确定性
+    # 代理判据——budget_check 在 round >= max_rounds-1 触发、force_finish 再 +1 轮，
+    # 故 rounds_used >= effective_max_rounds ⇔ 走了 force_finish 截断路径
+    # （正常收尾 round 恒 <= max_rounds-1）。"任何预算截断必须显式 log + state 记录"
+    # 项目通则的 sp5 首个落点：INFO 日志在此，state 记录经 exec_result 一次 commit。
+    budget_truncated = rounds_used >= effective_max_rounds
+    if budget_truncated:
+        logger.info(
+            "[%s] 轮次预算截断（budget_truncated）: rounds_used=%d >= effective_max_rounds=%d"
+            "（force_finish 收尾），标记随 execution_result 落盘（AC-S5-12）",
+            NODE_NAME, rounds_used, effective_max_rounds,
+        )
+
     # R-S4-10：messages 回读为权威序列（跨 interrupt 完整），收集器提供尾段全保真。
     run_results = _merge_with_collector(
         _rebuild_run_results_from_messages(final_messages),
@@ -1313,7 +1395,210 @@ def _run_execution_agent(
         run_results=run_results,
         rounds_used=rounds_used,
         llm_calls=rounds_used,
+        step_ledger=list(collector.step_ledger),
+        budget_truncated=budget_truncated,
     )
+
+
+# ---------------------------------------------------------------------------
+# 步骤 4.5（sp5 S5-10，T-S5-2-6）：多组指标确定性收编（架构 §7.10）
+# ---------------------------------------------------------------------------
+
+# 顶层 str 字段收编长度上限：超长视为日志/长文本混入，跳过不收（防污染对比表）。
+_GROUP_METRIC_STR_MAX_LEN: int = 120
+
+
+def _collect_grouped_metrics(work_dir: str) -> Dict[str, Dict[str, Any]]:
+    """步骤 4.5：扫描 ``<work_dir>/outputs/**/summary.json`` 收编多组实验指标。
+
+    确定性纯函数（零 LLM），架构 §7.10 裁决（文件扫描约定，弃"扩展 <METRICS>
+    多块"方案）：
+        - 组名 = summary.json 相对 outputs/ 的父目录 POSIX 路径（回归样本即
+          evoskills_smoke / baselines/no_skill / baselines/self_generated）；
+        - 每文件只收**顶层**数值/布尔/短字符串字段——深层嵌套 dict/list/None/
+          超长 str 跳过（与档 1 _extract_metrics_block 同口径，防嵌套大对象
+          污染对比表）；
+        - 既有 <METRICS> 三档主通道语义零改动（metrics 仍是主实验指标，本函数
+          产出独立落 ExecutionResult.metrics_groups）。
+
+    容错（CP-2.6-2）：无 outputs 目录 → ``{}``；损坏 JSON / 顶层非 dict / 读取
+    失败 → 容忍跳过 + WARNING（非静默吞错）。str 值过 ``mask_value`` 后落 state
+    （生成代码的输出理论上可能内嵌敏感值，脱敏出口纪律同 §9.3）；文件按路径
+    排序遍历，产出确定性。
+    """
+    groups: Dict[str, Dict[str, Any]] = {}
+    if not work_dir:
+        return groups
+    outputs_dir = Path(work_dir) / "outputs"
+    if not outputs_dir.is_dir():
+        return groups
+    for path in sorted(outputs_dir.rglob("summary.json")):
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            logger.warning(
+                "[%s] 多组指标收编：summary.json 读取/解析失败，容忍跳过 %s: %s",
+                NODE_NAME, path, exc,
+            )
+            continue
+        if not isinstance(parsed, dict):
+            logger.warning(
+                "[%s] 多组指标收编：summary.json 顶层非 dict（%s），容忍跳过 %s",
+                NODE_NAME, type(parsed).__name__, path,
+            )
+            continue
+        fields: Dict[str, Any] = {}
+        for k, v in parsed.items():
+            if isinstance(v, (bool, int, float)):
+                fields[str(k)] = v
+            elif isinstance(v, str) and len(v) <= _GROUP_METRIC_STR_MAX_LEN:
+                fields[str(k)] = mask_value(v) or ""
+            # 其余（dict/list/None/超长 str）：只收顶层标量，跳过。
+        groups[path.parent.relative_to(outputs_dir).as_posix()] = fields
+    return groups
+
+
+# ---------------------------------------------------------------------------
+# 步骤 4.6（sp5 S5-06，T-S5-2-4）：确定性步骤对账（架构 §2 Q-S5-6 / §7.6 / §10.1 R-2）
+# ---------------------------------------------------------------------------
+# 产品红线：执行事实不得来自 agent 单方声明——agent <result> 自报的"已执行步数"
+# 字段仅供参考，**绝不进入本区段任何函数**（该字段名在本模块源码中只出现在 prompt
+# 常量内，无任何代码消费点——CP-2.4-4 结构守门）。对账事实源 = 编排层工具台账
+# （step_ledger）+ 真实 run_results。
+
+
+def _normalize_argv_for_match(argv: Any) -> Tuple[str, ...]:
+    """归属规则②的命令归一（计划侧与执行侧对称使用，确定性纯函数）。
+
+    复用 ``_rewrite_interpreter`` 同套改写（裸 python/python3/py → 统一 "python"、
+    pip/pip3 → python -m pip），并把**解释器绝对路径**（执行侧 argv[0] 已被工具改写
+    为 venv python 路径，即"改路径"；pip → python -m pip 即"补参"）折叠为 basename
+    后归一——使 "python train.py"（计划）与 ["/w/.venv/bin/python3.11", "train.py"]
+    （真实执行）归一后精确相等。非解释器 head（bash / ./run.sh 等）不做路径折叠，
+    避免跨目录同名脚本误归属（误报防线优先）。
+    """
+    toks = [str(t) for t in (argv or []) if str(t)]
+    if not toks:
+        return ()
+    base = Path(toks[0]).name
+    if base.startswith("python") or base in ("py", "pip", "pip3"):
+        # python3.11 等变体统一折叠为 "python"；py/pip/pip3 交给 _rewrite_interpreter。
+        head = "python" if base.startswith("python") else base
+        toks = [head] + toks[1:]
+    return tuple(_rewrite_interpreter(toks, "python"))
+
+
+def _step_display_name(step: Any, index: int) -> str:
+    """未执行清单条目的展示名：step_name 优先，缺失回落 command 串，再缺退位序号。"""
+    if isinstance(step, dict) and step.get("step_name"):
+        return str(step["step_name"])
+    return _extract_command_str(step) or f"step_{index}"
+
+
+def _reconcile_steps(
+    plan_steps: Optional[List[Any]],
+    run_results: List[SandboxRunResult],
+    step_ledger: Optional[List[Tuple[int, List[str], int]]] = None,
+) -> Dict[str, Any]:
+    """计划步骤 vs 真实执行的确定性对账（Q-S5-6，100% 确定性代码计算）。
+
+    归属三级（优先级从上到下，作用于 effective runs——同命令最后一次，L-E4-01 口径）：
+        ① 台账条目带合法 step_index（0 <= idx < planned）→ 声明归属；越界丢弃 +
+           WARNING（idx == -1 是"未声明"哨兵，不告警）；同命令多次声明以最后一次为准
+           （与 effective runs 同向的确定性 tie-break）；
+        ② 无标签条目与计划步骤 command 同套归一（_split_top_level 拆顶层 && / ; +
+           _normalize_argv_for_match）后精确匹配 → 归属（cd/source 子命令不参与——
+           执行侧本就不产生 run）；
+        ③ 仍不匹配 → extra_commands 计划外命令（不折算步骤）。
+    "已完成" = 该步归属的全部 effective run exit_code==0（复合 && 步骤产生多条台账，
+    须全 0 才算完成）。
+
+    R-2 保守语义（误报防线优先于命中）：全零归属 ∧ run_results 非空 ∧ planned > 0
+    → attribution_unavailable=True 且 unexecuted_steps 置空——"无法归属 ≠ 未执行"，
+    下游 incomplete_execution 标注规则（架构 §7.4：存在未执行步骤 ∨ budget_truncated）
+    自然不点火；原始命令如实保留在 extra_commands 供报告展示。
+
+    脱敏出口②（架构 §9.3）：extra_commands 与 unexecuted_steps 内命令串/步骤名
+    一律过 mask_value 后落 state（命令可能内嵌 token）。
+
+    产品红线：agent <result> 自报的"已执行步数"不是本函数入参，不参与任何判定。
+    """
+    steps = list(plan_steps or [])
+    planned = len(steps)
+    effective = _effective_runs(list(run_results or []))
+
+    # 归属规则①：台账合法声明 map（命令 tuple → step_index，最后一次声明为准）。
+    declared: Dict[Tuple[str, ...], int] = {}
+    for entry in step_ledger or []:
+        try:
+            idx_raw, cmd, _exit = entry
+            idx = int(idx_raw)
+        except (TypeError, ValueError):
+            logger.warning("[%s] 对账台账条目畸形，丢弃: %r", NODE_NAME, entry)
+            continue
+        if idx == -1:
+            continue  # 未声明（计划外/无标签），交给规则②/③
+        if not (0 <= idx < planned):
+            logger.warning(
+                "[%s] 对账台账 step_index 越界丢弃: index=%d planned=%d cmd=%s",
+                NODE_NAME, idx, planned,
+                mask_value(" ".join(str(c) for c in (cmd or []))) or "",
+            )
+            continue
+        declared[tuple(str(c) for c in (cmd or []))] = idx
+
+    # 归属规则②：计划步骤命令归一索引（冲突时归属靠前步骤，确定性）。
+    plan_index: Dict[Tuple[str, ...], int] = {}
+    for i, step in enumerate(steps):
+        cmd_str = _extract_command_str(step)
+        if not cmd_str:
+            continue
+        for argv, _conn in _split_top_level(cmd_str):
+            if not argv or argv[0] in ("cd", "source", "."):
+                continue
+            key = _normalize_argv_for_match(argv)
+            if key and key not in plan_index:
+                plan_index[key] = i
+
+    step_runs: Dict[int, List[SandboxRunResult]] = {}
+    extra_commands: List[str] = []
+    for r in effective:
+        cmd_t = tuple(str(c) for c in (r.command or []))
+        if cmd_t in declared:  # ① 声明归属
+            step_runs.setdefault(declared[cmd_t], []).append(r)
+            continue
+        key = _normalize_argv_for_match(list(cmd_t))
+        if key in plan_index:  # ② 归一精确匹配兜底
+            step_runs.setdefault(plan_index[key], []).append(r)
+            continue
+        extra_commands.append(" ".join(cmd_t))  # ③ 计划外命令
+
+    completed = sum(
+        1 for runs in step_runs.values() if all(rr.exit_code == 0 for rr in runs)
+    )
+    attribution_unavailable = bool(effective) and not step_runs and planned > 0
+    if attribution_unavailable:
+        logger.warning(
+            "[%s] 步骤对账全零归属（planned=%d, effective_runs=%d）→ "
+            "attribution_unavailable 保守语义：不标注未执行步骤，原始命令清单如实保留（R-2）",
+            NODE_NAME, planned, len(effective),
+        )
+        unexecuted: List[Dict[str, Any]] = []
+    else:
+        unexecuted = [
+            {"index": i, "step_name": mask_value(_step_display_name(steps[i], i)) or ""}
+            for i in range(planned)
+            if i not in step_runs
+        ]
+
+    return {
+        "planned": planned,
+        "executed": len(step_runs),
+        "completed": completed,
+        "unexecuted_steps": unexecuted,
+        "extra_commands": [mask_value(c) or "" for c in extra_commands],
+        "attribution_unavailable": attribution_unavailable,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1352,6 +1637,10 @@ def _build_execution_result(
     feedback: ExecutionFeedback,
     metrics: Dict[str, Any],
     work_dir: str,
+    step_reconciliation: Optional[Dict[str, Any]] = None,
+    degraded_credentials: Optional[List[str]] = None,
+    budget_truncated: bool = False,
+    metrics_groups: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> ExecutionResult:
     """构造 ExecutionResult，B 档 success = (exit 全 0) and len(metrics) >= 1。
 
@@ -1360,7 +1649,13 @@ def _build_execution_result(
     - logs 回 state 前统一 ``mask_value``（sp4 §9.4 落点：install_log + stdout/stderr
       原文在此收口脱敏，AC-S4-11）；
     - L-E4-01：exit_ok 对 effective runs（同命令最后一次）求 all-0；
-      logs 聚合与 runtime_seconds 仍用全量 run_results（失败证据/真实耗时不丢）。
+      logs 聚合与 runtime_seconds 仍用全量 run_results（失败证据/真实耗时不丢）；
+    - sp5 T-S5-2-4/2-5/2-6（幂等纪律③）：step_reconciliation / degraded_credentials /
+      budget_truncated / metrics_groups 由调用方在本函数**之前**算好传入，随
+      exec_result 一次 commit——guard 命中路径复用已落盘结果即含新字段，零重算；
+      guard / _map_execution_result 均不二次写入。budget_truncated 判据单点在
+      _run_execution_agent（Q-S5-7）、metrics_groups 产出单点在
+      _collect_grouped_metrics（步骤 4.5），本函数只透传落盘 + 默认值兜底。
     """
     prep_ok = bool(prep.success) if prep is not None else bool(run_results)
     exit_ok = prep_ok and all(r.exit_code == 0 for r in _effective_runs(run_results))
@@ -1391,6 +1686,10 @@ def _build_execution_result(
         artifacts=artifacts,
         runtime_seconds=float(sum(r.duration_seconds for r in run_results)),
         environment_info=dict(prep.env_info or {}) if prep is not None else {},
+        step_reconciliation=dict(step_reconciliation or {}),
+        degraded_credentials=list(degraded_credentials or []),
+        budget_truncated=bool(budget_truncated),
+        metrics_groups=dict(metrics_groups or {}),
     )
 
 
@@ -1752,6 +2051,10 @@ def execution(state: GlobalState) -> dict:
                 f"[error_category={feedback.category.value}] {feedback.summary}"
             ],
             artifacts=[], runtime_seconds=0.0, environment_info={},
+            # sp5 T-S5-2-6：降级路径构造点同步补齐 4 新键默认值（架构 §8 R-6，
+            # 未进 sandbox——对账/截断/分组/降级快照均为空默认）。
+            step_reconciliation={}, budget_truncated=False,
+            metrics_groups={}, degraded_credentials=[],
         )
         updates = _map_execution_result(exec_result, feedback, state)
         return _mark_degraded_for_report(updates, state, reason="missing_code_output_dir")
@@ -1772,8 +2075,31 @@ def execution(state: GlobalState) -> dict:
     # 步骤 4：metrics 三档解析（档 3 LLM 抽取按实际次数回写预算）。
     metrics, llm_calls_used = _parse_metrics(run_results, plan, state)
 
-    # 步骤 5：构造 ExecutionResult + B 档 success。
-    exec_result = _build_execution_result(prep, run_results, feedback, metrics, work_dir)
+    # 步骤 4.5（sp5 S5-10，T-S5-2-6）：多组指标确定性收编（零 LLM；<METRICS> 三档
+    # 主通道语义不变——metrics 仍是主实验指标，metrics_groups 按 outputs/ 目录分组）。
+    # 幂等纪律③同 4.6：在 _build_execution_result 之前算好、随 exec_result 一次
+    # commit，guard 命中路径复用已落盘结果零重算。
+    metrics_groups = _collect_grouped_metrics(work_dir)
+
+    # 步骤 4.6（sp5 S5-06，T-S5-2-4/2-5）：确定性步骤对账 + 降级凭证快照 + 截断标记。
+    # 幂等纪律③（架构 §9.2）：必须在 _build_execution_result 之前完成、随 exec_result
+    # 一次 commit；guard 命中路径（复用已落盘 execution_result）即含新字段，零重算。
+    step_reconciliation = _reconcile_steps(
+        plan.get("execution_steps") or [], run_results, agent_out.step_ledger,
+    )
+    # AC-S5-03 第②落点：同点快照 coding gate 的降级凭证 purpose_key（.get() 防御读，
+    # 兼容旧 checkpoint 无该键；只存 purpose_key，天然无敏感值，架构 §9.3）。
+    degraded_credentials = sorted((state.get("credential_degradations") or {}).keys())
+
+    # 步骤 5：构造 ExecutionResult + B 档 success（budget_truncated 判据与 INFO 日志
+    # 单点在 _run_execution_agent，此处只随 exec_result 透传落盘，AC-S5-12）。
+    exec_result = _build_execution_result(
+        prep, run_results, feedback, metrics, work_dir,
+        step_reconciliation=step_reconciliation,
+        degraded_credentials=degraded_credentials,
+        budget_truncated=agent_out.budget_truncated,
+        metrics_groups=metrics_groups,
+    )
 
     # 步骤 6：单点 read-modify-write 写 state（落点 B 唯一扣减点：子图 rounds + metrics 抽取，§4.4；
     # 降级路径 rounds_used=0 → 零扣减，与 guard 命中同口径）。

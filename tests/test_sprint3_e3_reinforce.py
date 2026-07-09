@@ -254,7 +254,12 @@ def test_render_no_hard_judgement_except_negation(form, tmp_path):
 # 4. 指标对比表：三方并集 / 无 baseline / 缺值 / 脏数据 / degraded 也展示
 # =========================================================================== #
 def test_metric_rows_union_three_sources_with_gaps():
-    """三方指标名并集：repro 有 a+b、baseline 仅 a、expected 仅 b → 行为 {a,b}，缺值 None。"""
+    """两方指标名并集：repro 有 a+b、baseline 仅 a → 行为 {a,b}，缺值 None。
+
+    sp5 T-S5-3-5 适配（AC-S5-09 口径差同步）：对比表删"计划 expected"列（S5-05
+    计划预期定性化，报告正文 _comparison_table 已同步删列），并集从三方降为两方
+    （repro ∪ baseline）；expected_results 保留在 fixture 里以断言其不再进表。
+    """
     mod = _report_mod()
     state = {
         "execution_result": {"metrics": {"a": 0.1, "b": 0.2}},
@@ -266,24 +271,34 @@ def test_metric_rows_union_three_sources_with_gaps():
     assert names == {"a", "b"}
     row_a = next(r for r in rows if r["指标 (Metric)"] == "a")
     row_b = next(r for r in rows if r["指标 (Metric)"] == "b")
-    assert row_a["论文 baseline"] == 0.11 and row_a["计划 expected"] is None
-    assert row_b["计划 expected"] == 0.22 and row_b["论文 baseline"] is None
+    assert row_a["论文 baseline"] == 0.11
+    assert row_b["论文 baseline"] is None and row_b["本次复现值"] == 0.2
+    # AC-S5-09：删"计划 expected"列——任何行都不得再出现该列。
+    for r in rows:
+        assert "计划 expected" not in r
 
 
 def test_metric_rows_no_baseline_only_expected_and_repro():
-    """无 baseline，仅 expected + 复现 → 仍构造行，baseline 列 None。"""
+    """无 baseline，仅复现（expected 不进表）→ 仍构造行，baseline 列 None。
+
+    sp5 T-S5-3-5 适配（AC-S5-09）：删"计划 expected"列，expected_results 保留在
+    fixture 里以断言其不再进表。
+    """
     mod = _report_mod()
     state = {"execution_result": {"metrics": {"acc": 0.9}},
              "reproduction_plan": {"expected_results": {"acc": 0.91}}}
     rows = mod._metric_comparison_rows(state)
     assert len(rows) == 1
     assert rows[0]["论文 baseline"] is None
-    assert rows[0]["计划 expected"] == 0.91
     assert rows[0]["本次复现值"] == 0.9
+    assert "计划 expected" not in rows[0]
 
 
 def test_metric_rows_dirty_sources_defensive():
-    """脏数据：baseline / expected 非 dict（字符串/None）→ 不抛，对应列 None。"""
+    """脏数据：baseline 非 dict（字符串）/ expected None → 不抛，baseline 列 None。
+
+    sp5 T-S5-3-5 适配（AC-S5-09）：删"计划 expected"列，脏 expected 不再参与构表。
+    """
     mod = _report_mod()
     state = {
         "execution_result": {"metrics": {"acc": 0.9}},
@@ -293,8 +308,8 @@ def test_metric_rows_dirty_sources_defensive():
     rows = mod._metric_comparison_rows(state)
     assert len(rows) == 1
     assert rows[0]["论文 baseline"] is None
-    assert rows[0]["计划 expected"] is None
     assert rows[0]["本次复现值"] == 0.9
+    assert "计划 expected" not in rows[0]
 
 
 def test_metric_rows_none_state_returns_empty():
@@ -398,7 +413,9 @@ def test_fix_loop_rows_multi_round_and_dirty_items():
     rows = mod._fix_loop_rows({"fix_loop_history": hist})
     assert len(rows) == 2
     assert [r["轮次"] for r in rows] == [1, 2]
-    assert rows[1]["错误分类 (error_category)"] == "runtime_error"
+    # sp5 T-S5-3-5 适配：error_category 经 humanize——fixture 的 "runtime_error"
+    # 非真实枚举值（真实为 "runtime"），命中未知值兜底文案（AC-S5-18，原值保留）。
+    assert rows[1]["错误分类 (error_category)"] == "runtime_error（内部标识）"
 
 
 def test_fix_loop_rows_empty_history():

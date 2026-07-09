@@ -82,12 +82,20 @@ def _make_controller_mock(
     state: Optional[Dict] = None,
     is_interrupted: bool = False,
     worker_error: Optional[Exception] = None,
+    interrupt_payload: Optional[Dict] = None,
 ) -> MagicMock:
-    """构造 GraphController mock：脚本化 poll_state / is_interrupted / get_worker_error。"""
+    """构造 GraphController mock：脚本化 poll_state / is_interrupted / get_worker_error。
+
+    [S5-08 适配] case④ 现按 get_interrupt_payload 的 kind 分发路由：默认显式置 None
+    （planning 旧形态，payload 无 interrupt_kind 键）→ 仍落 review 页，与既有断言语义
+    一致；若不显式置值，MagicMock 默认返回 truthy Mock，虽因"未知 kind → review 兜底"
+    仍通过，但 mock 不再忠实建模 planning 形态。
+    """
     controller = MagicMock()
     controller.poll_state.return_value = state
     controller.is_interrupted.return_value = is_interrupted
     controller.get_worker_error.return_value = worker_error
+    controller.get_interrupt_payload.return_value = interrupt_payload
     return controller
 
 

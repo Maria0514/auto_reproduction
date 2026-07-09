@@ -33,6 +33,7 @@ if str(PROJECT_ROOT) not in sys.path:
 coding_module = importlib.import_module("core.nodes.coding")
 
 _CODING_SYSTEM_PROMPT_BODY = coding_module._CODING_SYSTEM_PROMPT_BODY
+_CODING_HONESTY_SECTION = coding_module._CODING_HONESTY_SECTION
 _build_coding_system_prompt = coding_module._build_coding_system_prompt
 _build_coding_context = coding_module._build_coding_context
 
@@ -169,9 +170,12 @@ def test_cp_f3_1_two_papers_system_prompt_body_byte_identical(tmp_path: Path) ->
         "两篇不同论文的 coding system prompt 主体字节级不一致，破坏 Prompt Cache 前缀稳定"
     )
 
-    # 3) 主体应等于 _CODING_SYSTEM_PROMPT_BODY 常量（前缀就是冻结的静态主体）。
-    assert body_a == _CODING_SYSTEM_PROMPT_BODY, (
-        "主体应等于 _CODING_SYSTEM_PROMPT_BODY 常量（不得被任何动态变量改写）"
+    # 3) 主体应等于 _CODING_SYSTEM_PROMPT_BODY + _CODING_HONESTY_SECTION 常量拼接
+    #    （前缀就是冻结的静态主体；sp5 T-S5-1-3 在主体与尾部间插入静态诚实红线段，
+    #    同属跨任务字节恒定的稳定前缀——T-S5-1-6 断言目标同步，语义不降）。
+    assert body_a == _CODING_SYSTEM_PROMPT_BODY + _CODING_HONESTY_SECTION, (
+        "主体应等于 _CODING_SYSTEM_PROMPT_BODY + _CODING_HONESTY_SECTION"
+        "（不得被任何动态变量改写）"
     )
 
 

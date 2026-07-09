@@ -17,12 +17,18 @@ test plan：sprint2/test-reports/2026-06-07_test-plan-d4-analysis-progress.md（
     ``__all__ = ["render", "render_analysis_progress_page"]``。app.py L285 page_map 用
     ("ui.pages.analysis_progress", "render_analysis_progress_page") 动态加载。
 
-终态/跳转优先级链（架构 §2.10 align D4，render 顶部早返回，命中即 return）::
+终态/跳转优先级链（架构 §2.10 align D4 + sprint5 §7.8 S5-08 路由修复，render 顶部
+早返回，命中即 return）::
 
     1. get_worker_error 非空 → "工作线程异常" FATAL 卡片（含 str(exc)）+ 停轮询；
     2. state.error 非空    → FATAL 卡片 + "重试 / 返回输入页" + 停轮询；
     3. current_step == "cancelled_by_user" → "任务已终止"卡片 + "返回输入页" + 停轮询（AC-S2-13）；
-    4. is_interrupted == True → current_page="review" + st.rerun()；
+    4. is_interrupted == True → 按 interrupt payload 的 kind 分发（AC-S5-16）：
+       planning 形态（payload 无 interrupt_kind 键 / 显式 "planning"）→ review 页；
+       dev_loop_failure / user_input_request → 执行监控页；
+    4bis. current_step ∈ {coding, execution} → 切执行监控页（S5-08 #4 主修复）；
+    4ter. current_step == "reporting" 且 report_path 非空 → 直跳报告页
+          （与执行监控页 case⑥ 双通道可达，AC-S5-15）；
     5. 否则正常渲染并注册 st_autorefresh。
 
     **关键**：st_autorefresh(key="progress_poll") **只在 case⑤ 路径注册**——终态分支
@@ -39,7 +45,14 @@ import streamlit as st
 import streamlit_shadcn_ui as ui
 from streamlit_autorefresh import st_autorefresh
 
-from config import STREAMLIT_POLL_INTERVAL
+from config import (
+    STREAMLIT_PAGE_EXECUTION,
+    STREAMLIT_PAGE_REPORT,
+    STREAMLIT_PAGE_REVIEW,
+    STREAMLIT_POLL_INTERVAL,
+)
+# S5-09 术语治理（T-S5-3-5）：内部枚举经 humanize 转用户可读中文再渲染。
+from ui.term_map import humanize
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +101,17 @@ _NODE_DISPLAY_NAMES = {k: v[0] for k, v in _NODE_DISPLAY.items()}
 
 _KEY_THREAD_ID = "thread_id"
 _KEY_CURRENT_PAGE = "current_page"
+
+# interrupt kind 标识（与 core/nodes/execution.py::INTERRUPT_KIND / core/tools/
+# interaction_tools.py::INTERRUPT_KIND_USER_INPUT 严格对齐——沿用 execution_monitor /
+# app.py 先例：UI 侧留本地字符串 + 单测断言防漂移，不引入节点/工具模块 import）。
+_INTERRUPT_KIND_DEV_LOOP: str = "dev_loop_failure"
+_INTERRUPT_KIND_USER_INPUT: str = "user_input_request"
+
+# 下游阶段 current_step 取值（S5-08：coding/execution → 执行监控页；reporting → 报告页兜底）。
+_STEP_CODING: str = "coding"
+_STEP_EXECUTION: str = "execution"
+_STEP_REPORTING: str = "reporting"
 
 
 # =========================================================================== #
@@ -171,6 +195,24 @@ def _pick_bilingual(
     if base_val:
         return str(base_val)
     return ""
+
+
+def _interrupt_route_target(payload: Optional[Dict]) -> str:
+    """case④ interrupt kind 分发（S5-08 / 架构 sprint5 §7.8，纯函数可直测，AC-S5-16）。
+
+    输入为 ``controller.get_interrupt_payload(thread_id)`` 的返回值，按 kind 决定跳转页::
+
+        dev_loop_failure / user_input_request → 执行监控页（该页 case⑤ 渲染对应面板）；
+        planning 形态（payload 无 "interrupt_kind" 键的 sp2 旧形态 / 显式 "planning" /
+        payload 为 None 或非 dict 的防御兜底）→ 计划审核页（沿用既有行为）。
+
+    防御式：不识别的 kind 一律落 review 兜底（与 app.py::interrupt_kind 的 planning
+    默认语义一致，不自创第三分类——极简裁决，架构 §7.8）。
+    """
+    kind = payload.get("interrupt_kind") if isinstance(payload, dict) else None
+    if kind in (_INTERRUPT_KIND_DEV_LOOP, _INTERRUPT_KIND_USER_INPUT):
+        return STREAMLIT_PAGE_EXECUTION
+    return STREAMLIT_PAGE_REVIEW
 
 
 # =========================================================================== #
@@ -381,9 +423,16 @@ def _render_logs(state: Dict) -> None:
         node_name = err.get("node_name") or "?"
         error_type = err.get("error_type") or ""
         summary = err.get("error_message") or "(无摘要)"
+        # S5-09（T-S5-3-5）：节点名中文化 + 括注内部名（"?" 占位符不经表）；
+        # error_type 为三态机器标识（transient/permanent/fatal，非 §7.9 列举
+        # domain），保留原值作排障锚点。
+        node_disp = (
+            f"{humanize('node', node_name)}（{node_name}）"
+            if node_name != "?" else "?"
+        )
         # 状态徽章用 emoji 在折叠条标题内表达（accordion trigger 仅字符串，不能嵌组件）。
         type_part = f" [{error_type}]" if error_type else ""
-        trigger = f"⚠️ {idx + 1}. {node_name}{type_part} · {summary}"
+        trigger = f"⚠️ {idx + 1}. {node_disp}{type_part} · {summary}"
         detail = err.get("error_detail")
         if detail:
             content = f"**摘要**：{summary}\n\n```\n{detail}\n```"
@@ -536,11 +585,28 @@ def render() -> None:
         _render_cancelled_card()
         return
 
-    # --- case④：interrupt → 跳转 plan_review 页（停本页轮询） ---
+    # --- case④：interrupt → 按 payload kind 分发跳转（S5-08 / AC-S5-16，停本页轮询）---
+    #   planning 形态 → review 页；dev_loop_failure / user_input_request → 执行监控页。
     if controller.is_interrupted(thread_id):
-        st.session_state[_KEY_CURRENT_PAGE] = "review"
+        payload = controller.get_interrupt_payload(thread_id)
+        st.session_state[_KEY_CURRENT_PAGE] = _interrupt_route_target(payload)
         st.rerun()
         return  # st.rerun() 不返回（AppTest 下会抛 RerunException），防御性 return
+
+    current_step = str(state.get("current_step") or "")
+
+    # --- case④bis：coding / execution 阶段 → 切执行监控页（S5-08 #4 主修复）---
+    if current_step in (_STEP_CODING, _STEP_EXECUTION):
+        st.session_state[_KEY_CURRENT_PAGE] = STREAMLIT_PAGE_EXECUTION
+        st.rerun()
+        return
+
+    # --- case④ter：reporting 完成且 report_path 非空 → 直跳报告页（AC-S5-15 兜底，
+    #     与执行监控页 case⑥ 双通道可达）---
+    if current_step == _STEP_REPORTING and state.get("report_path"):
+        st.session_state[_KEY_CURRENT_PAGE] = STREAMLIT_PAGE_REPORT
+        st.rerun()
+        return
 
     # --- case⑤：正常渲染 + 注册 autorefresh（仅此路径注册定时器） ---
     _render_paper_card(state.get("paper_meta"))

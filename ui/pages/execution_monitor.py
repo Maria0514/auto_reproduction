@@ -27,6 +27,9 @@
        interrupt_kind=="user_input_request" → 用户输入面板（S4-09，停轮询）；
        （其余，即 planning interrupt → 跳回 review 页）
     6. _should_jump_to_report（reporting 完成且 report_path 非空且非 interrupt）→ 跳结果报告页；
+    6bis. current_step=="reporting" 且 report_path 为空 且 controller.is_finished →
+       "报告未生成"失败/降级提示卡片 + 停轮询（S5-08 #6 兜底，AC-S5-17：图已跑到 END
+       但没有报告可跳，继续轮询是假轮询，永远等不来状态变化）；
     7. 否则正常渲染（进度 + sandbox + 错误降级）+ 注册 st_autorefresh（仅此路径注册定时器）。
 
 interrupt#3 resume 契约（S4-09，与 core/tools/interaction_tools.py::request_user_input 严格对齐）::
@@ -37,6 +40,14 @@ interrupt#3 resume 契约（S4-09，与 core/tools/interaction_tools.py::request
     （默认不勾），提交 resume_with(thread_id, {"value": str, "remember": bool})。
     **非空校验（L-B1-01 防线）**：value.strip() 为空时拒绝提交（不调 resume_with），
     防止空值经工具端去重/降级路径卡死任务。
+
+    S5-01 增量（T-S5-2-3，architecture §6 Q-S5-10）：payload 含第 5 键
+    ``allow_degrade=True``（**只由 coding 前置 gate 设置**，agent 经 request_user_input
+    工具产生的 payload 永不含该键——红线的 UI 面）时，额外渲染显式按钮
+    「无此凭证，降级为模拟实验」，点击 → resume_with(thread_id,
+    {"value": "", "remember": False, "degrade": True})（resume 三键契约，一次点击只降
+    当前询问项）。无该键（老 payload / agent 路径）→ 无按钮；普通提交仍为两键契约
+    （degrade 缺省 False），与 sp4 完全一致。
 
 interrupt#2 resume 契约（与 core/nodes/execution.py::_route_user_fix_decision 严格对齐）::
 
@@ -60,10 +71,13 @@ import streamlit_shadcn_ui as ui
 from streamlit_autorefresh import st_autorefresh
 
 from config import (
+    ACTIVITY_STREAM_RENDER_TAIL,
     MAX_FIX_LOOP_COUNT,
     STREAMLIT_PAGE_REPORT,
     STREAMLIT_POLL_INTERVAL,
 )
+# S5-09 术语治理（T-S5-3-5）：内部枚举经 humanize 转用户可读中文再渲染。
+from ui.term_map import humanize
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +190,22 @@ def _should_jump_to_report(
     return bool(state.get("report_path"))
 
 
+def _is_reporting_without_report(state: Optional[Dict[str, Any]]) -> bool:
+    """case⑥bis 状态侧前置判定（S5-08 #6 兜底 / AC-S5-17，纯函数可直测）。
+
+    current_step == "reporting" 且 report_path 为空（None / 空串）→ True。
+    render() 中须再与 ``controller.is_finished(thread_id)`` 合取：图仍在跑（reporting
+    节点尚未写完 report_path）时继续轮询是正当的，只有图已到 END 才判"报告未生成"。
+
+    防御式：state 为 None / 非 dict 时返回 False（无 state 不判）。
+    """
+    if not isinstance(state, dict):
+        return False
+    if str(state.get("current_step") or "") != _STEP_REPORTING:
+        return False
+    return not state.get("report_path")
+
+
 def _build_decision_payload(
     decision: str,
     user_feedback: str = "",
@@ -208,6 +238,17 @@ def _build_user_input_resume(value: str, remember: bool) -> Dict[str, Any]:
     （不 strip——凭证内容以用户所见为准），remember 强制 bool。
     """
     return {"value": value, "remember": bool(remember)}
+
+
+def _build_degrade_resume() -> Dict[str, Any]:
+    """构造显式降级 resume payload（S5-01 / Q-S5-10 三键契约，纯函数可直测）。
+
+    三键契约：{"value": "", "remember": False, "degrade": True}——coding 前置 gate
+    （确定性代码）解读 degrade=True → 将当前 purpose_key 写入 credential_degradations
+    并放行。value/remember 固定空值/False，不受输入框与勾选状态影响（一次点击只降
+    当前询问项；多缺失项由 gate 串行逐项弹出）。
+    """
+    return {"value": "", "remember": False, "degrade": True}
 
 
 def _summarize_fix_history(fix_loop_history: object) -> List[Dict[str, str]]:
@@ -337,7 +378,9 @@ def _render_progress(state: Dict[str, Any]) -> None:
 
     st.markdown("### ⚙️ 执行进度")
 
-    step_display = _STEP_DISPLAY.get(current_step, current_step)
+    # S5-09：未知/上游 step 兜底经 humanize（不裸露内部值；"start" 等内部标记
+    # 会得到 "start（内部标识）" 兜底文案——不崩不静默）。
+    step_display = _STEP_DISPLAY.get(current_step) or humanize("node", current_step)
     cols = st.columns(2)
     cols[0].markdown(f"**当前阶段**：{step_display}")
     cols[1].markdown(f"**{_fix_loop_progress_text(fix_loop_count)}**")
@@ -346,7 +389,11 @@ def _render_progress(state: Dict[str, Any]) -> None:
     if history:
         st.markdown("**修复历程（每轮：错了什么 + 修复策略）**")
         for row in history:
-            cat = f" `[{row['error_category']}]`" if row["error_category"] else ""
+            # S5-09：error_category 内部枚举经 humanize 转中文再入折叠标题。
+            cat = (
+                f" [{humanize('error_category', row['error_category'])}]"
+                if row["error_category"] else ""
+            )
             with st.expander(
                 f"第 {row['round']} 轮{cat} · {row['error_summary']}", expanded=False
             ):
@@ -396,7 +443,12 @@ def _render_errors_and_degraded(state: Dict[str, Any]) -> None:
 
     if degraded_nodes:
         # 原生 st.warning（AppTest 可断言「降级节点」文案）。
-        st.warning("降级节点：" + ", ".join(str(n) for n in degraded_nodes))
+        # S5-09：节点名中文化 + 括注内部名（与 _STEP_DISPLAY "代码生成（coding）"
+        # 既有口径一致；内部名保留作测试/排障锚点）。
+        st.warning(
+            "降级节点："
+            + ", ".join(f"{humanize('node', str(n))}（{n}）" for n in degraded_nodes)
+        )
 
     if not node_errors:
         st.caption("暂无错误记录。")
@@ -406,9 +458,19 @@ def _render_errors_and_degraded(state: Dict[str, Any]) -> None:
     items: List[Dict[str, str]] = []
     for idx, err in enumerate(node_errors[-10:]):
         parsed = _parse_node_error(err)
-        cat_part = f" [{parsed['category']}]" if parsed["category"] else ""
+        # S5-09：节点名中文化 + 括注内部名（"?" 占位符不经表）；error_category
+        # 经 humanize；error_type 为三态机器标识（transient/permanent/fatal，
+        # 非 §7.9 列举 domain），保留原值作排障锚点。
+        node_disp = (
+            f"{humanize('node', parsed['node'])}（{parsed['node']}）"
+            if parsed["node"] != "?" else "?"
+        )
+        cat_part = (
+            f" [{humanize('error_category', parsed['category'])}]"
+            if parsed["category"] else ""
+        )
         type_part = f" ({parsed['type']})" if parsed["type"] else ""
-        trigger = f"⚠️ {idx + 1}. {parsed['node']}{cat_part}{type_part} · {parsed['summary']}"
+        trigger = f"⚠️ {idx + 1}. {node_disp}{cat_part}{type_part} · {parsed['summary']}"
         if parsed["detail"]:
             content = f"**摘要**：{parsed['summary']}\n\n```\n{parsed['detail']}\n```"
         else:
@@ -419,6 +481,49 @@ def _render_errors_and_degraded(state: Dict[str, Any]) -> None:
         ui.accordion(data=items, key="acc_exec_errors")
     else:
         st.caption("暂无错误记录。")
+
+
+def _render_artifact_paths_section(state: Dict[str, Any]) -> None:
+    """S5-11 产物路径只读展示区（T-S5-3-6 / AC-S5-21，architecture §7.11）。
+
+    ``st.code`` 自带一键复制按钮（零新组件、零新依赖）。防御式 ``.get``：字段缺失
+    （如 coding 未完成时 code_output_dir 为空 / 报告尚未产出时 report_path 为空）
+    渲染占位 caption，不炸页面。只读展示——不做打开目录 / 导出打包 / 文件浏览器
+    （PRD 非目标），零 state 变更。仅 case⑦ 正常渲染路径调用（独立展示区，不进
+    任何 interrupt 面板 / 终态卡片）。
+    """
+    state = state or {}
+    st.markdown("### 📋 产物路径（可复制）")
+    code_dir = state.get("code_output_dir")
+    if code_dir:
+        st.caption("代码目录（code_output_dir）")
+        st.code(str(code_dir))
+    else:
+        st.caption("代码目录（code_output_dir）：（尚未生成）")
+    report_path = state.get("report_path")
+    if report_path:
+        st.caption("报告文件（report_path）")
+        st.code(str(report_path))
+    else:
+        st.caption("报告文件（report_path）：（尚未生成）")
+
+
+def _render_report_missing_card(state: Dict[str, Any]) -> None:
+    """case⑥bis：任务已结束但未产出报告 → 明确失败/降级提示卡片（AC-S5-17，停假轮询）。
+
+    关键文案用原生 st.error（AppTest 可断言，沿用本页终态卡片先例）。调用方**不注册
+    autorefresh**——图已到 END，state 不会再变化，继续轮询是假轮询。
+    附带错误/降级上下文（复用 _render_errors_and_degraded）帮助用户定位失败原因。
+    """
+    st.title("论文自动复现 — 执行监控")
+    st.error(
+        "报告未生成：任务已结束，但未产出报告文件（report_path 为空）。"
+        "本次复现可能失败或降级结束，请查看下方错误与降级信息。"
+    )
+    _render_errors_and_degraded(state)
+    _render_back_to_input_button(
+        key="btn_exec_no_report_back", label="返回输入页开启新任务"
+    )
 
 
 def _submit_dev_loop_decision(
@@ -469,7 +574,8 @@ def _render_dev_loop_decision_panel(
         )
         category = payload.get("error_category")
         if category:
-            st.markdown(f"**最近错误分类**：`{category}`")
+            # S5-09：error_category 内部枚举经 humanize 转中文。
+            st.markdown(f"**最近错误分类**：{humanize('error_category', category)}")
         error_summary = payload.get("error_summary")
         if error_summary:
             st.markdown(f"**最近错误摘要**：{error_summary}")
@@ -498,7 +604,11 @@ def _render_dev_loop_decision_panel(
     if history:
         st.markdown("### 🔁 修复历程")
         for row in history:
-            cat = f" `[{row['error_category']}]`" if row["error_category"] else ""
+            # S5-09：error_category 内部枚举经 humanize 转中文再入折叠标题。
+            cat = (
+                f" [{humanize('error_category', row['error_category'])}]"
+                if row["error_category"] else ""
+            )
             with st.expander(
                 f"第 {row['round']} 轮{cat} · {row['error_summary']}", expanded=False
             ):
@@ -559,7 +669,10 @@ def _render_user_input_panel(
 
     st.title("论文自动复现 — 需要你补充信息")
     step = str(current_step or "")
-    step_display = _STEP_DISPLAY.get(step, step or "执行中")
+    # S5-09：未知 step 兜底经 humanize（不裸露内部值）；空 step 保持"执行中"。
+    step_display = _STEP_DISPLAY.get(step) or (
+        humanize("node", step) if step else "执行中"
+    )
     st.caption(f"当前阶段：{step_display} · 任务已暂停，提交后自动继续。")
 
     # 问题正文（原生 st.info，AppTest 可断言）。
@@ -598,6 +711,63 @@ def _render_user_input_panel(
         )
         controller.resume_with(thread_id, _build_user_input_resume(value, remember))
         st.rerun()
+
+    # --- S5-01 显式降级按钮（T-S5-2-3）：仅 gate 发起的 payload 含 allow_degrade=True
+    #     时渲染；键缺失（agent 工具路径 / 老 payload）→ 无按钮（红线的 UI 面）。
+    #     点击不做非空校验（降级即"无凭证可填"），resume 三键契约见 _build_degrade_resume。---
+    if payload.get("allow_degrade") is True:
+        st.caption(
+            "确实无法提供该凭证？可显式降级：相关实验将以模拟方式进行，"
+            "并在最终报告中强制声明。"
+        )
+        if st.button(
+            "无此凭证，降级为模拟实验",
+            key="btn_user_input_degrade",
+            use_container_width=True,
+        ):
+            logger.info(
+                "[execution_monitor] 提交显式降级 resume thread=%s purpose_key=%s",
+                thread_id, purpose_key,
+            )
+            controller.resume_with(thread_id, _build_degrade_resume())
+            st.rerun()
+
+
+# 活动流空态占位文案（进程重启即失属预期语义——尽力而为可观测性，非错误）。
+_ACTIVITY_EMPTY_NOTICE: str = (
+    "暂无活动：任务尚未产生 agent 活动事件（进程重启后活动流清空属预期）。"
+)
+
+
+def _render_activity_stream_section(controller, thread_id: str) -> None:
+    """S5-07 agent 活动流尾部渲染区（T-S5-4-3 / AC-S5-13，architecture §4）。
+
+    ``controller.get_activity_tail(thread_id, ACTIVITY_STREAM_RENDER_TAIL)`` 返回
+    不可变 tuple 快照（T-S5-4-2 只读接口）；事件 ``text`` 已在采集侧完成
+    「先 mask 脱敏 → 单行压缩 → 截断」（架构 §9.3 出口①），**渲染侧零再处理**——
+    仅按行拼 ``#{seq} [{node}]`` 前缀后 ``st.code`` 等宽块整体输出（seq 天然递增，
+    node 内部名保留作排障锚点，等宽日志区口径与 §7.9 非列举 domain 豁免一致）。
+
+    空态（未知 thread / 尚无事件 / 进程重启后 handler 即失）→ 占位 caption 不空白。
+    零 state 变更、零新轮询：复用 case⑦ 既有 st_autorefresh 1500ms 节奏，每次
+    rerun 重取尾部快照即可。防御式：非 tuple/list 返回值（异常形态）按空态处理。
+    """
+    st.markdown(f"### 📡 Agent 活动流（最近 {ACTIVITY_STREAM_RENDER_TAIL} 行）")
+    events = controller.get_activity_tail(thread_id, ACTIVITY_STREAM_RENDER_TAIL)
+    if not isinstance(events, (list, tuple)):
+        events = ()
+    lines: List[str] = []
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        seq = ev.get("seq", "?")
+        node = str(ev.get("node") or "-")
+        text = str(ev.get("text") or "")
+        lines.append(f"#{seq:>4} [{node}] {text}")
+    if not lines:
+        st.caption(_ACTIVITY_EMPTY_NOTICE)
+        return
+    st.code("\n".join(lines), language=None)
 
 
 # =========================================================================== #
@@ -674,6 +844,12 @@ def render() -> None:
         st.rerun()
         return
 
+    # --- case⑥bis：reporting 但 report_path 为空 ∧ 图已到 END → 失败/降级卡片
+    #     （S5-08 #6 兜底 / AC-S5-17，停假轮询）---
+    if _is_reporting_without_report(state) and controller.is_finished(thread_id):
+        _render_report_missing_card(state)
+        return
+
     # --- case⑦：正常渲染 + 注册 autorefresh（仅此路径注册定时器） ---
     st.title("论文自动复现 — 执行监控")
     st.caption("实时观察代码生成 / 执行验证 / 修复循环进度；页面每 1.5 秒自动刷新。")
@@ -683,6 +859,10 @@ def render() -> None:
     _render_sandbox_info(state)
     st.divider()
     _render_errors_and_degraded(state)
+    st.divider()
+    _render_artifact_paths_section(state)
+    st.divider()
+    _render_activity_stream_section(controller, thread_id)
 
     # autorefresh 只能在 case⑦ 注册：终态/决策/跳转分支提前 return 即不注册。
     st_autorefresh(interval=STREAMLIT_POLL_INTERVAL, key="execution_poll")

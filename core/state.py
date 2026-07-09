@@ -113,21 +113,42 @@ class ResourceInfo(TypedDict):
 
 
 class ReproductionPlan(TypedDict):
-    """planning 节点输出：经用户审批的复现计划。"""
+    """planning 节点输出：经用户审批的复现计划。
+
+    Sprint 5 变更（架构 sp5 §7.5 / §8 总表）：
+        - expected_results: **sp5 唯一 breaking**——Dict[str, Any] → List[Dict[str, Any]]。
+          每条形如 ``{"description": str, "trend": {"metric": str, "greater": str,
+          "lesser": str} | None}``（定性描述 + 可选可机验趋势结构，禁编造数值）。
+          下游（reporting 回验 / 渲染）对旧 dict 形态防御性容忍（§7.5，R-5）。
+        - required_credentials: 新增。planning ReAct 产出 + map 回填默认 []；
+          每条恰含 purpose_key / purpose 两键（Dict[str, str]），供 coding gate 与
+          计划审核页只读展示消费。**绝不存凭证值本身**（值走 .secrets / 会话覆盖层）。
+    """
     plan_summary: str
     environment: Dict[str, Any]
     data_preparation: List[str]
     code_strategy: str
     execution_steps: List[Dict[str, str]]
-    expected_results: Dict[str, Any]
+    expected_results: List[Dict[str, Any]]
     estimated_time: str
     deliverables: List[str]
     user_feedback: Optional[str]
     approved: bool
+    required_credentials: List[Dict[str, str]]
 
 
 class ExecutionResult(TypedDict):
-    """execution 节点输出：代码执行与验证结果。"""
+    """execution 节点输出：代码执行与验证结果。
+
+    Sprint 5 新增 4 键（架构 sp5 §7.6 / §7.10 / §8 总表；仅此处做 TypedDict 键声明，
+    execution.py 两处构造点补齐默认值属 T-S5-2-6）：
+        - step_reconciliation: 步骤对账 {"planned": int, "executed": int, "completed": int,
+          "unexecuted_steps": [{"index": int, "step_name": str}], "extra_commands": [str]}；
+        - budget_truncated: 执行因轮次预算截断（reporting 截断声明，AC-S5-12）；
+        - metrics_groups: 多组指标 {组名: {指标: 值}}（execution _collect_grouped_metrics 写）；
+        - degraded_credentials: 本次执行降级的凭证 purpose_key 列表（自 state 快照）。
+    下游消费一律 .get() 防御读（兼容旧 checkpoint 无新键，R-6）。
+    """
     success: bool
     metrics: Dict[str, Any]
     logs: str
@@ -135,6 +156,10 @@ class ExecutionResult(TypedDict):
     artifacts: List[str]
     runtime_seconds: float
     environment_info: Dict[str, str]
+    step_reconciliation: Dict[str, Any]
+    budget_truncated: bool
+    metrics_groups: Dict[str, Dict[str, Any]]
+    degraded_credentials: List[str]
 
 
 class NodeError(TypedDict):
@@ -223,6 +248,21 @@ class GlobalState(TypedDict):
     #   敏感项（is_sensitive=True）绝不进入 state，跨任务复用只靠 .secrets（架构 sp4 §6.3）。
     pending_user_input: Optional[Dict]
     collected_inputs: Dict[str, str]
+    # === Sprint 5 新增（诚实性治理三通道，架构 sp5 §8 总表）===
+    # 三字段均为单值通道，last-write-wins 正确，**绝不加 reducer**
+    # （must-fix-1：绝不给任何字段加 Annotated / operator.add）。
+    # 必须显式声明为 GlobalState 通道 + create_initial_state 给默认值，
+    # 否则节点写入会被 LangGraph 静默丢弃（B2/B3 实证）。
+    # 下游消费一律 .get() 防御读（兼容旧 checkpoint 无新键，R-5/R-6）。
+    # - credential_degradations：coding 前置门（gate）单点整 dict 回写
+    #   {purpose_key: 降级说明}；coding 上下文 / execution 收尾 / reporting 标注消费。
+    # - simulation_notice：coding _map_coding_result 单点写（LLM 自述模拟声明，
+    #   缺失回填 None 属诚实语义）；reporting 标注 + 强制声明节消费。
+    # - honesty_audit：reporting 单点写（诚实性审计返回契约扩展）；
+    #   UI 报告页 / 测试断言消费。
+    credential_degradations: Dict[str, str]
+    simulation_notice: Optional[str]
+    honesty_audit: Optional[Dict]
 
 
 def _is_legacy_llm_config(value: Any) -> bool:
@@ -310,4 +350,7 @@ def create_initial_state(
         _dev_loop_llm_calls=0,
         pending_user_input=None,
         collected_inputs={},
+        credential_degradations={},
+        simulation_notice=None,
+        honesty_audit=None,
     )

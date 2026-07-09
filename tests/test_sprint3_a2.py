@@ -163,27 +163,7 @@ def test_cp_a2_4_fixlooprecord_unchanged_five_fields() -> None:
 
 # ========== CP-A2-5：state.py git diff 纯追加（不破坏既有反序列化/初始化） ==========
 
-
-def test_cp_a2_5_state_py_git_diff_is_pure_append() -> None:
-    """CP-A2-5 旁证：state.py 改动为纯追加（0 删除行），保证不破坏既有
-    GlobalState 反序列化 / create_initial_state 既有默认值。
-
-    全量非 e2e 回归不退化由独立 pytest 运行验证（dev-plan CP-A2-5）；
-    此处用 git diff 实证 state.py 未删改既有行。
-    """
-    proc = subprocess.run(
-        ["git", "diff", "HEAD", "--", "core/state.py"],
-        cwd=str(PROJECT_ROOT),
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    diff = proc.stdout
-    deletions = [
-        line
-        for line in diff.splitlines()
-        if line.startswith("-") and not line.startswith("---")
-    ]
-    assert deletions == [], (
-        f"core/state.py 必须为纯追加（0 删改），实测删除行：{deletions}"
-    )
+# [已退役 2026-07-09，sp5 T-S5-1-6] test_cp_a2_5_state_py_git_diff_is_pure_append：
+# 其历史使命是证明 sprint3-A2 当时的改动纯追加；作为常驻守门，它对任何未 commit 的
+# 合法行内修改都会误报。sp5 钦定 breaking（T-S5-1-5 expected_results dict→list 类型
+# 改行）与其"零删除行"前提冲突，前提已失效，经主控裁决退役该用例。

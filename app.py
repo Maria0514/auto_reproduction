@@ -28,7 +28,7 @@ import logging
 import threading
 import uuid
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from langgraph.types import Command
 
@@ -40,6 +40,7 @@ from config import (
     STREAMLIT_PAGE_REPORT,
     STREAMLIT_PAGE_REVIEW,
 )
+from core.activity_stream import ActivityEvent, ActivityStreamHandler, snapshot_tail
 from core.checkpointer import get_checkpointer
 from core.graph import build_graph
 from core.state import GlobalState, LLMConfigSet, create_initial_state
@@ -131,6 +132,11 @@ class GraphController:
         # 主线程独占 checkpointer + graph，仅用于 poll_state / is_interrupted 读路径。
         self._main_checkpointer = get_checkpointer()
         self._main_graph = build_graph(checkpointer=self._main_checkpointer)
+        # [S5-07/T-S5-4-2] per-thread 活动流 handler（架构 sprint5 §4 Q-S5-8）：
+        # 纯内存 dict，每 thread_id 一个 ActivityStreamHandler（自带 deque(maxlen)），
+        # per-thread 隔离由"每 thread 一个实例"自然达成；不持久化、不进 checkpoint、
+        # 不进 state（AC-S5-14 三个"不"），不建额外锁/清理线程/TTL（极简裁决）。
+        self._activity_handlers: Dict[str, ActivityStreamHandler] = {}
 
     # ------------------------------------------------------------------
     # 启动 / 恢复
@@ -161,12 +167,20 @@ class GraphController:
         return thread_id
 
     def _worker_run(self, thread_id: str, initial_state: GlobalState) -> None:
-        """工作线程入口。每线程独立创建 SqliteSaver + graph（架构 §4.3 方案 A）。"""
+        """工作线程入口。每线程独立创建 SqliteSaver + graph（架构 §4.3 方案 A）。
+
+        [S5-07/T-S5-4-2] config 注入 per-thread 活动流 callbacks：langchain-core
+        经 ``var_child_runnable_config`` contextvar 自动向嵌套 Runnable 传播父级
+        callbacks，穿透节点内手动 ``subgraph.invoke`` 边界（coding/execution 两
+        路径，T-S5-0-1 spike 实证主路径，react_base/execution 编排层零改动）。
+        """
         try:
             worker_checkpointer = get_checkpointer()  # 独立实例（不共享主线程实例）
             worker_graph = build_graph(checkpointer=worker_checkpointer)
             config = _make_config(thread_id)
-            worker_graph.invoke(initial_state, config)  # 跑到 interrupt 自然暂停
+            handler = self._get_activity_handler(thread_id)
+            # 跑到 interrupt 自然暂停
+            worker_graph.invoke(initial_state, {**config, "callbacks": [handler]})
         except Exception as e:  # noqa: BLE001 - 100% 崩溃感知，统一捕获写错误表
             logger.exception("[worker:%s] 异常", thread_id)
             with self._lock:
@@ -189,12 +203,18 @@ class GraphController:
         thread.start()
 
     def _resume_run(self, thread_id: str, resume_payload: Dict) -> None:
-        """resume 工作线程入口。又一个独立 SqliteSaver 实例（架构 §4.3）。"""
+        """resume 工作线程入口。又一个独立 SqliteSaver 实例（架构 §4.3）。
+
+        [S5-07/T-S5-4-2] resume 路径**复用同一 handler 实例**（get-or-create 命中
+        既有实例）：seq 连续性靠实例内计数器，跨 invoke/resume 单调不重置。
+        """
         try:
             worker_checkpointer = get_checkpointer()  # 又一个独立实例
             worker_graph = build_graph(checkpointer=worker_checkpointer)
             config = _make_config(thread_id)
-            worker_graph.invoke(Command(resume=resume_payload), config)
+            handler = self._get_activity_handler(thread_id)
+            worker_graph.invoke(
+                Command(resume=resume_payload), {**config, "callbacks": [handler]})
         except Exception as e:  # noqa: BLE001
             logger.exception("[resume:%s] 异常", thread_id)
             with self._lock:
@@ -220,6 +240,20 @@ class GraphController:
         config = _make_config(thread_id)
         snapshot = self._main_graph.get_state(config)
         return bool(snapshot and snapshot.next and self._has_interrupt(snapshot))
+
+    def is_finished(self, thread_id: str) -> bool:
+        """判定 graph 是否已运行至 END（S5-08 完成判定兜底，架构 sprint5 §7.8）。
+
+        判定形态（与 is_interrupted 同一读路径范式，纯只读、不改 state）：snapshot
+        存在 **且** snapshot.next 为空元组。运行中 / interrupt 暂停时 next 非空 →
+        False。"存在"须校验 snapshot.values 非空——LangGraph 对从未启动的 thread_id
+        返回 values={} 的空快照（next 也是空元组），不能误判为已完成。
+        """
+        config = _make_config(thread_id)
+        snapshot = self._main_graph.get_state(config)
+        if not snapshot or not getattr(snapshot, "values", None):
+            return False
+        return not snapshot.next
 
     @staticmethod
     def _has_interrupt(snapshot) -> bool:
@@ -278,6 +312,39 @@ class GraphController:
         """返回工作线程捕获的异常对象（无则 None），由 UI 检测展示。"""
         with self._lock:
             return self._worker_errors.get(thread_id)
+
+    # ------------------------------------------------------------------
+    # 活动流（S5-07 / T-S5-4-2，架构 sprint5 §4 Q-S5-8）
+    # ------------------------------------------------------------------
+
+    def _get_activity_handler(self, thread_id: str) -> ActivityStreamHandler:
+        """get-or-create per-thread 活动流 handler（**写侧专用**，worker/resume 调用）。
+
+        resume 必须复用 start 时的同一实例——seq 连续性靠实例内计数器（T-S5-4-1
+        契约）。``dict.setdefault`` 在 CPython GIL 下原子，极简方案不另建锁（与
+        deque 原子 append 同一 R-9 尽力而为语义）。
+        """
+        handler = self._activity_handlers.get(thread_id)
+        if handler is None:
+            handler = self._activity_handlers.setdefault(
+                thread_id, ActivityStreamHandler())
+        return handler
+
+    def get_activity_tail(
+        self, thread_id: str, n: Optional[int] = None,
+    ) -> Tuple[ActivityEvent, ...]:
+        """返回该 thread 活动流尾部 n 条事件的不可变快照（UI 轮询消费，纯内存只读）。
+
+        - ``n=None`` 全量；越界安全语义由 snapshot_tail 保证（``n<=0`` 空 tuple、
+          ``n>=len`` 全量）；
+        - thread 无 handler（从未启动 / 进程重启后）→ 返回空 tuple，**只读方法
+          不建 handler**（可观测性尽力而为语义，进程重启即失属预期）；
+        - 返回 tuple 快照与底层 deque 解耦（R-9 线程安全读侧），UI 侧只读。
+        """
+        handler = self._activity_handlers.get(thread_id)
+        if handler is None:
+            return ()
+        return snapshot_tail(handler.events, n)
 
     # ------------------------------------------------------------------
     # 取消

@@ -467,7 +467,7 @@ def test_map_coerces_dirty_types():
         "environment": "1x A100",            # 应被吞为 {}
         "data_preparation": "单条字符串",     # 应被包装为 [str]
         "execution_steps": ["纯字符串步骤", {"step_name": "正常步骤", "command": "x"}, None],
-        "expected_results": ["不是dict"],     # 应被吞为 {}
+        "expected_results": ["不是dict"],     # sp5 S5-05：str 项包装为 {"description": str}
         "deliverables": "README.md",          # 应被包装为 [str]
     }
     out = _map_planning_result(dirty, _base_state())
@@ -478,7 +478,10 @@ def test_map_coerces_dirty_types():
     assert plan["execution_steps"][0] == {"step_name": "纯字符串步骤"}
     assert plan["execution_steps"][1]["step_name"] == "正常步骤"
     assert len(plan["execution_steps"]) == 2
-    assert plan["expected_results"] == {}
+    # sp5 T-S5-1-5 钦定 breaking：expected_results dict → List[Dict]（S5-05 定性化），
+    # _coerce_expected_results 新语义——str 项降级包装为 {"description": str}
+    # （与 execution_steps 的降级包装同范式），断言由旧形态 {} 改为新形态精确值，语义不降。
+    assert plan["expected_results"] == [{"description": "不是dict"}]
     assert plan["deliverables"] == ["README.md"]
     # 脏数据但核心字段齐全 -> 不 degraded
     assert NODE_NAME not in out.get("degraded_nodes", [])

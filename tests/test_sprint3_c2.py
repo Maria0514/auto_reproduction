@@ -10,7 +10,8 @@
   "仅生成代码"，无指标章节；execution_result is None 时仍产有效报告
 - CP-C2-4 degraded（success=False / export_code）→ 标 degraded，含降级原因 +
   node_errors 摘要（解析 [error_category=...]）+ fix_loop_history 修复历程 + 保留代码
-- CP-C2-5 reporting 不写任何 list 字段（返回 dict 键集合精确 = {report_path, current_step}）
+- CP-C2-5 reporting 不写任何 list 字段（返回 dict 键集合精确 = {report_path,
+  current_step, honesty_audit}——[sp5 T-S5-3-2 适配] honesty_audit 单值显式扩展）
 - CP-C2-6 report_path 经 resolve()+is_relative_to(WORKSPACE_DIR) 校验，落在 workspace 下
   （构造越界场景断言被限定）
 
@@ -115,8 +116,11 @@ def test_cp_c2_2_full_success(workspace):
     report_path = out["report_path"]
     assert report_path
     md = Path(report_path).read_text(encoding="utf-8")
-    # 成功结论
-    assert "复现成功" in md
+    # 成功结论——[sp5 T-S5-3-4 适配，AC-S5-07] 本场景 expected_results 为旧 dict
+    # 形态 → goal_checks 全"未验证" → conclusion=engineering：措辞为"代码跑通
+    # （工程复现），论文实验结论未验证"，且全文禁"复现成功"（只换不弱化）。
+    assert "代码跑通（工程复现），论文实验结论未验证" in md
+    assert "复现成功" not in md
     # 指标对比表：列头 + baseline 值 + 复现值
     assert "指标对比" in md
     assert "论文 baseline" in md and "本次复现值" in md
@@ -278,7 +282,12 @@ def test_cp_c2_4_degraded_export_code_with_metrics_none(workspace):
 
 
 def test_cp_c2_5_pure_read_only_keys(workspace):
-    """reporting 纯读：返回 dict 键集合精确 = {report_path, current_step}。"""
+    """reporting 纯读：返回 dict 键集合精确 = {report_path, current_step, honesty_audit}。
+
+    [sp5 T-S5-3-2 适配] CP-C2-5 显式扩展：新增 honesty_audit 单值字段
+    （last-write-wins，架构 §1 / §10.1 R-7）；红线原意——list 通道零触碰
+    （node_errors / degraded_nodes / fix_loop_history 绝不返回）——原样保留。
+    """
     for mode_setup in (
         # full_success
         lambda s: s.update(execution_result={
@@ -296,9 +305,10 @@ def test_cp_c2_5_pure_read_only_keys(workspace):
         state = _base_state(workspace)
         mode_setup(state)
         out = reporting(state)
-        assert set(out.keys()) == {"report_path", "current_step"}, out.keys()
+        # [sp5 T-S5-3-2 适配] 两键 + honesty_audit 单值（CP-C2-5 显式扩展，R-7）
+        assert set(out.keys()) == {"report_path", "current_step", "honesty_audit"}, out.keys()
         assert out["current_step"] == NODE_NAME
-        # 绝不返回任何 list 字段
+        # 绝不返回任何 list 字段（红线原意原样保留）
         for forbidden in ("node_errors", "degraded_nodes", "fix_loop_history"):
             assert forbidden not in out
 
@@ -482,7 +492,9 @@ def test_full_success_no_hard_verdict_wording(workspace):
 
 
 def test_full_success_metrics_three_columns_present(workspace):
-    """对比表必须并列 baseline / expected / 复现值 三个来源。"""
+    """对比表并列 baseline / 复现值 两列——[sp5 T-S5-3-4 适配，AC-S5-09] 删"计划
+    expected"列（S5-05 定性化），旧 dict expected 的数值经"计划目标回验"节仍可见
+    （只换不弱化：新增"无 expected 列"负断言）。"""
     state = _base_state(workspace)
     state["paper_analysis"] = {"baseline_results": {"f1": 0.8}}
     state["reproduction_plan"] = {"expected_results": {"f1": 0.82}, "deliverables": []}
@@ -491,8 +503,9 @@ def test_full_success_metrics_three_columns_present(workspace):
         "artifacts": [], "runtime_seconds": 1.0, "environment_info": {},
     }
     md = Path(reporting(state)["report_path"]).read_text(encoding="utf-8")
-    assert "论文 baseline" in md and "计划 expected" in md and "本次复现值" in md
-    # 三个不同来源的值都渲染出来（baseline 独有键也并列）
+    assert "论文 baseline" in md and "本次复现值" in md
+    assert "计划 expected" not in md  # AC-S5-09：对比表无 expected 列
+    # baseline / 复现值仍并列渲染；旧 expected 数值经回验节"未验证"条目可见
     assert "0.8" in md and "0.82" in md and "0.79" in md
 
 
@@ -506,7 +519,9 @@ def test_full_success_empty_metrics_no_crash(workspace):
         "artifacts": [], "runtime_seconds": 1.0, "environment_info": {},
     }
     md = Path(reporting(state)["report_path"]).read_text(encoding="utf-8")
-    assert "复现成功" in md
+    # [sp5 T-S5-3-4 适配，AC-S5-07] goal_checks 为空 → engineering 措辞（只换不弱化）
+    assert "代码跑通（工程复现），论文实验结论未验证" in md
+    assert "复现成功" not in md
     assert "无可对比指标" in md
 
 
@@ -627,7 +642,8 @@ def test_robust_all_optional_fields_missing_degraded(workspace):
     md = Path(out["report_path"]).read_text(encoding="utf-8")
     assert md.strip()
     assert "未成功复现" in md  # 走 degraded（exec_result 缺失）
-    assert set(out.keys()) == {"report_path", "current_step"}
+    # [sp5 T-S5-3-2 适配] 两键 + honesty_audit 单值（CP-C2-5 显式扩展，R-7）
+    assert set(out.keys()) == {"report_path", "current_step", "honesty_audit"}
 
 
 def test_robust_paper_analysis_and_plan_none_full_success(workspace):
@@ -640,8 +656,10 @@ def test_robust_paper_analysis_and_plan_none_full_success(workspace):
         "artifacts": [], "runtime_seconds": 1.0, "environment_info": {},
     }
     md = Path(reporting(state)["report_path"]).read_text(encoding="utf-8")
-    assert "复现成功" in md
-    assert "0.5" in md  # 复现值仍渲染（baseline/expected 缺失列为占位）
+    # [sp5 T-S5-3-4 适配，AC-S5-07] plan=None → goal_checks 空 → engineering 措辞
+    assert "代码跑通（工程复现），论文实验结论未验证" in md
+    assert "复现成功" not in md
+    assert "0.5" in md  # 复现值仍渲染（baseline 缺失列为占位）
 
 
 def test_robust_fix_history_none_degraded(workspace):

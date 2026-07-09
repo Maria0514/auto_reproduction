@@ -551,10 +551,14 @@ def test_cp_e3_5_coding_digest_consumes_failure_contract(monkeypatch):
     out = execution(_base_state())
     er = out["execution_result"]
 
-    # ExecutionResult schema 逐字同 sp3（7 键）。
+    # ExecutionResult schema：sp3 7 键 + sp5 4 新键恰为 11 键精确集合。
+    # [sp5 T-S5-2-6 适配] 主控授权的唯一既有测试适配：T-S5-2-4/2-5/2-6 起两处构造
+    # 点均补齐 step_reconciliation / budget_truncated / metrics_groups /
+    # degraded_credentials，键集合"恰为"精确语义不弱化（防意外增删键）。
     assert set(er.keys()) == {
         "success", "metrics", "logs", "errors", "artifacts",
-        "runtime_seconds", "environment_info",
+        "runtime_seconds", "environment_info", "step_reconciliation",
+        "budget_truncated", "metrics_groups", "degraded_credentials",
     }
     assert er["errors"][0].startswith("[error_category=import]")
 

@@ -2,15 +2,23 @@
 
 设计权威：docs/sprint4/dev-plan.md §4 任务 A3 + architecture §2.3 / §6（Q-E1）/ §9.3-9.4。
 
-职责（极简六接口，不多不少，Maria 反过度工程硬约束）：
-    - ``lookup_secret``：只读 `.secrets` 命中查询（去重 + 跨任务复用）；
+职责（极简六接口 + Sprint 5 第 7 接口，Maria 反过度工程硬约束）：
+    - ``lookup_secret``：命中查询（会话覆盖层优先 → 只读 `.secrets`；去重 + 跨任务复用）；
     - ``remember_secret``：「记住」落盘（0600 明文 JSON，POSIX 强制权限）；
-    - ``load_all_secrets``：编排层启动时读入内存（供 extra_env 注入 + mask）；
+    - ``load_all_secrets``：编排层启动时读入内存（`.secrets` 基础 + 会话层合并覆盖，
+      供 extra_env 注入 + mask）；
     - ``register_sensitive_value`` / ``iter_sensitive_values``：进程内
       sensitive-values set（本次会话未「记住」的敏感值也必须可被 mask，§9.4）；
     - ``mask_value``：把 text 中一切已知敏感值替换为 ``****``（长值优先防子串残留）；
     - ``build_credential_env``：凭证 → 子进程 env 组装（coding run_command 与
-      execution sandbox 工具共用，避免两处各写一份映射）。
+      execution sandbox 工具共用，避免两处各写一份映射）；Sprint 5 增 ``env:<VAR>``
+      通用规则（architecture(s5) §5：``env:X`` → ``env["X"]=value``，不为任何
+      provider 做枚举映射——PRD 非目标：不建 API 代理层）；
+    - ``stash_session_secret``：**第 7 接口**（S5-01，architecture(s5) §9.2 对
+      "极简六接口"的显式扩接）：进程内会话覆盖层——用户「不记住」的凭证也能注入
+      沙箱 env；不落盘、进程重启即失、值同步 ``register_sensitive_value``。扩接
+      理由已在 docs/sprint5/dev-plan.md T-S5-2-1 记录（替代方案"强制记住"损害
+      用户选择权，两害相权取其轻；不加第 8 个接口）。
 
 存储形态（architecture §6.2）：
     - 路径 = ``Path(workspace_dir) / config.SECRETS_FILE_NAME``；workspace_dir
@@ -55,12 +63,21 @@ _GIT_CREDENTIAL_PREFIX = "git_credential:"
 # HuggingFace token purpose_key → 双 env var（architecture §9.3 映射表）。
 _HF_TOKEN_PURPOSE_KEY = "hf_token"
 
+# `env:<VAR>` 通用 purpose_key 前缀（Sprint 5 architecture §5：`env:X` →
+# env["X"]=value，不为任何 provider 做枚举映射）。
+_ENV_PURPOSE_PREFIX = "env:"
+
 # GIT_ASKPASS 脚本文件名模板（落 workspace 下，0700）。
 _GIT_ASKPASS_SCRIPT_TEMPLATE = ".git_askpass_{host}.sh"
 
 # 进程内 sensitive-values set（模块级，值级去重；本会话未「记住」的敏感值
 # 也必须可被 mask_value 覆盖，architecture §9.4 内存旁路）。
 _SENSITIVE_VALUES: Set[str] = set()
+
+# 进程内会话覆盖层（第 7 接口 stash_session_secret 的存储；不落盘、进程重启
+# 即失；同 key 最后提交者胜；读取面 = lookup_secret / load_all_secrets 均
+# 会话层优先，两接口对同一 key 语义严格一致——架构师 2026-07-09 决策）。
+_SESSION_SECRETS: Dict[str, str] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -148,10 +165,15 @@ def lookup_secret(
     purpose_key: str,
     workspace_dir: Optional[Union[str, Path]] = None,
 ) -> Optional[str]:
-    """只读 `.secrets` 命中查询（去重 + 跨任务复用）。
+    """命中查询：会话覆盖层（不落盘）优先 → 未命中再只读 `.secrets`（两级查找）。
 
+    会话层命中（S5-01：用户提交但「不记住」的凭证）直接返回，不触碰文件；
+    与 ``load_all_secrets`` 的合并覆盖语义严格一致（会话层优先，最后提交者胜），
+    避免同一 purpose_key 在两接口间出现矛盾答案（安全关键模块语义分叉红线）。
     文件缺失 / JSON 损坏 → 返回 None 并打 WARNING（非静默）；绝不创建文件。
     """
+    if purpose_key in _SESSION_SECRETS:
+        return _SESSION_SECRETS[purpose_key]
     entries = _read_entries(workspace_dir, warn_missing=True)
     if entries is None:
         return None
@@ -193,20 +215,23 @@ def load_all_secrets(
 ) -> Dict[str, str]:
     """编排层启动时读入内存（供 extra_env 注入 + mask）；只返回 value 映射。
 
-    文件缺失（尚未收集任何凭证，正常状态）→ 空 dict；损坏 → 空 dict + WARNING
-    （由 ``_read_entries`` 打，非静默）。
+    返回 = `.secrets` 基础 + 进程内会话覆盖层合并覆盖（S5-01 第 7 接口：会话层
+    优先，同 key 最后提交者胜；会话层不落盘、进程重启即失）。
+    文件缺失（尚未收集任何凭证，正常状态）→ 仅会话层（可为空 dict）；损坏 →
+    仅会话层 + WARNING（由 ``_read_entries`` 打，非静默）。
     """
     entries = _read_entries(workspace_dir, warn_missing=False)
-    if entries is None:
-        return {}
     result: Dict[str, str] = {}
-    for purpose_key, entry in entries.items():
-        if not isinstance(entry, dict) or "value" not in entry:
-            logger.warning(
-                "secrets 条目结构异常（缺 value，已跳过）: purpose_key=%s", purpose_key,
-            )
-            continue
-        result[purpose_key] = entry["value"]
+    if entries is not None:
+        for purpose_key, entry in entries.items():
+            if not isinstance(entry, dict) or "value" not in entry:
+                logger.warning(
+                    "secrets 条目结构异常（缺 value，已跳过）: purpose_key=%s", purpose_key,
+                )
+                continue
+            result[purpose_key] = entry["value"]
+    if _SESSION_SECRETS:
+        result.update(_SESSION_SECRETS)
     return result
 
 
@@ -303,8 +328,12 @@ def build_credential_env(secrets: Optional[Dict[str, str]] = None) -> Dict[str, 
       内容仅 echo token）→ env["GIT_ASKPASS"]=脚本路径（token 不进 env 值）；
       多 host 时 GIT_ASKPASS 单值限制，取排序首个 + WARNING（MVP 单 host 场景）；
     - ``hf_token`` → ``HF_TOKEN`` + ``HUGGING_FACE_HUB_TOKEN`` 双变量；
-    - 未知 purpose_key 忽略（agent 可经 lookup_secret 自取，无对应 env 映射）；
-    - secrets=None → ``load_all_secrets()``。
+    - ``env:<VAR>`` → ``env["<VAR>"] = value`` 通用规则（Sprint 5 architecture §5；
+      不为任何 provider 做枚举映射；变量名为空 → 忽略 + WARNING，值为空 → 跳过）；
+    - 其余未知 purpose_key 忽略（agent 可经 lookup_secret 自取，无对应 env 映射，
+      与 sp4 语义一致）；
+    - secrets=None → ``load_all_secrets()``（含会话覆盖层，S5-01「不记住」凭证
+      经此进入沙箱 env）。
     """
     if secrets is None:
         secrets = load_all_secrets()
@@ -334,4 +363,57 @@ def build_credential_env(secrets: Optional[Dict[str, str]] = None) -> Dict[str, 
         env["HUGGING_FACE_HUB_TOKEN"] = hf_token
         logger.info("build_credential_env: 已注入 hf_token 双变量")
 
+    # Sprint 5 通用规则（architecture §5）：`env:X` → env["X"] = value。
+    # sorted 保证多 key 注入顺序确定；日志只打 purpose_key，绝不打 value。
+    for key in sorted(secrets):
+        if not key.startswith(_ENV_PURPOSE_PREFIX):
+            continue
+        var_name = key[len(_ENV_PURPOSE_PREFIX):]
+        if not var_name:
+            logger.warning(
+                "build_credential_env: `env:` 变量名为空，忽略: purpose_key=%s", key,
+            )
+            continue
+        value = secrets[key]
+        if not value:
+            # 空值无注入意义（与 git/hf 规则跳过空值语义一致）。
+            continue
+        env[var_name] = value
+        logger.info("build_credential_env: 已注入 env 变量 purpose_key=%s", key)
+
     return env
+
+
+# ---------------------------------------------------------------------------
+# 接口 7：进程内会话覆盖层（S5-01，architecture(s5) §9.2 显式扩接）
+# ---------------------------------------------------------------------------
+
+def stash_session_secret(purpose_key: str, value: str) -> None:
+    """会话覆盖层写入（**第 7 接口**）：进程内 dict，不落盘、进程重启即失。
+
+    用途（S5-01）：coding 前置 gate 收到用户凭证但用户选择「不记住」时经此
+    暂存——``lookup_secret`` 命中（gate 重跑不再重复 interrupt）且
+    ``load_all_secrets`` 合并可见（经 ``build_credential_env`` 注入沙箱 env），
+    但绝不写入 `.secrets` 文件（用户选择权）。
+
+    语义：
+        - 同 purpose_key 覆盖（最后提交者胜）；对 `.secrets` 同 key 为读取面
+          优先覆盖（会话层优先）；
+        - 值一律同步 ``register_sensitive_value``（本会话未「记住」的值也必须
+          可被 ``mask_value`` 覆盖，§9.4 脱敏地基）；
+        - 空 purpose_key / 空 value 忽略 + WARNING（空值入层会在合并时把
+          `.secrets` 真值遮蔽为空，且空串不具注入意义——防御性拒绝，非静默）；
+        - 日志只打 purpose_key，绝不打 value。
+    """
+    if not purpose_key or not value:
+        logger.warning(
+            "stash_session_secret: 空 purpose_key 或空 value，忽略（不入会话层）: "
+            "purpose_key=%s", purpose_key,
+        )
+        return
+    _SESSION_SECRETS[purpose_key] = value
+    register_sensitive_value(value)
+    logger.info(
+        "stash_session_secret: 已入会话覆盖层（不落盘，进程重启即失）purpose_key=%s",
+        purpose_key,
+    )

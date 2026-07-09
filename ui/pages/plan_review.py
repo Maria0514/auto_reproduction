@@ -26,6 +26,8 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from streamlit_autorefresh import st_autorefresh
 
 from config import STREAMLIT_POLL_INTERVAL
+# S5-09 术语治理（T-S5-3-5）：内部枚举经 humanize 转用户可读中文再渲染。
+from ui.term_map import humanize
 
 logger = logging.getLogger(__name__)
 
@@ -275,8 +277,11 @@ def _render_plan(plan: Dict) -> None:
             st.markdown(f"**计划概述**：{summary}")
 
         cols = st.columns(2)
-        code_strategy = plan.get("code_strategy") or "(未指定)"
-        cols[0].markdown(f"**代码策略**：`{code_strategy}`")
+        # S5-09：code_strategy 为内部枚举（use_repo/hybrid/from_scratch），经 humanize
+        # 渲染用户可读中文，不再裸露原值（T-S5-3-5；state 字段本身零改动）。
+        raw_strategy = plan.get("code_strategy")
+        code_strategy = humanize("code_strategy", raw_strategy) if raw_strategy else "(未指定)"
+        cols[0].markdown(f"**代码策略**：{code_strategy}")
         estimated_time = plan.get("estimated_time") or "(未估算)"
         cols[1].markdown(f"**预估耗时**：{estimated_time}")
 
@@ -324,9 +329,10 @@ def _render_repos(resource_info: Dict) -> None:
     st.markdown("### 候选代码仓库")
 
     repos = resource_info.get("repos") or []
+    # S5-09：resource_strategy 内部枚举经 humanize 渲染（T-S5-3-5）。
     strategy = resource_info.get("resource_strategy")
     if strategy:
-        st.caption(f"资源策略：{strategy}")
+        st.caption(f"资源策略：{humanize('resource_strategy', strategy)}")
 
     selected = resource_info.get("selected_repo") or {}
     selected_url = (selected or {}).get("url")
@@ -461,7 +467,12 @@ def _render_transparency(payload: Dict) -> None:
     # S2-12：本轮对话已消耗的调用次数（与 revise 共用同一总预算，UI 侧软提示口径）。
     info_bits.append(f"本轮对话已消耗 {chat_calls} 次调用")
     if degraded:
-        info_bits.append("降级节点 " + ", ".join(str(n) for n in degraded))
+        # S5-09：节点名经 humanize + 括注内部名（与 execution_monitor _STEP_DISPLAY
+        # "代码生成（coding）"既有口径一致：中文为主、机器可读标识保留作锚点）。
+        info_bits.append(
+            "降级节点 "
+            + ", ".join(f"{humanize('node', str(n))}（{n}）" for n in degraded)
+        )
     st.markdown(
         "<div style='background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af;"
         " border-radius:8px; padding:12px 16px; font-size:14px; margin:16px 0;'>"
@@ -491,7 +502,12 @@ def _render_transparency(payload: Dict) -> None:
                 if isinstance(err, dict):
                     node_name = err.get("node_name") or "?"
                     msg = err.get("error_message") or str(err)
-                    st.markdown(f"- `{node_name}`：{msg}")
+                    # S5-09：节点名中文化 + 括注内部名（"?" 占位符不经表）。
+                    node_disp = (
+                        f"{humanize('node', node_name)}（{node_name}）"
+                        if node_name != "?" else "?"
+                    )
+                    st.markdown(f"- {node_disp}：{msg}")
                 else:
                     st.markdown(f"- {err}")
 
