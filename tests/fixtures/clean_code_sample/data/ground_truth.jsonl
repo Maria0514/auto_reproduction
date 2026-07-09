@@ -1,0 +1,12 @@
+{"id": "ex01", "text": "The movie was a delight from start to finish.", "label": "positive"}
+{"id": "ex02", "text": "Great pacing and a satisfying ending.", "label": "positive"}
+{"id": "ex03", "text": "One of the best performances this year.", "label": "positive"}
+{"id": "ex04", "text": "A warm, funny and well written story.", "label": "positive"}
+{"id": "ex05", "text": "I would happily watch it again tomorrow.", "label": "positive"}
+{"id": "ex06", "text": "The plot made no sense and the acting was flat.", "label": "negative"}
+{"id": "ex07", "text": "Two hours of my life I will never get back.", "label": "negative"}
+{"id": "ex08", "text": "Poorly edited and painfully slow.", "label": "negative"}
+{"id": "ex09", "text": "The dialogue felt forced and unnatural.", "label": "negative"}
+{"id": "ex10", "text": "It was fine, nothing memorable either way.", "label": "neutral"}
+{"id": "ex11", "text": "An average film with a few decent moments.", "label": "neutral"}
+{"id": "ex12", "text": "Watchable, though I doubt I will think about it again.", "label": "neutral"}

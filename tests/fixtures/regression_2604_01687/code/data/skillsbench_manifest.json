@@ -1,0 +1,47 @@
+{
+  "dataset": "SkillsBench",
+  "tasks": [
+    {
+      "task_id": "sample_refactor_task",
+      "instruction": "Refactor code and verify outputs.",
+      "path": "data/SkillsBench/sample_refactor_task",
+      "difficulty": "easy",
+      "verifier": {
+        "type": "keyword",
+        "expected_skill_keywords": [
+          "refactor",
+          "deterministic",
+          "verify"
+        ]
+      }
+    },
+    {
+      "task_id": "sample_data_task",
+      "instruction": "Process data and verify report.",
+      "path": "data/SkillsBench/sample_data_task",
+      "difficulty": "medium",
+      "verifier": {
+        "type": "keyword",
+        "expected_skill_keywords": [
+          "data",
+          "report",
+          "verify"
+        ]
+      }
+    },
+    {
+      "task_id": "sample_debug_task",
+      "instruction": "Debug issue and verify the fix.",
+      "path": "data/SkillsBench/sample_debug_task",
+      "difficulty": "hard",
+      "verifier": {
+        "type": "keyword",
+        "expected_skill_keywords": [
+          "debug",
+          "fix",
+          "verify"
+        ]
+      }
+    }
+  ]
+}

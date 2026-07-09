@@ -1,0 +1,7 @@
+{
+  "experiment_name": "baseline_self_generated",
+  "baseline_type": "self_generated",
+  "num_tasks": 3,
+  "pass_rate": 0.6666666666666666,
+  "mean_score": 0.9666666666666667
+}
