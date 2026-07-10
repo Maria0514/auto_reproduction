@@ -78,10 +78,11 @@ from core.state import LLMConfig, create_initial_state  # noqa: E402
 
 ARXIV_ID = "2405.14831"  # HippoRAG（与 sp1/sp2 S-3 同源，便于横向对比）
 
-# sp2 S-3 Prompt Cache fresh 基线（paper_analysis HumanMessage 输出语言策略改造的守门基线）。
-# 见 scripts/spike_prompt_cache_baseline.py 注释 + sp2 S-3 报告 R_baseline=0.7669。
-R_BASELINE_SP2 = 0.7669
-GATE_FACTOR = 0.95  # 守门：R_after >= R_baseline_sp2 * 0.95
+# [sp5 T-S5-5-3 复采更新 2026-07-09] coding 维度自有基线（批次 1 P1 诚实红线段进稳定前缀后
+# Maria 授权复采）：R_after=0.9318（run 见 workspace/runs/spike-f3-coding-prompt-cache_20260709-221856.json），
+# 旧值为借用 sp2 S-3 analysis 基线 0.7669（历史见 spike_prompt_cache_baseline.py 注释 + sp2 S-3 报告）。
+R_BASELINE_SP2 = 0.9318
+GATE_FACTOR = 0.95  # 守门：R_after >= R_baseline * 0.95（现线位 0.8852）
 
 
 # ========== Monkey-patch：把每次 LLM 响应的 (cached, prompt) 数对累计到 _METRICS_BUCKET ==========

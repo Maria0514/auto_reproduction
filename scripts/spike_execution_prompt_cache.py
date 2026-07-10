@@ -9,6 +9,10 @@
   （``_EXECUTION_SYSTEM_PROMPT_BODY``，CP-E2-1 已锁字节一致）；本脚本首测其
   真实命中率 R_after，作为后续 sprint 改动 execution prompt 时的守门基线。
 
+[sp5 T-S5-5-3 基线落档 2026-07-09]：批次 1 P3~P5 前缀变更后 Maria 授权复采，
+R_after=0.8970（run 见 workspace/runs/spike-g3-execution-prompt-cache_20260709-221939.json），
+后续 execution prompt 改动以 R >= 0.8970 × 0.95 = 0.8521 守门。
+
 设计（零 deepxiv 配额）：
 - 不跑上游链路，预置 execution 所需 GlobalState（code_output_dir /
   reproduction_plan.execution_steps / paper_analysis.metrics）；

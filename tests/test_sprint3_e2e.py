@@ -725,15 +725,48 @@ class TestRealChainE2E:
             # 真实跑到 planning interrupt#1 暂停。
             self._run_to_planning_pause(graph, config, tmp_path)
 
-            # approve → coding(真实) → execution(mock sandbox 成功) → reporting → END。
+            # approve → coding 前置 gate（sp5 可能逐项 interrupt）→ coding(真实) →
+            # execution(mock sandbox 成功) → reporting → END。
             final = graph.invoke(Command(resume={"decision": "approve"}), config)
+
+            # [sp5 T-S5-5-3 适配 2026-07-09] 真实 LLM 按 planning P7 新提示词可声明
+            # required_credentials（HippoRAG 复现需 OpenAI key），coding gate 对缺失项
+            # 单项串行 interrupt（S5-01）。happy path 语义 = 用户提供凭证放行：逐项以假
+            # 凭证 resume（进会话层不落盘；sandbox 全 mock，假值不外发，且顺带真实覆盖
+            # stash→build_credential_env→env: 注入链路）。degrade 路径不在本用例（其真实
+            # 行为有轮间方差：agent 可合法选择不产码走降级形态，2026-07-09 4 跑 2 现；
+            # mock 覆盖见 t22，真跑证据留档 test-reports）。零声明时本循环零次、直达 END。
+            gate_rounds = 0
+            while True:
+                snap = graph.get_state(config)
+                if snap.next != ("coding",):
+                    break
+                interrupts = [
+                    iv for task in (snap.tasks or [])
+                    for iv in (getattr(task, "interrupts", None) or [])
+                ]
+                assert interrupts, f"暂停在 coding 但无 interrupt 元数据（round={gate_rounds}）"
+                payload = interrupts[0].value
+                assert payload.get("interrupt_kind") == "user_input_request"
+                assert payload.get("allow_degrade") is True, (
+                    f"coding 暂停应为 gate 五键 payload（happy path 不应现 agent 工具路径）：{payload}"
+                )
+                assert payload.get("is_sensitive") is True and payload.get("purpose_key")
+                gate_rounds += 1
+                assert gate_rounds <= 5, "gate 串行 interrupt 超过 5 项，疑似死循环"
+                final = graph.invoke(
+                    Command(resume={
+                        "value": "e2e-fake-credential-sandbox-mocked", "remember": False,
+                    }),
+                    config,
+                )
             try:
                 conn.commit()
             except Exception:
                 pass
 
             snap = graph.get_state(config)
-            assert snap.next == (), f"approve 后应跑到 END：next={snap.next}"
+            assert snap.next == (), f"approve(+gate 逐项供给凭证)后应跑到 END：next={snap.next}"
 
             # 上游真实节点产物齐全。
             assert (final.get("paper_meta") or {}).get("arxiv_id") == PAPER_ARXIV_ID
@@ -748,7 +781,19 @@ class TestRealChainE2E:
             # happy path 无修复循环 → prepare 恰 1 次；run 次数 = reproduction_plan
             # .execution_steps 的步数（真实 LLM 可能规划多步执行，首跑实测 11 步），
             # 故断言 run >= 1，不 hard-code 步数（LLM 规划步数会变）。
-            assert cnt["prepare"] == 1 and cnt["run"] >= 1
+            # [sp5 T-S5-5-3 适配 2026-07-09] 真实 LLM 命令风格有轮间方差（实测出现
+            # cd 目标越界被沙箱边界护栏拒绝 → 修复循环 6 轮后最终成功，prepare=7）。
+            # sp4 起修复循环由 LLM 调用子预算治理（60 调用/入口门 2）取代固定轮数上限，
+            # happy path 契约收敛为"最终 B 档成功 + 循环受预算约束"，弃"零修复"旧假设：
+            assert cnt["prepare"] >= 1 and cnt["run"] >= 1
+            assert (final.get("fix_loop_count") or 0) <= 30, (
+                f"修复循环应受预算治理约束：fix_loop_count={final.get('fix_loop_count')}"
+            )
+
+            # [sp5 T-S5-5-3] 诚实链快照旁证：happy path 供给凭证 → 零降级，state 与
+            # execution 快照一致为空（degrade 路径的对应断言见 t22 mock 套件）。
+            assert not (final.get("credential_degradations") or {}), "供给凭证后不应有降级标记"
+            assert er.get("degraded_credentials") in ([], None) or not er.get("degraded_credentials")
 
             # reporting full_success（真实渲染落盘 tmp）。
             assert reporting_module._determine_report_form(final) == "full_success"
