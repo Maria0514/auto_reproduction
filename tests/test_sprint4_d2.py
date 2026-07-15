@@ -134,13 +134,19 @@ def test_cp_d2_1_credential_userinfo_regex_behavior(value, should_hit):
 
 
 def test_cp_d2_1_non_credential_pip_vars_still_passthrough(monkeypatch):
-    """兼容面：非凭证类 PIP_INDEX_URL / PIP_CACHE_DIR 仍透传（(a') 相对 (a) 的
-    核心差异，既有运维配置零破坏）。"""
+    """兼容面：非凭证类 PIP_INDEX_URL 仍透传（(a') 相对 (a) 的核心差异，
+    既有运维配置零破坏）。
+
+    注：Sprint 6 MF-1 后，PIP_CACHE_DIR 无条件覆盖为 SANDBOX_PIP_CACHE_DIR（/data 卷），
+    即使宿主传入 /tmp/pipcache 也会被压制——此为故意设计（防止打爆 home 配额）。
+    """
+    from config import SANDBOX_PIP_CACHE_DIR
     monkeypatch.setenv("PIP_INDEX_URL", "https://pypi.example/simple")
     monkeypatch.setenv("PIP_CACHE_DIR", "/tmp/pipcache")
     env = _build_sandbox_env()
     assert env.get("PIP_INDEX_URL") == "https://pypi.example/simple"
-    assert env.get("PIP_CACHE_DIR") == "/tmp/pipcache"
+    # MF-1：PIP_CACHE_DIR 被无条件覆盖为 SANDBOX_PIP_CACHE_DIR
+    assert env.get("PIP_CACHE_DIR") == str(SANDBOX_PIP_CACHE_DIR)
 
 
 def test_cp_d2_1_yagni_pip_index_url_purpose_key_not_mapped_yet(sandbox_workspace):

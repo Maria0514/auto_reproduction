@@ -267,6 +267,14 @@ class _FakeSidebarCtx:
         return False
 
 
+class _FakeSpinnerCtx:
+    """fake st.spinner 上下文管理器（Sprint 6 MF-6 新增）。"""
+    def __enter__(self):
+        return self
+    def __exit__(self, *exc):
+        return False
+
+
 class _FakeStreamlit:
     def __init__(self, session_state: Dict[str, Any]) -> None:
         self.session_state = session_state
@@ -279,6 +287,10 @@ class _FakeStreamlit:
 
     def info(self, *a, **k):
         self.info_called = True
+
+    def spinner(self, text: str = ""):
+        """Sprint 6 MF-6：fake spinner 上下文管理器。"""
+        return _FakeSpinnerCtx()
 
 
 class _FakePageModule:

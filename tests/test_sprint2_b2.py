@@ -441,11 +441,10 @@ def test_aux_repoinfo_strict_fields():
 
 # --- 补强 1：工具集组成（6 工具含 search_pwc）+ wrapper 参数透传 -------------
 
-def test_acc_tool_set_composition_six_tools(monkeypatch):
-    """dev-plan B2 / 架构 §4.6 要求 get_tools 含 6 工具（含 search_pwc）。
+def test_acc_tool_set_composition_five_tools(monkeypatch):
+    """Sprint 6 MF-5 摘除 PwC 后，resource_scout 工具集由 6 个降为 5 个（无 search_pwc）。
 
-    架构 §2.3.2 prompt 示例只列 5 个（漏 search_pwc），dev-plan + §4.6/§2.3.5
-    权威要求含 search_pwc——本用例锚定实现按 dev-plan 落地 6 工具。
+    降级链变更：deepxiv github_url -> web search（PwC 通道移除，PwC 网站 2025 年中下线）。
     """
     captured: Dict[str, Any] = {}
 
@@ -464,7 +463,7 @@ def test_acc_tool_set_composition_six_tools(monkeypatch):
     names = sorted(t.name for t in captured["tools"])
     assert names == [
         "check_url_reachable_tool", "get_paper_brief", "git_clone_and_analyze",
-        "search_papers", "search_pwc", "web_search",
+        "search_papers", "web_search",
     ], names
     assert captured["max_rounds"] == 10
     assert captured["result_schema"]["title"] == "ResourceInfo"
@@ -473,15 +472,21 @@ def test_acc_tool_set_composition_six_tools(monkeypatch):
 # --- 补强 2：prompt 主体覆盖搜索优先级链四级 + 工具名 ------------------------
 
 def test_acc_prompt_body_describes_priority_chain():
-    """system prompt 主体必须描述 deepxiv github_url->PwC->web_search->from_scratch
-    四级降级链 + 关键工具名（防 prompt 被裁剪掉降级链导致 LLM 不知降级路径）。"""
+    """system prompt 主体必须描述降级链 + 关键工具名。
+
+    Sprint 6 MF-5：PwC 摘除后降级链变更为 deepxiv github_url -> web_search -> from_scratch。
+    search_pwc / Papers With Code 相关描述已从 prompt 中移除。
+    """
     body = resource_scout_module._RESOURCE_SCOUT_SYSTEM_PROMPT_BODY
     for needle in (
-        "github_url", "Papers With Code", "search_pwc", "web_search",
+        "github_url", "web_search",
         "from_scratch", "check_url_reachable_tool", "git_clone_and_analyze",
         "quality_score",
     ):
         assert needle in body, needle
+    # PwC 相关字段已摘除，不应再出现在 prompt 主体
+    assert "search_pwc" not in body, "search_pwc 已从工具集摘除，不应出现在 prompt"
+    assert "Papers With Code" not in body, "Papers With Code 已从优先级链移除"
 
 
 # --- 补强 3：_format_resource_scout_context 英文事实层过滤（PRD §4.7.5） ------

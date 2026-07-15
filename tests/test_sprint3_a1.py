@@ -152,7 +152,7 @@ def test_cp_a1_4_sp1_sp2_constants_unchanged() -> None:
     assert config.REACT_MAX_ROUNDS_RESOURCE_SCOUT == 10
     assert config.REACT_MAX_ROUNDS_PLANNING == 8
     assert config.GIT_CLONE_TIMEOUT == 60
-    assert config.PWC_BASE_URL == "https://paperswithcode.com/api/v1"
+    # Sprint 6 MF-5: PWC_BASE_URL 等 PWC_* 四常量已删除（PwC 下线），断言移除
     assert config.STREAMLIT_PAGE_INPUT == "input"
     assert config.STREAMLIT_PAGE_PROGRESS == "progress"
     assert config.STREAMLIT_PAGE_REVIEW == "review"

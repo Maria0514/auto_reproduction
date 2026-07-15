@@ -48,7 +48,7 @@ from core.tools.git_tools import (  # noqa: E402
     check_url_reachable,
     make_git_clone_and_analyze_tool,
 )
-from core.tools.pwc_tools import make_search_pwc_tool  # noqa: E402
+# Sprint 6 MF-5: pwc_tools 已删除，相关 e2e 用例同步摘除
 
 
 pytestmark = pytest.mark.e2e
@@ -127,22 +127,6 @@ def test_e2e_git_clone_and_analyze_small_public_repo():
     assert isinstance(parsed.get("has_readme"), bool)
     assert Path(parsed["local_path"]).exists(), "local_path 应真实落地"
 
-
-def test_e2e_search_pwc_anonymous_returns_json_contract():
-    """真实 search_pwc 匿名查询（PWC_API_TOKEN 缺失走匿名）：
-
-    返回合法 JSON {"results": [...]}；命中/未命中/限流降级均不抛、不破坏契约。
-    """
-    tool = make_search_pwc_tool()
-    raw = tool.invoke({"arxiv_id": PRIMARY_ARXIV_ID, "title": ""})
-    parsed = json.loads(raw)
-    assert isinstance(parsed, dict)
-    assert "results" in parsed
-    assert isinstance(parsed["results"], list)
-    # 若网络/限流降级，工具返回 {"results": [], "error": ...}——契约仍成立，不视为失败。
-    for item in parsed["results"]:
-        assert isinstance(item, dict)
-        assert "repos" in item
 
 
 # ============== Prompt Cache 真实链路（需 LLM 截获 SystemMessage） ==============

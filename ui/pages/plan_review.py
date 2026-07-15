@@ -28,6 +28,8 @@ from streamlit_autorefresh import st_autorefresh
 from config import STREAMLIT_POLL_INTERVAL
 # S5-09 术语治理（T-S5-3-5）：内部枚举经 humanize 转用户可读中文再渲染。
 from ui.term_map import humanize
+# S6-05 计划自洽交叉检查（T-S6-1-4）：纯函数，零 LLM，零 state 写入。
+from core.plan_checks import check_plan
 
 logger = logging.getLogger(__name__)
 
@@ -656,6 +658,22 @@ def _render_revise_chat(
                 st.rerun()
 
 
+def _render_plan_check_warnings(plan: Dict, resource_info: Dict) -> None:
+    """渲染计划自洽交叉检查警示（S6-05，T-S6-1-4）。
+
+    调用 check_plan 纯函数，将返回的警示逐条用 st.warning() 展示。
+    零警示时不渲染任何内容（干净计划无噪声）。
+    警示不阻断审批——approve 按钮仍正常可用，人在回路知情后自行决策。
+    """
+    warnings = check_plan(plan, resource_info)
+    if not warnings:
+        return
+    for w in warnings:
+        rule = w.get("rule", "")
+        message = w.get("message", "")
+        st.warning(f"**[{rule}]** {message}")
+
+
 def _render_decision_buttons(
     controller, thread_id: str, payload: Dict, llm_config_set: Optional[Dict]
 ) -> None:
@@ -863,6 +881,14 @@ def render() -> None:
             st.json(analysis)
     st.divider()
     _render_transparency(payload)
+    # S6-05 T-S6-1-4：计划自洽交叉检查警示位（追加到信息完整度评估卡片区）。
+    # 调用纯函数 check_plan，零 state 变更、零 planning 节点变更。
+    # 有警示时逐条 st.warning()；零警示时不渲染（干净计划无噪声）。
+    # 警示不阻断审批——approve 按钮仍正常可用（人在回路本义）。
+    _render_plan_check_warnings(
+        plan=payload.get("reproduction_plan") or {},
+        resource_info=payload.get("resource_info") or {},
+    )
     st.divider()
     _render_decision_buttons(controller, thread_id, payload, llm_config_set)
 

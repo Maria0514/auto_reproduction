@@ -84,6 +84,45 @@ def _get_controller():
     return _app_get_controller()
 
 
+def _humanize_authors(authors) -> str:
+    """将 authors 字段规范化为可读字符串（Sprint 6 MF-2，架构 §7.8 MF-2）。
+
+    支持五种形态：
+    - str：直通（deepxiv 已格式化的字符串）
+    - dict：取 name 键（含走查异形样本 {'misc':{},'name':'Bernal...'}）；缺 name 则 str() 兜底
+    - list：逐项递归取 name，逗号拼接
+    - 其余：str() 兜底
+
+    超过 100 字符时截断加省略号（防止卡片被超长作者列表撑烂）。
+    空 authors 返回空串不抛异常。
+    """
+    if authors is None:
+        return ""
+    if isinstance(authors, str):
+        result = authors
+    elif isinstance(authors, dict):
+        result = authors.get("name") or str(authors)
+    elif isinstance(authors, list):
+        parts = []
+        for item in authors:
+            if item is None:
+                continue
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                parts.append(item.get("name") or str(item))
+            else:
+                parts.append(str(item))
+        result = ", ".join(parts)
+    else:
+        result = str(authors)
+
+    # 截断防止过长
+    if len(result) > 100:
+        result = result[:97] + "..."
+    return result
+
+
 def _is_non_cs(categories: List[str]) -> bool:
     """判定论文是否**不属于** CS 领域（无任一 ``cs.*`` 分类）。
 
@@ -162,8 +201,9 @@ def _render_paper_card(card: Dict, disabled: bool) -> None:
     with st.container(border=True):
         st.markdown(f"### 📄 {title}")
         # 标题下方 caption 兜底（保留旧文案，AppTest 可见）。
+        # Sprint 6 MF-2：_humanize_authors 规范化作者字段，防止裸 dict repr 出现在 UI。
         if authors:
-            st.caption("作者：" + ", ".join(str(a) for a in authors))
+            st.caption("作者：" + _humanize_authors(authors))
         if categories:
             st.caption("分类：" + ", ".join(str(c) for c in categories))
             # 分类同时用 shadcn badges 上色（视觉），不影响 caption 兜底。

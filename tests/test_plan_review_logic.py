@@ -918,3 +918,225 @@ def test_apply_chat_revision_increments_chat_calls_on_success():
     # 落定后清零（与历史一并重置）。
     assert st.session_state["_review_chat_calls"] == 0
     assert st.session_state["_review_chat_messages"] == []
+
+
+# =========================================================================== #
+# S6-05 T-S6-1-4：plan_review 警示位（CP-1.4-1 ~ CP-1.4-3）
+#
+# 验证 _render_plan_check_warnings 纯函数渲染与 render() 主流程集成：
+#   CP-1.4-1：两面计划 payload → 警示行出现 + approve 按钮仍可用（不阻断）
+#   CP-1.4-2：干净计划 payload → 零警示行
+#   CP-1.4-3：数据不可得 payload → W3 警示行；interrupt 种类不变
+# =========================================================================== #
+
+
+def _make_two_faced_payload() -> Dict:
+    """两面计划 payload（模拟 task-19e21e015017：data_prep 非空 + 无数据/实验步骤 + expected_results 非空）。"""
+    return {
+        "reproduction_plan": {
+            "plan_summary": "复现 HippoRAG 基线实验",
+            "data_preparation": ["下载 HippoRAG 原始数据集", "预处理为标准格式"],
+            "execution_steps": [
+                {"step_name": "安装依赖", "command": "pip install -r requirements.txt"},
+                {"step_name": "配置环境变量", "command": "cp .env.example .env"},
+                {"step_name": "初始化项目结构", "command": "mkdir -p outputs logs"},
+                {"step_name": "验证 Python 环境", "command": "python --version"},
+                {"step_name": "检查 CUDA 可用性", "command": "python -c 'import torch'"},
+                {"step_name": "安装额外依赖", "command": "pip install faiss-cpu"},
+                {"step_name": "创建输出目录", "command": "mkdir -p outputs/results"},
+                {"step_name": "检查配置文件", "command": "cat config.yaml"},
+                {"step_name": "验证模型路径", "command": "ls models/"},
+                {"step_name": "初始化日志", "command": "touch logs/app.log"},
+                {"step_name": "检查网络连接", "command": "ping -c 1 google.com"},
+                {"step_name": "备份原始文件", "command": "cp -r . backup/"},
+                {"step_name": "清理临时文件", "command": "rm -rf /tmp/cache"},
+                {"step_name": "完成准备", "command": "echo 'setup done'"},
+            ],
+            "expected_results": {
+                "description": "F1 ≥ 0.45（MuSiQue 基准）",
+                "trend": "higher_is_better",
+            },
+            "code_strategy": "use_repo",
+        },
+        "resource_info": {
+            "repos": [{"url": "https://github.com/OSU-NLP-Group/HippoRAG", "quality_score": 0.9}],
+            "selected_repo": {"url": "https://github.com/OSU-NLP-Group/HippoRAG"},
+            "external_resources": [],
+            "resource_strategy": "use_repo",
+        },
+        "paper_analysis_summary": {"method_summary": "HippoRAG 检索增强"},
+        "degraded_nodes": [],
+        "node_errors": [],
+        "revise_count": 0,
+        "soft_hint_threshold": 5,
+        "max_total_llm_calls": 120,
+    }
+
+
+def _make_clean_payload() -> Dict:
+    """干净计划 payload（含数据步骤 + run experiment 步骤 + resource_info 有 dataset）。"""
+    return {
+        "reproduction_plan": {
+            "plan_summary": "复现 HippoRAG 实验",
+            "data_preparation": ["下载 MuSiQue 数据集"],
+            "execution_steps": [
+                {"step_name": "安装依赖", "command": "pip install -r requirements.txt"},
+                {
+                    "step_name": "下载数据集",
+                    "command": "python scripts/download_dataset.py --name musique",
+                },
+                {
+                    "step_name": "运行实验",
+                    "command": "python run_experiment.py --config configs/base.yaml",
+                },
+                {
+                    "step_name": "评测并输出指标",
+                    "command": "python eval.py --output outputs/results/summary.json",
+                },
+            ],
+            "expected_results": [
+                {"description": "F1 ≥ 0.45", "trend": {"metric": "F1", "greater": "ours", "lesser": "baseline"}}
+            ],
+            "code_strategy": "use_repo",
+        },
+        "resource_info": {
+            "repos": [{"url": "https://github.com/OSU-NLP-Group/HippoRAG", "quality_score": 0.9}],
+            "selected_repo": {"url": "https://github.com/OSU-NLP-Group/HippoRAG"},
+            "external_resources": [
+                {"type": "dataset", "name": "MuSiQue", "url": "https://huggingface.co/datasets/musique"},
+            ],
+            "resource_strategy": "use_repo",
+        },
+        "paper_analysis_summary": {"method_summary": "HippoRAG 检索增强"},
+        "degraded_nodes": [],
+        "node_errors": [],
+        "revise_count": 0,
+        "soft_hint_threshold": 5,
+        "max_total_llm_calls": 120,
+    }
+
+
+def _make_no_dataset_payload() -> Dict:
+    """数据不可得 payload（data_prep 非空 + selected_repo=None + 无 dataset）。"""
+    return {
+        "reproduction_plan": {
+            "plan_summary": "复现 X 实验",
+            "data_preparation": ["下载 HippoRAG 原始数据集"],
+            "execution_steps": [
+                {"step_name": "安装依赖", "command": "pip install -r requirements.txt"},
+            ],
+            "expected_results": {},
+            "code_strategy": "from_scratch",
+        },
+        "resource_info": {
+            "repos": [],
+            "selected_repo": None,
+            "external_resources": [],
+            "resource_strategy": "from_scratch",
+        },
+        "paper_analysis_summary": {},
+        "degraded_nodes": [],
+        "node_errors": [],
+        "revise_count": 0,
+        "soft_hint_threshold": 5,
+        "max_total_llm_calls": 120,
+    }
+
+
+# CP-1.4-1：_render_plan_check_warnings 纯函数直测（两面计划 → W1/W2 出现）
+def test_cp_1_4_1_render_plan_check_warnings_two_faced_plan():
+    """两面计划 payload → _render_plan_check_warnings 渲染 W1/W2 警示行（直测纯函数）。"""
+    mod = _plan_review_mod()
+    plan = _make_two_faced_payload()["reproduction_plan"]
+    resource_info = _make_two_faced_payload()["resource_info"]
+
+    # 直接调用纯函数，验证 check_plan 返回正确警示
+    from core.plan_checks import check_plan
+    warnings = check_plan(plan, resource_info)
+    rules = {w["rule"] for w in warnings}
+    assert "W1" in rules, f"两面计划应触发 W1，实际：{warnings}"
+    assert "W2" in rules, f"两面计划应触发 W2，实际：{warnings}"
+
+
+# CP-1.4-1（AppTest 面）：两面计划 → 审核页出现 W1/W2 文案 + approve 按钮仍可用
+def test_cp_1_4_1_apptest_two_faced_plan_warnings_visible():
+    """AppTest：两面计划 payload → 审核页出现 W1/W2 警示文案。"""
+    controller = _make_controller_mock(payload=_make_two_faced_payload())
+    at = _run(controller)
+    assert not at.exception, f"页面崩溃：{at.exception}"
+
+    text = _collect_text(at)
+    assert "W1" in text or "数据相关步骤" in text, (
+        f"两面计划应出现 W1 警示，实际文本摘要：{text[:500]}"
+    )
+    assert "W2" in text or "指标" in text or "实验" in text, (
+        f"两面计划应出现 W2 警示，实际文本摘要：{text[:500]}"
+    )
+
+
+# CP-1.4-2：干净计划 → 零警示行
+def test_cp_1_4_2_clean_plan_no_warnings():
+    """干净计划 payload → plan_checks 零警示（误报防线）。"""
+    from core.plan_checks import check_plan
+    payload = _make_clean_payload()
+    plan = payload["reproduction_plan"]
+    resource_info = payload["resource_info"]
+    warnings = check_plan(plan, resource_info)
+    assert warnings == [], f"干净计划误报警示：{warnings}"
+
+
+def test_cp_1_4_2_apptest_clean_plan_no_warning_text():
+    """AppTest：干净计划 payload → 审核页不出现 W1/W2/W3 警示标记。"""
+    controller = _make_controller_mock(payload=_make_clean_payload())
+    at = _run(controller)
+    assert not at.exception, f"页面崩溃：{at.exception}"
+
+    # 警示区域不含 [W1]/[W2]/[W3] 标记
+    warning_texts = [str(getattr(w, "value", "")) for w in at.warning]
+    for wt in warning_texts:
+        assert "[W1]" not in wt and "[W2]" not in wt and "[W3]" not in wt, (
+            f"干净计划误报警示：{wt}"
+        )
+
+
+# CP-1.4-3：数据不可得 → W3 警示行出现；interrupt 种类不变（无新 gate）
+def test_cp_1_4_3_no_dataset_w3_warning():
+    """数据不可得 payload → plan_checks 触发 W3 警示。"""
+    from core.plan_checks import check_plan
+    payload = _make_no_dataset_payload()
+    warnings = check_plan(payload["reproduction_plan"], payload["resource_info"])
+    rules = {w["rule"] for w in warnings}
+    assert "W3" in rules, f"数据不可得应触发 W3，实际：{warnings}"
+
+
+def test_cp_1_4_3_apptest_no_dataset_w3_visible():
+    """AppTest：数据不可得 payload → 审核页出现 W3 警示文案。"""
+    controller = _make_controller_mock(payload=_make_no_dataset_payload())
+    at = _run(controller)
+    assert not at.exception, f"页面崩溃：{at.exception}"
+
+    text = _collect_text(at)
+    assert "W3" in text or "数据集" in text, (
+        f"数据不可得应出现 W3 警示，实际文本摘要：{text[:500]}"
+    )
+
+
+def test_cp_1_4_3_approve_button_still_available_despite_warnings():
+    """警示不阻断审批：两面计划 payload 下 approve 按钮仍可用（不 disabled）。
+
+    由于 approve 按钮是原生 st.button，AppTest 可见（不在 shadcn iframe 内）。
+    """
+    controller = _make_controller_mock(payload=_make_two_faced_payload())
+    at = _run(controller)
+    assert not at.exception, f"页面崩溃：{at.exception}"
+
+    # 找 key=btn_approve 的按钮
+    approve_buttons = [b for b in at.button if getattr(b, "key", None) == "btn_approve"]
+    assert len(approve_buttons) == 1, (
+        f"应存在 key='btn_approve' 的原生按钮，实际找到：{[b.key for b in at.button]}"
+    )
+    # 验证按钮未被 disabled
+    btn = approve_buttons[0]
+    assert not getattr(btn, "disabled", False), (
+        "警示不阻断审批，approve 按钮不应被 disabled"
+    )

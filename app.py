@@ -449,7 +449,16 @@ def main() -> None:
     st.set_page_config(page_title="论文自动复现系统", layout="wide")
 
     _init_session_state()
-    controller = _get_controller()  # noqa: F841 - 单例预热，供页面消费
+
+    # Sprint 6 MF-6：冷启动 spinner（架构 §7.8 MF-6 / AC-S6-22）。
+    # controller 尚未创建（首次进入 / 进程重启）时用 spinner 包裹创建——
+    # build_graph/checkpointer 初始化可能耗时约 40s，提示先于耗时段落地即可见。
+    # 热路径（controller 已在 session_state）不渲染 spinner（无感）。
+    if "graph_controller" not in st.session_state:
+        with st.spinner("系统初始化中（首次启动约 40 秒）…"):
+            controller = _get_controller()  # noqa: F841 - 单例预热，供页面消费
+    else:
+        controller = _get_controller()  # noqa: F841 - 单例预热，供页面消费
 
     # 侧栏由各页面自行渲染（D3/D4/D5 各自调 render_llm_config_form）。
     # 此处不调 _render_sidebar()——D3 落地后 paper_input.render() 自己渲染侧栏，

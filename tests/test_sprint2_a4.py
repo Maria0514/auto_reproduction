@@ -19,11 +19,12 @@ import pytest
 
 
 def test_cp_a4_1_all_new_constants_importable() -> None:
-    """CP-A4-1: dev-plan 列出的 sp2 新增常量全部可从 config 顶层导入。"""
+    """CP-A4-1: dev-plan 列出的 sp2 新增常量全部可从 config 顶层导入。
+    注：Sprint 6 MF-5 已删除 PWC_* 四常量（PwC 下线），本测试同步移除对应项。
+    """
     from config import (  # noqa: F401
         GIT_CLONE_TIMEOUT,
         PLANNING_SOFT_HINT_THRESHOLD,
-        PWC_BASE_URL,
         REACT_MAX_ROUNDS_PLANNING,
         REACT_MAX_ROUNDS_RESOURCE_SCOUT,
         STREAMLIT_POLL_INTERVAL,
@@ -33,9 +34,6 @@ def test_cp_a4_1_all_new_constants_importable() -> None:
     # 顺带覆盖 dev-plan 表格里其余新增常量，确保无遗漏
     from config import (  # noqa: F401
         GIT_CLONE_DEPTH,
-        PWC_RATE_LIMIT_RPS,
-        PWC_TIMEOUT_CONNECT,
-        PWC_TIMEOUT_READ,
         STREAMLIT_PAGE_INPUT,
         STREAMLIT_PAGE_PROGRESS,
         STREAMLIT_PAGE_REVIEW,
@@ -47,7 +45,9 @@ def test_cp_a4_1_all_new_constants_importable() -> None:
 
 
 def test_cp_a4_2_constant_values() -> None:
-    """CP-A4-2: PLANNING_SOFT_HINT_THRESHOLD/REACT_MAX_ROUNDS_* 默认值与 dev-plan 一致。"""
+    """CP-A4-2: PLANNING_SOFT_HINT_THRESHOLD/REACT_MAX_ROUNDS_* 默认值与 dev-plan 一致。
+    注：Sprint 6 MF-5 已删除 PWC_* 四常量（PwC 下线），本测试同步移除对应项。
+    """
     import config
 
     assert config.PLANNING_SOFT_HINT_THRESHOLD == 5
@@ -58,10 +58,6 @@ def test_cp_a4_2_constant_values() -> None:
     assert config.GIT_CLONE_TIMEOUT == 60
     assert config.GIT_CLONE_DEPTH == 1
     assert config.URL_REACHABLE_TIMEOUT == 5
-    assert config.PWC_BASE_URL == "https://paperswithcode.com/api/v1"
-    assert config.PWC_RATE_LIMIT_RPS == 5
-    assert config.PWC_TIMEOUT_CONNECT == 5
-    assert config.PWC_TIMEOUT_READ == 10
     assert config.STREAMLIT_POLL_INTERVAL == 1500
     assert config.STREAMLIT_PAGE_INPUT == "input"
     assert config.STREAMLIT_PAGE_PROGRESS == "progress"
@@ -69,7 +65,9 @@ def test_cp_a4_2_constant_values() -> None:
 
 
 def test_cp_a4_2_types_are_strict() -> None:
-    """CP-A4-2 补：数值常量为严格 int（非 bool），路径常量为 Path，URL/路由为 str。"""
+    """CP-A4-2 补：数值常量为严格 int（非 bool），路径常量为 Path，URL/路由为 str。
+    注：Sprint 6 MF-5 已删除 PWC_* 四常量（PwC 下线），本测试同步移除对应项。
+    """
     import config
 
     for name in (
@@ -79,16 +77,12 @@ def test_cp_a4_2_types_are_strict() -> None:
         "GIT_CLONE_TIMEOUT",
         "GIT_CLONE_DEPTH",
         "URL_REACHABLE_TIMEOUT",
-        "PWC_RATE_LIMIT_RPS",
-        "PWC_TIMEOUT_CONNECT",
-        "PWC_TIMEOUT_READ",
         "STREAMLIT_POLL_INTERVAL",
     ):
         assert type(getattr(config, name)) is int, f"{name} 应为严格 int"
 
     assert isinstance(config.WORKSPACE_REPOS_DIR, Path)
     for name in (
-        "PWC_BASE_URL",
         "STREAMLIT_PAGE_INPUT",
         "STREAMLIT_PAGE_PROGRESS",
         "STREAMLIT_PAGE_REVIEW",
@@ -166,25 +160,9 @@ def test_aux_1_repos_dir_is_resolved_subdir_of_workspace() -> None:
     assert repos.parent == workspace
 
 
-def test_aux_2_pwc_rate_limit_to_interval_ms() -> None:
-    """Aux-2（语义换算）：PWC_RATE_LIMIT_RPS=5 对应 200ms 节流间隔。
-
-    dev-plan L435 声明 "5 req/s 即 200ms 间隔"。A6 pwc_tools 会用
-    ``1000 / RPS`` 计算最小请求间隔，这里固化换算契约，防止默认值漂移
-    导致节流间隔静默变化。
-    """
-    import config
-
-    assert config.PWC_RATE_LIMIT_RPS > 0
-    interval_ms = 1000 / config.PWC_RATE_LIMIT_RPS
-    assert interval_ms == 200.0
-
-
 def test_aux_3_timeout_and_threshold_semantics() -> None:
-    """Aux-3（语义合理性）：超时 / 阈值均为正数，且 PwC connect <= read。
-
-    防御性断言这些数值不是 0 / 负数（会让超时立即触发或永不触发），
-    并固化 connect 超时不应大于 read 超时这一常识不变量。
+    """Aux-3（语义合理性）：超时 / 阈值均为正数。
+    注：Sprint 6 MF-5 已删除 PWC_* 四常量（PwC 下线），Aux-2 也一同移除。
     """
     import config
 
@@ -192,16 +170,12 @@ def test_aux_3_timeout_and_threshold_semantics() -> None:
         "GIT_CLONE_TIMEOUT",
         "GIT_CLONE_DEPTH",
         "URL_REACHABLE_TIMEOUT",
-        "PWC_TIMEOUT_CONNECT",
-        "PWC_TIMEOUT_READ",
         "STREAMLIT_POLL_INTERVAL",
         "PLANNING_SOFT_HINT_THRESHOLD",
         "REACT_MAX_ROUNDS_RESOURCE_SCOUT",
         "REACT_MAX_ROUNDS_PLANNING",
     ):
         assert getattr(config, name) > 0, f"{name} 应为正数"
-
-    assert config.PWC_TIMEOUT_CONNECT <= config.PWC_TIMEOUT_READ
 
 
 def test_aux_4_streamlit_page_constants_distinct() -> None:
@@ -229,7 +203,6 @@ def test_aux_5_no_env_override_for_sp2_literals(
 
     monkeypatch.setenv("REACT_MAX_ROUNDS_RESOURCE_SCOUT", "999")
     monkeypatch.setenv("GIT_CLONE_TIMEOUT", "999")
-    monkeypatch.setenv("PWC_BASE_URL", "https://evil.example.com")
     monkeypatch.setenv("STREAMLIT_POLL_INTERVAL", "999")
     monkeypatch.setenv("PLANNING_SOFT_HINT_THRESHOLD", "999")
 
@@ -237,7 +210,6 @@ def test_aux_5_no_env_override_for_sp2_literals(
     try:
         assert reloaded.REACT_MAX_ROUNDS_RESOURCE_SCOUT == 10
         assert reloaded.GIT_CLONE_TIMEOUT == 60
-        assert reloaded.PWC_BASE_URL == "https://paperswithcode.com/api/v1"
         assert reloaded.STREAMLIT_POLL_INTERVAL == 1500
         assert reloaded.PLANNING_SOFT_HINT_THRESHOLD == 5
     finally:
@@ -245,7 +217,6 @@ def test_aux_5_no_env_override_for_sp2_literals(
         for key in (
             "REACT_MAX_ROUNDS_RESOURCE_SCOUT",
             "GIT_CLONE_TIMEOUT",
-            "PWC_BASE_URL",
             "STREAMLIT_POLL_INTERVAL",
             "PLANNING_SOFT_HINT_THRESHOLD",
         ):

@@ -64,7 +64,7 @@ Sprint 6 针对 2026-07-12 真实浏览器走查（HippoRAG 靶）暴露的"appr
 | **T-S6-0-2** | MF-2 | 作者字段 `_humanize_authors`（str/dict/list/异形兜底截断） | `ui/pages/paper_input.py` | 无 | 1.5h | 低 |
 | **T-S6-0-3** | MF-6 | 冷启动 spinner（`st.set_page_config` 后、controller 创建前） | `app.py` | 无 | 1h | 低 |
 | **T-S6-0-4** | MF-5 | pwc 摘除代码/测试面预研（除 prompt schema 前缀外）——`pwc_tools.py` 删除 + resource_scout 引用/装配清理 + config `PWC_*` 四常量删 + 降级链改 web search | `core/tools/pwc_tools.py`(删) + `core/nodes/resource_scout.py` + `config.py` + 相关 tests/文档 | 无 | 4h | 中（回归面广，R-S6-5） |
-| **T-S6-1-1** | S6-05 | planning 尾部独立静态段落（P-S6-1，唯一稳定前缀变更之一） | `core/nodes/planning.py` | 无 | 1h | 中（Prompt Cache） |
+| ~~**T-S6-1-1**~~ | ~~S6-05~~ | ~~planning 尾部独立静态段落（P-S6-1，唯一稳定前缀变更之一）~~ | ~~`core/nodes/planning.py`~~ | — | — | **删除**（2026-07-14 Maria 决策：code_only 模式无跑实验步骤，硬约束与模式冲突；由 plan_checks W2 软检测替代） |
 | **T-S6-1-2** | MF-5 | pwc 工具 schema 摘除收口（P-S6-2，resource_scout 工具装配前缀变更） | `core/nodes/resource_scout.py` | T-S6-0-4 | 1h | 中（Prompt Cache） |
 | **T-S6-1-3** | S6-05 | `core/plan_checks.py` 三规则（W1/W2/W3 + 关键词静态小表） | `core/plan_checks.py` | 无 | 4h | 高（误报红线 R-S6-A5） |
 | **T-S6-1-4** | S6-05 | plan_review 警示位（对 interrupt payload 内 plan 调纯函数渲染） | `ui/pages/plan_review.py` | T-S6-1-3 | 2h | 低 |
@@ -220,10 +220,10 @@ graph TD
 5. `.gitignore` 追加 `workspace/pip-cache/`（架构 R-S6-A7）；覆盖仅沙箱子进程环境，宿主 `os.environ` 不动。
 
 **自测检查点**：
-- [ ] CP-0.1-1 `SANDBOX_PIP_CACHE_DIR` 可导入、值为 `WORKSPACE_DIR/"pip-cache"`、类型 Path；`ensure_directories()` 后目录存在（AC-S6-17 常量面）
-- [ ] CP-0.1-2 `_build_sandbox_env` 返回 env 中 `PIP_CACHE_DIR == str(SANDBOX_PIP_CACHE_DIR)`，且**在 extra_env 传入指向 home 的 `PIP_CACHE_DIR` 时仍被覆盖**（无条件压制断言，AC-S6-17 核心）
-- [ ] CP-0.1-3 `make_run_command_tool` 构造的 env 同含正确 `PIP_CACHE_DIR`；宿主 `os.environ` 未被修改（沙箱隔离断言）
-- [ ] CP-0.1-4 既有 `_build_sandbox_env` 白名单/HOME 相关用例回归零退化；`.gitignore` 含 pip-cache 目录
+- [x] CP-0.1-1 `SANDBOX_PIP_CACHE_DIR` 可导入、值为 `WORKSPACE_DIR/"pip-cache"`、类型 Path；`ensure_directories()` 后目录存在（AC-S6-17 常量面）
+- [x] CP-0.1-2 `_build_sandbox_env` 返回 env 中 `PIP_CACHE_DIR == str(SANDBOX_PIP_CACHE_DIR)`，且**在 extra_env 传入指向 home 的 `PIP_CACHE_DIR` 时仍被覆盖**（无条件压制断言，AC-S6-17 核心）
+- [x] CP-0.1-3 `make_run_command_tool` 构造的 env 同含正确 `PIP_CACHE_DIR`；宿主 `os.environ` 未被修改（沙箱隔离断言）
+- [x] CP-0.1-4 既有 `_build_sandbox_env` 白名单/HOME 相关用例回归零退化；`.gitignore` 含 pip-cache 目录
 
 #### 任务 T-S6-0-2：MF-2 作者字段 humanize（P2，走查 §三-1，架构 §7.8 MF-2）
 
@@ -239,9 +239,9 @@ graph TD
 3. 卡片渲染处调用该函数替换裸渲染。
 
 **自测检查点**：
-- [ ] CP-0.2-1 `_humanize_authors` 五形态断言：str / dict 含 name / list[dict] / 缺 name 的 dict / 异形（含走查样本 `{'misc':{},'name':'Bernal...'}`）均返回可读字符串，无裸 dict repr（AC-S6-18）
-- [ ] CP-0.2-2 超长作者列表截断有省略号；空 authors 返回占位/空串不抛异常
-- [ ] CP-0.2-3 paper_input 卡片渲染用例回归：作者区不出现 `{`/`}` 裸字典字符
+- [x] CP-0.2-1 `_humanize_authors` 五形态断言：str / dict 含 name / list[dict] / 缺 name 的 dict / 异形（含走查样本 `{'misc':{},'name':'Bernal...'}`）均返回可读字符串，无裸 dict repr（AC-S6-18）
+- [x] CP-0.2-2 超长作者列表截断有省略号；空 authors 返回占位/空串不抛异常
+- [x] CP-0.2-3 paper_input 卡片渲染用例回归：作者区不出现 `{`/`}` 裸字典字符
 
 #### 任务 T-S6-0-3：MF-6 冷启动 spinner（P2，走查 §三-5，架构 §7.8 MF-6）
 
@@ -257,8 +257,8 @@ graph TD
 3. controller 已存在（热路径）时不渲染 spinner（无感）。
 
 **自测检查点**：
-- [ ] CP-0.3-1 AppTest：首次进入（session 无 graph_controller）时 spinner 文案出现在 controller 创建前；已存在 controller 时不渲染 spinner（落点断言，AC-S6-22 自动可测部分）
-- [ ] CP-0.3-2 无参数/正常路由回归：spinner 改动不影响既有 main() 路由分发；AC-S6-22 手动浏览器复走项挂批次 5
+- [x] CP-0.3-1 AppTest：首次进入（session 无 graph_controller）时 spinner 文案出现在 controller 创建前；已存在 controller 时不渲染 spinner（落点断言，AC-S6-22 自动可测部分）
+- [x] CP-0.3-2 无参数/正常路由回归：spinner 改动不影响既有 main() 路由分发；AC-S6-22 手动浏览器复走项挂批次 5
 
 #### 任务 T-S6-0-4：MF-5 pwc 代码面摘除（P2，走查 §三-3，架构 §7.8 MF-5）
 
@@ -276,10 +276,10 @@ graph TD
 5. **本任务只清代码/测试/降级链，不动 resource_scout 工具 schema 稳定前缀**（那部分是 T-S6-1-2 的活，避免 Prompt Cache 基线在批次 0 就被扰动——前缀变更集中批次 1 一次）。
 
 **自测检查点**：
-- [ ] CP-0.4-1 `import core.tools.pwc_tools` 抛 ModuleNotFoundError（文件已删）；`config.PWC_BASE_URL` 等四常量不存在
-- [ ] CP-0.4-2 resource_scout 代码路径审计：无 pwc 请求路径、无 pwc 工具装配残留（降级链 = deepxiv github_url → web search），mock 断言零 pwc 调用（AC-S6-21）
-- [ ] CP-0.4-3 pwc 相关旧测试整组摘除/改写，改写后用例绿；resource_scout 非 pwc 路径回归零退化
-- [ ] CP-0.4-4 文档同步核查（technical-architecture / 全局 PRD R7 已应用面对齐，架构文档随批勘误）
+- [x] CP-0.4-1 `import core.tools.pwc_tools` 抛 ModuleNotFoundError（文件已删）；`config.PWC_BASE_URL` 等四常量不存在
+- [x] CP-0.4-2 resource_scout 代码路径审计：无 pwc 请求路径、无 pwc 工具装配残留（降级链 = deepxiv github_url → web search），mock 断言零 pwc 调用（AC-S6-21）
+- [x] CP-0.4-3 pwc 相关旧测试整组摘除/改写，改写后用例绿；resource_scout 非 pwc 路径回归零退化
+- [x] CP-0.4-4 文档同步核查（technical-architecture / 全局 PRD R7 已应用面对齐，架构文档随批勘误）
 
 > **批次 0 收口门**：CP-0.1~0.4 全绿 + `.venv/bin/pytest -q -m "not e2e"` 相对 sp5 基线 1754 零退化（pwc 用例摘除后总数下降属预期，账目须精确闭合）。**停手等 Maria 确认再开批次 1。**
 
@@ -324,8 +324,8 @@ graph TD
 3. 与 T-S6-1-1 一起构成 sp6 前缀变更全集——**批次 1 收口即前缀冻结**。
 
 **自测检查点**：
-- [ ] CP-1.2-1 resource_scout 工具集不含 pwc 工具；工具 schema 前缀无 pwc docstring 残留
-- [ ] CP-1.2-2 resource_scout 工具装配用例回归绿（降级链 = deepxiv github_url → web search，与 T-S6-0-4 一致）
+- [x] CP-1.2-1 resource_scout 工具集不含 pwc 工具；工具 schema 前缀无 pwc docstring 残留
+- [x] CP-1.2-2 resource_scout 工具装配用例回归绿（降级链 = deepxiv github_url → web search，与 T-S6-0-4 一致）
 
 #### 任务 T-S6-1-3：`core/plan_checks.py` 三规则（S6-05，架构 §7.5）
 
@@ -344,10 +344,10 @@ graph TD
 6. `expected_results` 消费须容忍 sp5 后的 list 形态（`[{"description", "trend"}]`）。
 
 **自测检查点**：
-- [ ] CP-1.3-1 W1/W2/W3 三规则命中断言：以 `task-19e21e015017` 14 步"两面计划"原文 fixture 驱动，W1/W2 命中（AC-S6-11）
-- [ ] CP-1.3-2 **误报防线同权重**：干净计划 fixture（含数据步骤 + 跑实验出指标步骤 + resource_info 有 dataset）→ 三规则零警示（AC-S6-11 误报面）
-- [ ] CP-1.3-3 W3 数据不可得单测：无 dataset 线索 ∧ selected_repo None ∧ data_preparation 非空 → 命中（AC-S6-12）
-- [ ] CP-1.3-4 边界：`expected_results` 空/list 形态、`execution_steps` 空、`data_preparation` 空各分支返回正确；关键词表窄边界（不误伤含"data"子串的无关词——如实测边界样本）
+- [x] CP-1.3-1 W1/W2/W3 三规则命中断言：以 `task-19e21e015017` 14 步"两面计划"原文 fixture 驱动，W1/W2 命中（AC-S6-11）
+- [x] CP-1.3-2 **误报防线同权重**：干净计划 fixture（含数据步骤 + 跑实验出指标步骤 + resource_info 有 dataset）→ 三规则零警示（AC-S6-11 误报面）
+- [x] CP-1.3-3 W3 数据不可得单测：无 dataset 线索 ∧ selected_repo None ∧ data_preparation 非空 → 命中（AC-S6-12）
+- [x] CP-1.3-4 边界：`expected_results` 空/list 形态、`execution_steps` 空、`data_preparation` 空各分支返回正确；关键词表窄边界（不误伤含"data"子串的无关词——如实测边界样本）
 
 #### 任务 T-S6-1-4：plan_review 警示位（S6-05，架构 §7.5）
 
@@ -363,31 +363,31 @@ graph TD
 3. **警示不阻断审批**——用户知情后仍可 approve（人在回路本义）；零警示时不渲染警示行（干净计划无噪声）。
 
 **自测检查点**：
-- [ ] CP-1.4-1 AppTest：两面计划 payload → 审核页信息完整度卡片位出现 W1/W2 警示行且 approve 按钮仍可用（不阻断，AC-S6-11 渲染面）
-- [ ] CP-1.4-2 干净计划 payload → 零警示行（误报防线渲染面）
-- [ ] CP-1.4-3 数据不可得 payload → W3 警示行出现；interrupt 种类集合不变（无新 gate）
+- [x] CP-1.4-1 AppTest：两面计划 payload → 审核页信息完整度卡片位出现 W1/W2 警示行且 approve 按钮仍可用（不阻断，AC-S6-11 渲染面）
+- [x] CP-1.4-2 干净计划 payload → 零警示行（误报防线渲染面）
+- [x] CP-1.4-3 数据不可得 payload → W3 警示行出现；interrupt 种类集合不变（无新 gate）
 
 #### 任务 T-S6-1-5：字节断言 + 种类守门收口（R-PC4，架构 §9.1/§9.4）
 
 - **产出文件**：`tests/`（§9.4 prompt 类清单：planning 尾部段字节断言、pwc 摘除后 resource_scout schema 断言、interrupt 种类集合守门用例）
-- **依赖项**：T-S6-1-1 / T-S6-1-2
+- **依赖项**：T-S6-1-2（T-S6-1-1 已删除）
 - **预计复杂度**：中（2.5h）
 - **架构参考**：architecture §9.1（离线维随批）+ §9.4 回归修断言清单
 
 **需要实现的内容**：
 
-1. planning 主体字节级一致断言（去尾部动态段后两论文比较，CP-1.1-2 的测试落地）；
+1. ~~planning 主体字节级一致断言（CP-1.1-2 的测试落地）~~ → **改为**：planning prompt 无新增前缀守门断言（断言当前 planning system prompt 主体字节未变动，作为回归基线）；
 2. resource_scout 工具 schema pwc 摘除后的稳定断言（前缀无 pwc）；
 3. **interrupt 种类集合守门用例**：断言 sp6 后 interrupt 种类仍恰三类（planning#1 / dev_loop#2 / user_input#3），S6-05 数据可得性警示复用审核不新增（AC-S6-12 守门面）；
 4. 受影响既有 prompt 文面断言修复（pwc 摘除牵动的 resource_scout 断言、planning 段落新增牵动的断言）——只换不弱化。
 
 **自测检查点**：
-- [ ] CP-1.5-1 planning 主体字节稳定断言 + 尾部段落文案断言绿（AC-S6-13）
-- [ ] CP-1.5-2 resource_scout schema 无 pwc 前缀断言绿
-- [ ] CP-1.5-3 interrupt 种类集合守门用例：恰三类，无新增（AC-S6-12）
-- [ ] CP-1.5-4 受影响 prompt 类既有断言逐条适配（只换断言目标不弱化语义，清单记 TODO）
+- [x] CP-1.5-1 planning prompt 无新增前缀守门断言绿（现状快照，T-S6-1-1 已删故无 AC-S6-13 约束段）
+- [x] CP-1.5-2 resource_scout schema 无 pwc 前缀断言绿
+- [x] CP-1.5-3 interrupt 种类集合守门用例：恰三类，无新增（AC-S6-12）
+- [x] CP-1.5-4 受影响 prompt 类既有断言逐条适配（只换断言目标不弱化语义，清单记 TODO）
 
-> **批次 1 收口门**：CP-1.1~1.5 全绿 + 全量非 e2e 回归零退化（离线维基线随批重建）+ **前缀冻结令生效**（sp6 内此后不动任何稳定前缀）。在线维三维复采延批次 5。**停手等 Maria 确认再开批次 2。**
+> **批次 1 收口门**：CP-1.2~1.5 全绿（T-S6-1-1 已删，CP-1.1 系列作废）+ 全量非 e2e 回归零退化（离线维基线随批重建）+ **前缀冻结令生效**（sp6 内此后不动任何稳定前缀）。在线维三维复采延批次 5。**停手等 Maria 确认再开批次 2。**
 
 ---
 

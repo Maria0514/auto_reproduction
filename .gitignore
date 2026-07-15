@@ -9,6 +9,8 @@
 # workspaces/（复数）= spike 验证的 checkpoint sqlite 存档（spike_s1/s2/s3，
 # 由 scripts/spike_*.py 写入），作为 spike 报告物证保留在版本控制中
 workspace/
+# Sprint 6 MF-1：pip 缓存落 /data 卷（SANDBOX_PIP_CACHE_DIR）防打爆 home 配额
+workspace/pip-cache/
 
 # 一次性调试探针与个人脚本（不进版本控制）
 _probe_*.py

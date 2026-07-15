@@ -37,6 +37,7 @@ import shlex
 from typing import Dict, Optional
 
 import config
+from config import SANDBOX_PIP_CACHE_DIR
 from core.secrets_store import mask_value
 from sandbox.local_venv import _require_within_workspace, _run_subprocess
 
@@ -102,12 +103,16 @@ def make_run_command_tool(base_dir: str, extra_env: Optional[Dict[str, str]] = N
 
         # 3) 系统解释器直跑 argv（4 护栏全量复用；config 常量运行期动态读取，
         #    便于测试 monkeypatch 短超时验证超时护栏）。
+        # Sprint 6 MF-1：注入 PIP_CACHE_DIR（覆盖沙箱子进程环境），与 _build_sandbox_env
+        # 保持同点注入语义，防止 coding smoke 中 pip install 打爆 home 配额。
+        effective_env = dict(extra_env) if extra_env else {}
+        effective_env["PIP_CACHE_DIR"] = str(SANDBOX_PIP_CACHE_DIR)
         rr = _run_subprocess(
             argv,
             cwd=base_dir,
             timeout=config.RUN_COMMAND_TIMEOUT,
             output_max_bytes=config.SANDBOX_OUTPUT_MAX_BYTES,
-            extra_env=extra_env,
+            extra_env=effective_env,
         )
 
         # 4) 返回 JSON（BUG-S1-02 范式）；stdout/stderr 经 mask_value 脱敏

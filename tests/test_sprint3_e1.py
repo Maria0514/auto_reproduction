@@ -282,8 +282,16 @@ class _FakeSidebarCtx:
         return False
 
 
+class _FakeSpinnerCtx:
+    """fake st.spinner 上下文管理器（Sprint 6 MF-6 新增）。"""
+    def __enter__(self):
+        return self
+    def __exit__(self, *exc):
+        return False
+
+
 class _FakeStreamlit:
-    """最小化 fake streamlit：仅覆盖 main() 用到的 API（set_page_config / session_state / info）。"""
+    """最小化 fake streamlit：仅覆盖 main() 用到的 API（set_page_config / session_state / info / spinner）。"""
 
     def __init__(self, current_page: str) -> None:
         self.session_state: Dict[str, Any] = {"current_page": current_page}
@@ -296,6 +304,10 @@ class _FakeStreamlit:
 
     def info(self, *args, **kwargs):
         self.info_called = True
+
+    def spinner(self, text: str = ""):
+        """Sprint 6 MF-6：fake spinner 上下文管理器。"""
+        return _FakeSpinnerCtx()
 
 
 class _FakePageModule:

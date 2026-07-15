@@ -112,7 +112,10 @@ def test_build_sandbox_env_keeps_allowlist(monkeypatch):
     assert env.get("no_proxy") == "localhost"
     # pip 源类保留（PIP_ 前缀）。
     assert env.get("PIP_INDEX_URL") == "https://pypi.example/simple"
-    assert env.get("PIP_CACHE_DIR") == "/tmp/pipcache"
+    # Sprint 6 MF-1：PIP_CACHE_DIR 无条件覆盖为 SANDBOX_PIP_CACHE_DIR（/data 卷），
+    # 防止打爆 home 配额——即使 extra_env 或白名单透传了旧值也会被压制。
+    from config import SANDBOX_PIP_CACHE_DIR
+    assert env.get("PIP_CACHE_DIR") == str(SANDBOX_PIP_CACHE_DIR)
 
 
 def test_build_sandbox_env_extra_env_overrides(monkeypatch):
@@ -181,7 +184,9 @@ def test_build_sandbox_env_credential_filter_applies_allowlist_wide(monkeypatch)
     assert "https_proxy" not in env, "认证代理（userinfo 形态）必须剔除"
     assert env.get("http_proxy") == "http://proxy.example:3128"
     assert env.get("PIP_INDEX_URL") == "https://pypi.example/simple"
-    assert env.get("PIP_CACHE_DIR") == "/tmp/pipcache"
+    # Sprint 6 MF-1：PIP_CACHE_DIR 无条件覆盖为 SANDBOX_PIP_CACHE_DIR（/data 卷）
+    from config import SANDBOX_PIP_CACHE_DIR
+    assert env.get("PIP_CACHE_DIR") == str(SANDBOX_PIP_CACHE_DIR)
 
 
 # ===========================================================================

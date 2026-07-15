@@ -82,13 +82,6 @@ GIT_CLONE_DEPTH: int = 1  # 浅克隆 depth
 URL_REACHABLE_TIMEOUT: int = 5  # check_url_reachable HEAD 探测超时（秒）
 
 
-# ========== Sprint 2：Papers With Code API（pwc_tools） ==========
-
-PWC_BASE_URL: str = "https://paperswithcode.com/api/v1"
-PWC_RATE_LIMIT_RPS: int = 5  # 本地节流速率（5 req/s 即 200ms 间隔）
-PWC_TIMEOUT_CONNECT: int = 5  # HTTP connect 超时（秒）
-PWC_TIMEOUT_READ: int = 10  # HTTP read 超时（秒）
-
 
 # ========== Sprint 2：Streamlit UI ==========
 
@@ -102,6 +95,11 @@ STREAMLIT_PAGE_REVIEW: str = "review"  # UI 路由常量：计划审核页
 # 沿用 sp1/sp2 字面量风格（同款 timeout/max_rounds 均为纯字面量，不加 os.getenv 覆盖）。
 # sandbox venv/code/report 均落在 WORKSPACE_DIR/<thread>/ 下，复用既有 WORKSPACE_DIR，
 # 无需独立常量目录，ensure_directories() 不变。
+
+# Sprint 6 MF-1：pip 缓存落 /data 卷，防止打爆 home 配额（架构 §7.8 MF-1 / A-2）。
+# 沙箱子进程 _build_sandbox_env 无条件覆盖 PIP_CACHE_DIR 为此路径，不用 --no-cache-dir
+# 方案（环境变量单点覆盖覆盖所有路径，含 agent 自行敲的 pip install）。
+SANDBOX_PIP_CACHE_DIR: Path = WORKSPACE_DIR / "pip-cache"
 
 SANDBOX_EXEC_TIMEOUT: int = 1800  # 单条执行步骤子进程超时（秒，30 分钟；疑似死循环判据）
 SANDBOX_VENV_CREATE_TIMEOUT: int = 300  # `python -m venv` 创建超时（秒）
@@ -168,3 +166,4 @@ def ensure_directories() -> None:
     WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     WORKSPACE_REPOS_DIR.mkdir(parents=True, exist_ok=True)
+    SANDBOX_PIP_CACHE_DIR.mkdir(parents=True, exist_ok=True)

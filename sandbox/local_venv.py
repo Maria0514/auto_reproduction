@@ -44,6 +44,7 @@ from typing import Dict, List, Optional, Tuple
 from config import (
     SANDBOX_EXEC_TIMEOUT,
     SANDBOX_OUTPUT_MAX_BYTES,
+    SANDBOX_PIP_CACHE_DIR,
     SANDBOX_PIP_INSTALL_TIMEOUT,
     SANDBOX_PIP_MAX_RETRIES,
     SANDBOX_VENV_CREATE_TIMEOUT,
@@ -123,6 +124,11 @@ _SANDBOX_ENV_ALLOWLIST = frozenset({
 # 注意不含 PYTHON*（PYTHONPATH 继承会把父进程模块路径漏进沙箱，破坏隔离）。
 _SANDBOX_ENV_ALLOWLIST_PREFIXES = ("LC_", "PIP_")
 
+# PIP_CACHE_DIR 注入点说明（Sprint 6 MF-1）：
+# 白名单前缀 PIP_* 可能从宿主继承指向 home 的 PIP_CACHE_DIR（~/.cache/pip），
+# 必须在 extra_env 合并之后无条件覆盖为 SANDBOX_PIP_CACHE_DIR（/data 卷），
+# 防止打爆 home 配额。覆盖使用赋值而非 setdefault，确保宿主传入值被压制。
+
 # 凭证形态否决（sp4 D2 / HOTFIX-2 备忘闭环，架构师定案 (a')-修正版）：
 # URL userinfo（`://user:pass@host` 或 token-only `://token@host`）按 RFC 语义
 # 本身即凭证载体——`PIP_INDEX_URL=https://user:token@host/` / 认证代理等形态若随
@@ -156,6 +162,10 @@ def _build_sandbox_env(extra_env: Optional[Dict[str, str]] = None) -> Dict[str, 
         env[key] = value
     if extra_env:
         env.update(extra_env)
+    # Sprint 6 MF-1：无条件覆盖 PIP_CACHE_DIR 为项目 /data 卷路径（压制宿主或 extra_env
+    # 中指向 home 的旧值，防止沙箱 pip install 打爆 home 配额）。
+    # 使用赋值而非 setdefault，保证在 extra_env 合并之后强制生效。
+    env["PIP_CACHE_DIR"] = str(SANDBOX_PIP_CACHE_DIR)
     return env
 
 
