@@ -37,7 +37,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -1977,6 +1977,13 @@ def _route_user_fix_decision(decision: Any, updates: dict, state: GlobalState) -
     return out
 
 
+# 早停终态文案：N+1 轮（尾部 N 条历史 + 当前 1 次），面板 error_summary 与 :2070 logger 共用。
+_NO_METRICS_EARLY_STOP_SUMMARY = (
+    f"已连续 {NO_METRICS_EARLY_STOP_ROUNDS + 1} 轮零指标，"
+    "自动修复无进展，请检查执行步骤或更换论文"
+)
+
+
 def _no_metrics_stalled(state: GlobalState, feedback: "ExecutionFeedback") -> bool:
     """早停判定：本轮 NO_METRICS 且历史尾部已连续 NO_METRICS_EARLY_STOP_ROUNDS 轮。
 
@@ -2056,10 +2063,16 @@ def _maybe_interrupt_or_return(
         return updates
 
     # 本回合结果已落盘 → 安全地在函数体内 interrupt()。
+    # 早停终态：覆盖 feedback.summary/fix_hint（面板 error_summary 渲染此值），使决策面板承载
+    # 早停轮次上下文文案而非普通 NO_METRICS 通用文案（架构 §3.4，走既有 summary 通道，payload
+    # 键结构不变）。reason 与 payload 文案共用同一常量，避免日志/面板轮次口径不一致。
+    panel_feedback = feedback
     if _no_metrics_stalled(state, feedback):
-        reason = (
-            f"已连续 {NO_METRICS_EARLY_STOP_ROUNDS} 轮零指标，"
-            "自动修复无进展，请检查执行步骤或更换论文"
+        reason = _NO_METRICS_EARLY_STOP_SUMMARY
+        panel_feedback = replace(
+            feedback,
+            summary=_NO_METRICS_EARLY_STOP_SUMMARY,
+            fix_hint=_NO_METRICS_EARLY_STOP_SUMMARY,
         )
     elif dev_calls >= MAX_DEV_LOOP_LLM_CALLS:
         reason = "子预算触顶"
@@ -2075,7 +2088,9 @@ def _maybe_interrupt_or_return(
         dev_calls,
         feedback.category.value,
     )
-    decision = interrupt(_build_dev_loop_interrupt_payload(exec_result, feedback, state))
+    decision = interrupt(
+        _build_dev_loop_interrupt_payload(exec_result, panel_feedback, state)
+    )
     return _route_user_fix_decision(decision, updates, state)
 
 

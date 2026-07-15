@@ -498,7 +498,7 @@ graph TD
 
 **自测检查点**：
 - [x] CP-2.5-1 `NO_METRICS_EARLY_STOP_ROUNDS==2` 常量断言；`_no_metrics_stalled` 真值表（fix_loop_history 尾部 <N / ==N / >N 条 no_metrics）
-- [x] CP-2.5-2 早停接线：连续 N 轮 no_metrics → `_maybe_interrupt_or_return` 跳过 retry_coding 走 interrupt#2；决策面板文案含轮次上下文（AC-S6-10 早停）
+- [x] CP-2.5-2 早停接线：连续 N 轮 no_metrics → `_maybe_interrupt_or_return` 跳过 retry_coding 走 interrupt#2；决策面板文案含轮次上下文（AC-S6-10 早停）〔2026-07-15 复查修正：批次 2 首次交付时**假绿**——早停 reason 文案只进 logger.warning 未进 interrupt payload，面板显示通用 NO_METRICS 文案（AC-S6-10 面板文案面未真正达标），且轮次数 off-by-one（写 N 实际第 N+1 触发）。已修：`_NO_METRICS_EARLY_STOP_SUMMARY`(N+1=3) + `replace(feedback, summary/fix_hint=...)` 喂 payload builder（键结构不变），测试补 payload 文案断言（显式"已连续 3 轮"）+ 对照 + 键结构用例，验红通过，全量 1835 绿。报告 `test-reports/2026-07-15_no-metrics-early-stop-payload.md`〕
 - [ ] CP-2.5-3 定向 hint 三下游可见：coding `_digest_execution_feedback` / execution `_build_execution_context` / 面板 errors[0] 均含"缺指标产出/未调用实验主入口"语义（AC-S6-10 hint 面，零新通道验证）
 - [x] CP-2.5-4 `term_map['error_category:no_metrics']` 中文条目存在；面板渲染 no_metrics 不裸露 `no_metrics` 英文字面量
 

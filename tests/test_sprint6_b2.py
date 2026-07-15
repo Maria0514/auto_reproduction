@@ -614,6 +614,164 @@ class TestNoMetricsEarlyStop:
         # 应该触发 interrupt（因为早停）
         assert len(interrupted_payloads) == 1
 
+        # ---- 补断言（守 AC-S6-10 / 架构 §3.4 / CP-2.5-2 假绿回填）----
+        # interrupt#2 payload 的 error_summary / fix_hint 两个面板渲染字段
+        # （ui/pages/execution_monitor.py:579/:582）必须承载早停轮次上下文文案，
+        # 而非普通 NO_METRICS 通用文案。3 = NO_METRICS_EARLY_STOP_ROUNDS(2) + 1，
+        # 此处显式写死 "已连续 3 轮" 锁死 off-by-one（不用 N+1 表达式/import 常量，
+        # 常量若被改错本断言应跟着变红）。
+        payload = interrupted_payloads[0]
+        assert "已连续 3 轮" in payload["error_summary"], (
+            f"error_summary 应含早停轮次文案 '已连续 3 轮'，实际: {payload['error_summary']!r}"
+        )
+        assert "自动修复无进展" in payload["error_summary"], (
+            f"error_summary 应含 '自动修复无进展'，实际: {payload['error_summary']!r}"
+        )
+        # 两个面板渲染字段都要守（fix_hint 也被早停覆盖，见 execution.py:2075）。
+        assert "已连续 3 轮" in payload["fix_hint"], (
+            f"fix_hint 应含早停轮次文案 '已连续 3 轮'，实际: {payload['fix_hint']!r}"
+        )
+
+    def test_cp_2_5_2_normal_no_metrics_round_no_early_stop_text(self):
+        """CP-2.5-2 对照：普通（非早停）NO_METRICS 轮次走 retry_coding，未触发早停，
+        文案不含 '已连续' —— 证明早停终态与普通轮次文案可区分（守缺陷本质）。
+
+        构造：fix_loop_history 尾部只有 1 条 no_metrics（不足 N=2），且预算/回合数都
+        远低于上限 → auto_fixable 分支命中，走 _ROUTE_RETRY_CODING，不产生 interrupt。
+        对照点：普通轮次 route == retry_coding 且 _no_metrics_stalled 为 False；
+        与早停用例的 error_summary 含 '已连续 3 轮' 形成两态可区分对照。
+        """
+        from core.nodes.execution import (
+            _maybe_interrupt_or_return,
+            _no_metrics_stalled,
+            _build_dev_loop_interrupt_payload,
+            ExecutionResult,
+            _ROUTE_RETRY_CODING,
+        )
+
+        exec_result: ExecutionResult = {  # type: ignore[assignment]
+            "success": False,
+            "metrics": {},
+            "logs": "",
+            "errors": ["[error_category=no_metrics] 无指标"],
+            "artifacts": [],
+            "runtime_seconds": 0.0,
+            "environment_info": {},
+            "step_reconciliation": {},
+            "degraded_credentials": [],
+            "budget_truncated": False,
+            "metrics_groups": {},
+        }
+
+        no_metrics_fb = self._no_metrics_feedback()
+        # 尾部仅 1 条 no_metrics（< N=2）→ 不早停。
+        history = self._make_history(["no_metrics"] * (self.N - 1))
+        state = {
+            "fix_loop_count": 1,
+            "fix_loop_history": history,
+            "retry_budget_remaining": 50,
+            "_dev_loop_llm_calls": 5,
+            "node_errors": [],
+            "degraded_nodes": [],
+        }
+        updates = {
+            "execution_result": exec_result,
+            "current_step": "execution",
+            "node_errors": [],
+            "degraded_nodes": [],
+        }
+
+        # 前置事实：普通轮次 _no_metrics_stalled 为 False（对照的判据来源）。
+        assert _no_metrics_stalled(state, no_metrics_fb) is False
+
+        interrupted_payloads = []
+
+        def fake_interrupt(payload):
+            interrupted_payloads.append(payload)
+            return {"decision": "terminate"}
+
+        with patch("core.nodes.execution.interrupt", side_effect=fake_interrupt):
+            result = _maybe_interrupt_or_return(
+                updates, exec_result, no_metrics_fb, state, already_committed=True
+            )
+
+        # 普通轮次：回 coding 修复，不 interrupt。
+        assert result.get("_dev_loop_route") == _ROUTE_RETRY_CODING
+        assert len(interrupted_payloads) == 0, "普通 NO_METRICS 轮次不应触发 interrupt#2"
+
+        # 对照核心：普通轮次若构造其 payload，通用文案不含 '已连续'（与早停终态可区分）。
+        # 该路不 interrupt，故直接对通用 feedback 构造 payload 验证通用文案基线。
+        normal_payload = _build_dev_loop_interrupt_payload(exec_result, no_metrics_fb, state)
+        assert "已连续" not in normal_payload["error_summary"], (
+            f"普通 NO_METRICS 轮次的 error_summary 不应含早停文案 '已连续'，"
+            f"实际: {normal_payload['error_summary']!r}"
+        )
+        assert "已连续" not in normal_payload["fix_hint"]
+
+    def test_cp_2_5_2_early_stop_payload_keys_unchanged(self):
+        """CP-2.5-2 补充（守 AC-S4-05）：早停 payload 键集合与普通 dev_loop_failure
+        payload 键集合完全一致（10 键），且 error_category 仍为 'no_metrics'
+        —— replace(...) 只覆盖 summary/fix_hint，键结构与 category 不受影响。
+        """
+        from dataclasses import replace as _dc_replace
+
+        from core.nodes.execution import (
+            _build_dev_loop_interrupt_payload,
+            _NO_METRICS_EARLY_STOP_SUMMARY,
+            ExecutionResult,
+        )
+
+        exec_result: ExecutionResult = {  # type: ignore[assignment]
+            "success": False,
+            "metrics": {},
+            "logs": "",
+            "errors": ["[error_category=no_metrics] 无指标"],
+            "artifacts": [],
+            "runtime_seconds": 0.0,
+            "environment_info": {},
+            "step_reconciliation": {},
+            "degraded_credentials": [],
+            "budget_truncated": False,
+            "metrics_groups": {},
+        }
+        state = {
+            "fix_loop_count": self.N,
+            "fix_loop_history": self._make_history(["no_metrics"] * self.N),
+        }
+
+        normal_fb = self._no_metrics_feedback()
+        # 复刻产品代码早停覆盖手法（execution.py:2072-2076）。
+        early_stop_fb = _dc_replace(
+            normal_fb,
+            summary=_NO_METRICS_EARLY_STOP_SUMMARY,
+            fix_hint=_NO_METRICS_EARLY_STOP_SUMMARY,
+        )
+
+        normal_payload = _build_dev_loop_interrupt_payload(exec_result, normal_fb, state)
+        early_payload = _build_dev_loop_interrupt_payload(exec_result, early_stop_fb, state)
+
+        expected_keys = {
+            "interrupt_kind",
+            "fix_loop_count",
+            "error_category",
+            "error_summary",
+            "fix_hint",
+            "auto_fixable",
+            "fix_loop_history",
+            "execution_errors",
+            "representative_stderr",
+            "options",
+        }
+        # 早停 payload 键集合 == 普通 payload 键集合 == 冻结的 10 键（AC-S4-05 命门）。
+        assert set(early_payload.keys()) == set(normal_payload.keys())
+        assert set(early_payload.keys()) == expected_keys
+        assert len(early_payload) == 10
+        # replace 保留 category：早停仍是 no_metrics 分类，interrupt_kind 不变。
+        assert early_payload["error_category"] == "no_metrics"
+        assert early_payload["interrupt_kind"] == "dev_loop_failure"
+        # 键结构不变的同时文案确实被早停覆盖（与上面文案断言呼应）。
+        assert "已连续 3 轮" in early_payload["error_summary"]
+
     def test_cp_2_5_3_term_map_no_metrics_entry(self):
         """CP-2.5-3：term_map['error_category:no_metrics'] 中文条目存在。"""
         from ui.term_map import TERM_LABELS, humanize
