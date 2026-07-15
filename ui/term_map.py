@@ -60,6 +60,7 @@ TERM_LABELS: Dict[str, str] = {
     "error_category:timeout": "执行超时",
     "error_category:unresolved_resource": "资源无法解析",
     "error_category:none": "无错误",
+    "error_category:no_metrics": "未产出指标",
     "error_category:degraded": "已降级",
     # --- node（graph.py 七节点，中文名与既有页面显示表口径对齐）---
     "node:paper_intake": "解析论文",

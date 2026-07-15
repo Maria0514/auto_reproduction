@@ -22,5 +22,11 @@ scripts/shot_theme.py
 # LangGraph SqliteSaver 运行时 checkpoint 数据库（含 WAL 模式伴生文件 -shm/-wal）
 checkpoints.db*
 
+# Sprint 6 测试 fixture：checkpoints 字节副本（55MB×3，不进版本控制）
+# 本地由主控用 cp checkpoints.db tests/fixtures/checkpoints_s6_*.db 生成
+tests/fixtures/checkpoints_s6_*.db
+tests/fixtures/checkpoints_s6_*.db-shm
+tests/fixtures/checkpoints_s6_*.db-wal
+
 # 个人面试速览用 HTML 项目报告（不进版本控制）
 docs/reports/

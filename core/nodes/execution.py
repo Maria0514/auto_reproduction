@@ -52,6 +52,7 @@ from config import (
     DEV_LOOP_MIN_CALLS_PER_ROUND,
     MAX_DEV_LOOP_LLM_CALLS,
     MAX_FIX_LOOP_COUNT,
+    NO_METRICS_EARLY_STOP_ROUNDS,
     REACT_EXECUTION_ROUNDS_MARGIN,
     REACT_MAX_ROUNDS_EXECUTION,
     REACT_MAX_ROUNDS_EXECUTION_CAP,
@@ -61,7 +62,7 @@ from core.llm_client import create_llm, resolve_llm_config
 from core.react_base import _repair_truncated_json_prefix, create_react_subgraph
 from core.secrets_store import build_credential_env, load_all_secrets, mask_value
 from core.state import ExecutionResult, FixLoopRecord, GlobalState
-from core.tools.interaction_tools import request_user_input
+from core.tools.interaction_tools import make_request_user_input_tool
 from sandbox.local_venv import (
     SandboxPrepareResult,
     SandboxRunResult,
@@ -91,6 +92,14 @@ _ROUTE_AWAIT_INTERRUPT: str = "await_dev_loop_interrupt"
 # 单条 stderr/代表性片段裁剪上限（防 payload / NodeError 撑爆）。
 _STDERR_TAIL_CHARS: int = 2000
 
+# S6-B2（T-S6-2-3）：降级凭证通用指令常量（coding/execution 两侧值一致）。
+# 降级非空时注入 HumanMessage payload，告知 agent 全程走模拟路径。
+_CREDENTIAL_DEGRADATIONS_DIRECTIVE: str = (
+    "重要：部分凭证已被用户明确拒绝，下游模拟已激活。"
+    "在所有步骤中，全程不得再向用户索要被拒绝的凭证；"
+    "所有涉及该凭证的功能必须走模拟/mock 路径，并在报告中如实声明模拟范围。"
+)
+
 
 # ---------------------------------------------------------------------------
 # 错误分类载体（节点本地 dataclass / Enum，不进 core/state.py，架构 §2.3.2）
@@ -115,6 +124,8 @@ class ErrorCategory(str, Enum):
     TIMEOUT = "timeout"
     UNRESOLVED_RESOURCE = "unresolved_resource"
     NONE = "none"  # 执行成功，无错误
+    # S6-B2（T-S6-2-4）：代码跑通但未产出指标——可自动修复（送回 coding 检查入口脚本）。
+    NO_METRICS = "no_metrics"
 
 
 # 可自动修复类集合（驱动 §2.5.2 路由：是否回 coding）。
@@ -124,6 +135,7 @@ AUTO_FIXABLE = {
     ErrorCategory.DEPENDENCY,
     ErrorCategory.PATH,
     ErrorCategory.RUNTIME,
+    ErrorCategory.NO_METRICS,  # S6-B2（T-S6-2-4）：零指标可修复
 }
 
 
@@ -1108,6 +1120,17 @@ def _build_execution_agent_context(
             "errors": [e if isinstance(e, str) else str(e) for e in errors],
             "stderr_tail": _tail(logs),
         }
+
+    # S6-B2（T-S6-2-3）：gate 放行后的降级事实注入——用户已显式降级的凭证
+    # {purpose_key: purpose} 摘要告知 agent，触发模拟路径。
+    # 非空才注入（零降级路径的 HumanMessage 字节零扰动）。
+    degradations = state.get("credential_degradations") or {}
+    if isinstance(degradations, dict) and degradations:
+        payload["credential_degradations"] = {
+            str(k): str(v) for k, v in degradations.items()
+        }
+        payload["credential_degradations_directive"] = _CREDENTIAL_DEGRADATIONS_DIRECTIVE
+
     return payload
 
 
@@ -1310,7 +1333,7 @@ def _run_execution_agent(
         tools = [
             make_prepare_environment_tool(work_dir, plan, collector, extra_env),
             make_run_in_sandbox_tool(work_dir, collector, extra_env, python_exe_ref),
-            request_user_input,  # interrupt#3（B2 门禁已过，2026-07-04）
+            make_request_user_input_tool(state.get("credential_degradations") or {}),  # interrupt#3（B2 门禁已过，2026-07-04）
         ]
 
         # 装配项 2：消息装配（Prompt Cache 方案 A）。
@@ -1599,6 +1622,43 @@ def _reconcile_steps(
         "extra_commands": [mask_value(c) or "" for c in extra_commands],
         "attribution_unavailable": attribution_unavailable,
     }
+
+
+# ---------------------------------------------------------------------------
+# 步骤 4.75（S6-B2，T-S6-2-4）：NO_METRICS 合流——exit 0 但无指标时改判
+# ---------------------------------------------------------------------------
+
+
+def _apply_no_metrics(
+    feedback: "ExecutionFeedback",
+    metrics: dict,
+    metrics_groups: dict,
+    exit_ok: bool,
+) -> "ExecutionFeedback":
+    """纯函数：代码跑通但未产出指标时，将 feedback 改判为 NO_METRICS。
+
+    条件：exit_ok ∧ feedback.category == NONE ∧ metrics 为空 ∧ metrics_groups 为空。
+    其余情形原样返回。
+    """
+    if (
+        exit_ok
+        and feedback.category == ErrorCategory.NONE
+        and not metrics
+        and not metrics_groups
+    ):
+        msg = (
+            "代码跑通但未产出指标：全部命令 exit 0，但未发现 <METRICS> 输出或"
+            " outputs/*/summary.json。请检查执行步骤是否调用了实验主入口，"
+            "并按输出约定写出指标。"
+        )
+        return ExecutionFeedback(
+            category=ErrorCategory.NO_METRICS,
+            auto_fixable=True,
+            summary=msg,
+            fix_hint=msg,
+            representative_stderr="",
+        )
+    return feedback
 
 
 # ---------------------------------------------------------------------------
@@ -1917,6 +1977,24 @@ def _route_user_fix_decision(decision: Any, updates: dict, state: GlobalState) -
     return out
 
 
+def _no_metrics_stalled(state: GlobalState, feedback: "ExecutionFeedback") -> bool:
+    """早停判定：本轮 NO_METRICS 且历史尾部已连续 NO_METRICS_EARLY_STOP_ROUNDS 轮。
+
+    "无进展"口径 = 类别连续复现：fix_loop_history 尾部已有 >= N 条
+    error_category == "no_metrics" 的历史记录。
+    """
+    if feedback.category != ErrorCategory.NO_METRICS:
+        return False
+    history = state.get("fix_loop_history") or []
+    if not isinstance(history, list) or len(history) < NO_METRICS_EARLY_STOP_ROUNDS:
+        return False
+    tail = history[-NO_METRICS_EARLY_STOP_ROUNDS:]
+    return all(
+        isinstance(r, dict) and r.get("error_category") == ErrorCategory.NO_METRICS.value
+        for r in tail
+    )
+
+
 def _maybe_interrupt_or_return(
     updates: dict,
     exec_result: ExecutionResult,
@@ -1944,11 +2022,12 @@ def _maybe_interrupt_or_return(
     if budget < DEV_LOOP_MIN_CALLS_PER_ROUND:
         return _mark_degraded_for_report(updates, state, reason="budget_exhausted")
 
-    # 可修复 + 未超限 + 预算够一回合 + 子预算未触顶 → 回 coding 修复（fix_loop_count 单点 +1）。
+    # 可修复 + 未超限 + 预算够一回合 + 子预算未触顶 + 无 NO_METRICS 早停 → 回 coding 修复。
     if (
         feedback.auto_fixable
         and fix_count < MAX_FIX_LOOP_COUNT
         and dev_calls < MAX_DEV_LOOP_LLM_CALLS
+        and not _no_metrics_stalled(state, feedback)
     ):
         updates["fix_loop_count"] = fix_count + 1  # 单点自增（§2.5.2）
         updates["fix_loop_history"] = _append_fix_record(state, fix_count + 1, feedback)
@@ -1977,10 +2056,17 @@ def _maybe_interrupt_or_return(
         return updates
 
     # 本回合结果已落盘 → 安全地在函数体内 interrupt()。
-    reason = (
-        "子预算触顶" if dev_calls >= MAX_DEV_LOOP_LLM_CALLS
-        else ("不可修复" if not feedback.auto_fixable else "修复耗尽")
-    )
+    if _no_metrics_stalled(state, feedback):
+        reason = (
+            f"已连续 {NO_METRICS_EARLY_STOP_ROUNDS} 轮零指标，"
+            "自动修复无进展，请检查执行步骤或更换论文"
+        )
+    elif dev_calls >= MAX_DEV_LOOP_LLM_CALLS:
+        reason = "子预算触顶"
+    elif not feedback.auto_fixable:
+        reason = "不可修复"
+    else:
+        reason = "修复耗尽"
     logger.warning(
         "[%s] 触发 interrupt#2（%s）: fix_loop_count=%d dev_calls=%d category=%s",
         NODE_NAME,
@@ -2080,6 +2166,13 @@ def execution(state: GlobalState) -> dict:
     # 幂等纪律③同 4.6：在 _build_execution_result 之前算好、随 exec_result 一次
     # commit，guard 命中路径复用已落盘结果零重算。
     metrics_groups = _collect_grouped_metrics(work_dir)
+
+    # 步骤 4.75（S6-B2，T-S6-2-4）：NO_METRICS 合流——exit 0 但无指标时改判。
+    # 需在 _collect_grouped_metrics（步骤 4.5）之后、_build_execution_result 之前；
+    # exit_ok 与分类器用同套 _effective_runs 口径（prep 中性判据一致）。
+    _prep_ok_for_nm = bool(agent_out.prep.success) if agent_out.prep is not None else bool(run_results)
+    _exit_ok_for_nm = _prep_ok_for_nm and all(r.exit_code == 0 for r in _effective_runs(run_results))
+    feedback = _apply_no_metrics(feedback, metrics, metrics_groups, _exit_ok_for_nm)
 
     # 步骤 4.6（sp5 S5-06，T-S5-2-4/2-5）：确定性步骤对账 + 降级凭证快照 + 截断标记。
     # 幂等纪律③（架构 §9.2）：必须在 _build_execution_result 之前完成、随 exec_result

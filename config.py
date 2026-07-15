@@ -141,6 +141,10 @@ REACT_MAX_ROUNDS_EXECUTION_CAP: int = 30  # 联动硬上限（= MAX_DEV_LOOP_LLM
 ACTIVITY_STREAM_MAX_EVENTS: int = 500  # per-thread deque maxlen（单事件 ≤~300B，内存上界 ~150KB/任务）
 ACTIVITY_STREAM_RENDER_TAIL: int = 30  # 执行监控页活动流尾部渲染行数（复用 st_autorefresh 1500ms 节奏）
 
+# S6-B2（T-S6-2-5）：NO_METRICS 早停阈值——连续此轮数零指标则跳过 retry_coding，
+# 走 interrupt#2 通道（无进展口径 = 类别连续复现）。
+NO_METRICS_EARLY_STOP_ROUNDS: int = 2
+
 
 # ========== 环境变量读取 ==========
 

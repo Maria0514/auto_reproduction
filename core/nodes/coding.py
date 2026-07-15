@@ -59,7 +59,7 @@ from core.tools.code_fs_tools import (
     make_write_code_file_tool,
 )
 from core.tools.deepxiv_tools import read_section_tool, web_search_tool
-from core.tools.interaction_tools import INTERRUPT_KIND_USER_INPUT, request_user_input
+from core.tools.interaction_tools import INTERRUPT_KIND_USER_INPUT, make_request_user_input_tool
 from core.tools.run_command_tool import make_run_command_tool
 
 logger = logging.getLogger(__name__)
@@ -70,6 +70,14 @@ NODE_NAME: str = "coding"
 
 # 上一轮 execution stderr 注入修复回合的尾部裁剪上限（架构 §2.2.2，防撑爆 context）。
 _STDERR_TAIL_CHARS: int = 2000
+
+# S6-B2（T-S6-2-2）：降级凭证通用指令常量（coding/execution 两侧值一致）。
+# 降级非空时注入 HumanMessage payload，告知 agent 全程走模拟路径。
+_CREDENTIAL_DEGRADATIONS_DIRECTIVE: str = (
+    "重要：部分凭证已被用户明确拒绝，下游模拟已激活。"
+    "在所有步骤中，全程不得再向用户索要被拒绝的凭证；"
+    "所有涉及该凭证的功能必须走模拟/mock 路径，并在报告中如实声明模拟范围。"
+)
 
 
 CODING_OUTPUT_SCHEMA: Dict[str, Any] = {
@@ -304,11 +312,13 @@ def _build_coding_context(state: GlobalState) -> Dict[str, Any]:
     # {purpose_key: purpose} 摘要告知 agent，触发 S5-02 simulation_notice 声明义务。
     # 非空才注入（零降级路径的 HumanMessage 字节零扰动）；走动态上下文通道并由
     # wrapper 统一 json.dumps(sort_keys=True) 渲染，同一 state 下字节幂等（R-PC4 无扰）。
+    # S6-B2（T-S6-2-2）：降级非空时同时注入 directive 常量，加强模拟路径约束。
     degradations = state.get("credential_degradations") or {}
     if isinstance(degradations, dict) and degradations:
         payload["credential_degradations"] = {
             str(k): str(v) for k, v in degradations.items()
         }
+        payload["credential_degradations_directive"] = _CREDENTIAL_DEGRADATIONS_DIRECTIVE
 
     # === 修复回合：只保留反馈裁剪（code_output_dir 已上移无条件注入）===
     exec_result = state.get("execution_result")
@@ -349,7 +359,7 @@ def _get_coding_tools(state: GlobalState) -> List[Any]:
             base_dir=code_dir,
             extra_env=build_credential_env(load_all_secrets()),
         ),
-        request_user_input,
+        make_request_user_input_tool(state.get("credential_degradations") or {}),
     ]
 
 

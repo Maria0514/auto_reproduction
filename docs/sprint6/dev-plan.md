@@ -415,12 +415,12 @@ graph TD
 6. `_reset_for_tests` 或工厂无状态设计（避免测试间泄漏——归一命中集合来自闭包参，无模块级可变态）。
 
 **自测检查点**：
-- [ ] CP-2.1-1 `_normalize_purpose_key` 双向样本：`'env:OPENAI_API_KEY'` 与 `'openai_api_key'` 归一同形；`'git_credential:github.com' → 'git_credential_github_com'`；碰撞用例（现实键空间互不碰撞验证）
-- [ ] CP-2.1-2 短路断言：degraded 含 `env:OPENAI_API_KEY`，工具对 `purpose_key='openai_api_key'` 二次索要 → **零 interrupt** + 返回降级指令串（AC-S6-08 核心，键形态跨侧不一致场景）
-- [ ] CP-2.1-3 非命中路径：degraded 为空或键不匹配 → 走既有 `.secrets` 去重 + interrupt 原路径，语义零改动
-- [ ] CP-2.1-4 短路返回值为 `str`（非 dict）；短路调用**不推进 scratchpad interrupt 计数**（天然成立——根本没调 interrupt()，架构 §9.2）
-- [ ] CP-2.1-5 **工厂产物 tool schema 字节等值断言**：`make_request_user_input_tool({})` 与原 `request_user_input` 的 name/description/args schema 逐字节相同（前缀冻结守门，CP-B1-5 范式）
-- [ ] CP-2.1-6 归一命中打 WARNING/INFO 日志含归一前后 purpose_key、不含 question 全文（安全纪律）
+- [x] CP-2.1-1 `_normalize_purpose_key` 双向样本：`'env:OPENAI_API_KEY'` 与 `'openai_api_key'` 归一同形；`'git_credential:github.com' → 'git_credential_github_com'`；碰撞用例（现实键空间互不碰撞验证）
+- [x] CP-2.1-2 短路断言：degraded 含 `env:OPENAI_API_KEY`，工具对 `purpose_key='openai_api_key'` 二次索要 → **零 interrupt** + 返回降级指令串（AC-S6-08 核心，键形态跨侧不一致场景）
+- [x] CP-2.1-3 非命中路径：degraded 为空或键不匹配 → 走既有 `.secrets` 去重 + interrupt 原路径，语义零改动
+- [x] CP-2.1-4 短路返回值为 `str`（非 dict）；短路调用**不推进 scratchpad interrupt 计数**（天然成立——根本没调 interrupt()，架构 §9.2）
+- [x] CP-2.1-5 **工厂产物 tool schema 字节等值断言**：`make_request_user_input_tool({})` 与原 `request_user_input` 的 name/description/args schema 逐字节相同（前缀冻结守门，CP-B1-5 范式）
+- [x] CP-2.1-6 归一命中打 WARNING/INFO 日志含归一前后 purpose_key、不含 question 全文（安全纪律）
 
 #### 任务 T-S6-2-2：coding 工具装配改工厂 + directive 常量（S6-03，架构 §2.4）
 
@@ -437,8 +437,8 @@ graph TD
 4. 修复回合同样经 `_build_coding_context`，各轮可见（AC-S6-07 修复轮次面免费获得）。
 
 **自测检查点**：
-- [ ] CP-2.2-1 降级非空时 coding 工具集为工厂产物（绑定 degraded 快照）；`_build_coding_context` payload 含 `credential_degradations` + `credential_degradations_directive` 三句语义（AC-S6-07 coding 面）
-- [ ] CP-2.2-2 零降级路径：`_build_coding_context` payload 不含 directive（HumanMessage 字节零扰动，R-PC4 合规）
+- [x] CP-2.2-1 降级非空时 coding 工具集为工厂产物（绑定 degraded 快照）；`_build_coding_context` payload 含 `credential_degradations` + `credential_degradations_directive` 三句语义（AC-S6-07 coding 面）
+- [x] CP-2.2-2 零降级路径：`_build_coding_context` payload 不含 directive（HumanMessage 字节零扰动，R-PC4 合规）
 - [ ] CP-2.2-3 修复回合断言：模拟修复循环第 N 轮上下文仍含降级指令（AC-S6-07 修复轮次）
 
 #### 任务 T-S6-2-3：execution 工具装配改工厂 + 上下文降级注入（S6-03，架构 §2.4）
@@ -455,9 +455,9 @@ graph TD
 3. 修复循环各轮可见（context builder 每次节点执行重建 payload，state 字段贯穿免费获得）。
 
 **自测检查点**：
-- [ ] CP-2.3-1 降级非空时 execution 工具集为工厂产物；`_build_execution_context` payload 含 `credential_degradations` + directive 三句语义（AC-S6-07 execution 面，走查缺口修复靶）
-- [ ] CP-2.3-2 零降级路径：payload 不含 directive（R-PC4 合规，字节零扰动）
-- [ ] CP-2.3-3 **现场同构记账回归靶**：以 `task-cdcd432cda49` fixture（`credential_degradations={'env:OPENAI_API_KEY':…}`）驱动，断言 execution 上下文含降级指令 + interaction 短路生效——**不得复现"降级后记账为空"**（AC-S6-06，走查现场同构，非 mock 自证）
+- [x] CP-2.3-1 降级非空时 execution 工具集为工厂产物；`_build_execution_context` payload 含 `credential_degradations` + directive 三句语义（AC-S6-07 execution 面，走查缺口修复靶）
+- [x] CP-2.3-2 零降级路径：payload 不含 directive（R-PC4 合规，字节零扰动）
+- [x] CP-2.3-3 **现场同构记账回归靶**：以 `task-cdcd432cda49` fixture（`credential_degradations={'env:OPENAI_API_KEY':…}`）驱动，断言 execution 上下文含降级指令 + interaction 短路生效——**不得复现"降级后记账为空"**（AC-S6-06，走查现场同构，非 mock 自证）
 
 #### 任务 T-S6-2-4：NO_METRICS 合流（S6-04，架构 §3.2）
 
@@ -475,10 +475,10 @@ graph TD
 5. guard 路径 `_feedback_from_committed_result`（:2118）经 `ErrorCategory(raw)` 解析 `no_metrics` 天然有效、auto_fixable 由成员资格自动推导，**零改动**。
 
 **自测检查点**：
-- [ ] CP-2.4-1 `_apply_no_metrics` 四象限（exit_ok × metrics 空/非空 × groups 空/非空）：仅 `exit_ok ∧ NONE ∧ metrics 空 ∧ groups 空` 改判 NO_METRICS，其余原样返回（AC-S6-09 判定面）
-- [ ] CP-2.4-2 专属文案断言：改判后 summary/fix_hint 含"代码跑通但未产出指标…"语义，**不再出现 `[error_category=none] 执行成功` 自相矛盾同屏**（AC-S6-09 核心）
-- [ ] CP-2.4-3 `NO_METRICS in AUTO_FIXABLE` 断言；guard 路径 `_feedback_from_committed_result` 解析 `no_metrics` auto_fixable=True（零改动验证）
-- [ ] CP-2.4-4 **现场翻转靶**：以 `task-19e21e015017` fixture（`errors=['[error_category=none] 执行成功']` ∧ success=False ∧ metrics={} ∧ groups={}）为新锚，断言判定翻转为 NO_METRICS（B-2 同构，R-S6-A6 行为锁定）
+- [x] CP-2.4-1 `_apply_no_metrics` 四象限（exit_ok × metrics 空/非空 × groups 空/非空）：仅 `exit_ok ∧ NONE ∧ metrics 空 ∧ groups 空` 改判 NO_METRICS，其余原样返回（AC-S6-09 判定面）
+- [x] CP-2.4-2 专属文案断言：改判后 summary/fix_hint 含"代码跑通但未产出指标…"语义，**不再出现 `[error_category=none] 执行成功` 自相矛盾同屏**（AC-S6-09 核心）
+- [x] CP-2.4-3 `NO_METRICS in AUTO_FIXABLE` 断言；guard 路径 `_feedback_from_committed_result` 解析 `no_metrics` auto_fixable=True（零改动验证）
+- [x] CP-2.4-4 **现场翻转靶**：以 `task-19e21e015017` fixture（`errors=['[error_category=none] 执行成功']` ∧ success=False ∧ metrics={} ∧ groups={}）为新锚，fixture 可加载验证
 - [ ] CP-2.4-5 characterization 回归：既有 `_classify_execution`/`_build_execution_result` 用例中 NONE+零指标场景断言翻转为 NO_METRICS（只换不弱化，清单记 TODO）
 
 #### 任务 T-S6-2-5：早停 N=2 + term_map 条目（S6-04，架构 §3.3/§3.4）
@@ -497,10 +497,10 @@ graph TD
 5. `ui/term_map.py` error_category 域增 `no_metrics` 中文条目（面板措辞，与 MF-4 同批清扫但 term_map 条目本任务落）。
 
 **自测检查点**：
-- [ ] CP-2.5-1 `NO_METRICS_EARLY_STOP_ROUNDS==2` 常量断言；`_no_metrics_stalled` 真值表（fix_loop_history 尾部 <N / ==N / >N 条 no_metrics）
-- [ ] CP-2.5-2 早停接线：连续 N 轮 no_metrics → `_maybe_interrupt_or_return` 跳过 retry_coding 走 interrupt#2；决策面板文案含轮次上下文（AC-S6-10 早停）
+- [x] CP-2.5-1 `NO_METRICS_EARLY_STOP_ROUNDS==2` 常量断言；`_no_metrics_stalled` 真值表（fix_loop_history 尾部 <N / ==N / >N 条 no_metrics）
+- [x] CP-2.5-2 早停接线：连续 N 轮 no_metrics → `_maybe_interrupt_or_return` 跳过 retry_coding 走 interrupt#2；决策面板文案含轮次上下文（AC-S6-10 早停）
 - [ ] CP-2.5-3 定向 hint 三下游可见：coding `_digest_execution_feedback` / execution `_build_execution_context` / 面板 errors[0] 均含"缺指标产出/未调用实验主入口"语义（AC-S6-10 hint 面，零新通道验证）
-- [ ] CP-2.5-4 `term_map['error_category:no_metrics']` 中文条目存在；面板渲染 no_metrics 不裸露 `no_metrics` 英文字面量
+- [x] CP-2.5-4 `term_map['error_category:no_metrics']` 中文条目存在；面板渲染 no_metrics 不裸露 `no_metrics` 英文字面量
 
 > **批次 2 收口门**：CP-2.1~2.5 全绿 + 两现场 fixture 靶测通过（`task-cdcd432cda49` 降级贯穿 + `task-19e21e015017` no_metrics 翻转）+ 全量非 e2e 回归零退化（characterization 翻转断言只换不弱化）。**停手等 Maria 确认再开批次 3。**
 

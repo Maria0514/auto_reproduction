@@ -175,13 +175,14 @@ def test_cp_c3_1_importable_and_local_objects():
     assert not hasattr(st, "ErrorCategory"), "ErrorCategory 不应出现在 core/state.py"
     assert not hasattr(st, "ExecutionFeedback"), "ExecutionFeedback 不应出现在 core/state.py"
     assert not hasattr(st, "AUTO_FIXABLE"), "AUTO_FIXABLE 不应出现在 core/state.py"
-    # AUTO_FIXABLE 集合内容正确。
+    # AUTO_FIXABLE 集合内容正确（S6-B2 新增 NO_METRICS，T-S6-2-4）。
     assert AUTO_FIXABLE == {
         ErrorCategory.SYNTAX,
         ErrorCategory.IMPORT,
         ErrorCategory.DEPENDENCY,
         ErrorCategory.PATH,
         ErrorCategory.RUNTIME,
+        ErrorCategory.NO_METRICS,
     }
 
 
