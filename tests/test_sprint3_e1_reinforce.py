@@ -34,7 +34,12 @@ from app import GraphController, _PAGE_MAP
 # 这里固化 sp2 公开方法**全集**（7 个）的签名，确保 E1 没有顺手改动 get_worker_error。
 _SP2_PUBLIC_GOLDEN = {
     "start_task": "(self, arxiv_id: 'str', llm_config_set: 'LLMConfigSet') -> 'str'",
-    "resume_with": "(self, thread_id: 'str', resume_payload: 'Dict') -> 'None'",
+    # [S6-01/T-S6-3-1] resume_with 增可选校验参 expected_interrupt_token（缺省 None
+    # 向后兼容，plan_review 等既有调用零改动）+ 返回类型 None→bool（发起与否）。
+    "resume_with": (
+        "(self, thread_id: 'str', resume_payload: 'Dict', "
+        "expected_interrupt_token: 'Optional[str]' = None) -> 'bool'"
+    ),
     "poll_state": "(self, thread_id: 'str') -> 'Optional[GlobalState]'",
     "is_interrupted": "(self, thread_id: 'str') -> 'bool'",
     "get_interrupt_payload": "(self, thread_id: 'str') -> 'Optional[Dict]'",
@@ -66,6 +71,9 @@ def test_interrupt_kind_is_the_only_new_public_method():
     （架构 sprint5 §7.8 裁决）。
     [S5-07 适配] 预期新增集再扩入 get_activity_tail——sprint5 T-S5-4-2 按 dev-plan
     规格新增的只读方法（架构 sprint5 §4 Q-S5-8 落点：活动流尾部快照）。
+    [S6-01/02 适配] 预期新增集再扩入 get_interrupt_token / has_active_worker / get_phase
+    ——sprint6 批次 3 T-S6-3-1/3-2 按架构 §1.2/§5/§6.1 规格新增的只读方法（换代判定原语 +
+    进程级 worker 存活判定 + 在途阶段推导）。
     守门语义不变：仍钉死精确新增集合，未经规格批准的公开方法仍会被拦截。
     """
     public = {
@@ -75,8 +83,14 @@ def test_interrupt_kind_is_the_only_new_public_method():
     }
     sp2_public = set(_SP2_PUBLIC_GOLDEN)
     new_methods = public - sp2_public
-    assert new_methods == {"interrupt_kind", "is_finished", "get_activity_tail"}, (
-        f"相对 sp2 应只新增 interrupt_kind + is_finished + get_activity_tail，"
+    expected_new = {
+        "interrupt_kind", "is_finished", "get_activity_tail",
+        "get_interrupt_token", "has_active_worker", "get_phase",
+        # [S6-06/07/T-S6-4-3] 批次 4 新增：任务列表枚举 + 孤儿显式续跑 + 单 thread 状态推导。
+        "list_threads", "resume_task", "get_task_status",
+    }
+    assert new_methods == expected_new, (
+        f"相对 sp2 应只新增 {expected_new}，"
         f"实际新增 {new_methods}；缺失 {sp2_public - public}"
     )
 
@@ -212,21 +226,25 @@ def test_interrupt_kind_does_not_mutate_payload(monkeypatch, controller_no_io):
 
 
 def test_page_map_keys_match_config_constant_values():
-    """CP-E1-3：_PAGE_MAP 的键 == config 五个 STREAMLIT_PAGE_* 常量的**值**（无字面量漂移）。"""
+    """CP-E1-3：_PAGE_MAP 的键 == config STREAMLIT_PAGE_* 常量的**值**（无字面量漂移）。
+
+    [S6-07/T-S6-4-3] 批次 4 新增任务列表页常量 STREAMLIT_PAGE_TASKS（架构 §4.4）纳入集合。
+    """
     expected_values = {
         config.STREAMLIT_PAGE_INPUT,
         config.STREAMLIT_PAGE_PROGRESS,
         config.STREAMLIT_PAGE_REVIEW,
         config.STREAMLIT_PAGE_EXECUTION,
         config.STREAMLIT_PAGE_REPORT,
+        config.STREAMLIT_PAGE_TASKS,
     }
     assert set(_PAGE_MAP.keys()) == expected_values
-    # 五个常量值互不相同（没有两页撞键）。
-    assert len(expected_values) == 5, "config 五个页面常量值应互不相同"
+    # 常量值互不相同（没有两页撞键）。
+    assert len(expected_values) == 6, "config 页面常量值应互不相同"
 
 
 def test_page_map_no_new_page_constants_introduced():
-    """CP-E1-3 红线：E1 未在 config 偷偷新增页面常量（仍恰好 5 个 STREAMLIT_PAGE_*）。"""
+    """守门：config 页面常量集合精确钉死（含批次 4 新增 STREAMLIT_PAGE_TASKS，仍拦未批准新增）。"""
     page_consts = {n for n in dir(config) if n.startswith("STREAMLIT_PAGE_")}
     assert page_consts == {
         "STREAMLIT_PAGE_INPUT",
@@ -234,6 +252,7 @@ def test_page_map_no_new_page_constants_introduced():
         "STREAMLIT_PAGE_REVIEW",
         "STREAMLIT_PAGE_EXECUTION",
         "STREAMLIT_PAGE_REPORT",
+        "STREAMLIT_PAGE_TASKS",
     }, f"config 页面常量集合异常：{page_consts}"
 
 
@@ -281,6 +300,9 @@ class _FakeStreamlit:
         self.sidebar = _FakeSidebarCtx()
         self.info_called = False
         self.rendered: List[str] = []
+        # [S6-06/T-S6-4-1] main() 新增 _restore_from_query_params(controller) 步骤会读
+        # st.query_params——无 task 参数路径直接 return（字节等价红线），空 dict 即满足。
+        self.query_params: Dict[str, Any] = {}
 
     def set_page_config(self, **kwargs):
         return None

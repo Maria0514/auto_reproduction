@@ -321,6 +321,12 @@ def render() -> None:
     """
     _init_page_state()
 
+    # [S6-06/T-S6-4-2] 清除 stale task 参数：本页渲染即"当前无活动任务"（thread_id 空）；
+    # URL 若残留旧 task（"返回输入页开启新任务"后 / 无效重连）→ 清掉，避免下次 F5 重连到旧
+    # 任务（配合 app._restore_from_query_params 的 _restore_attempted 单次标志，CP-4.2-2）。
+    if not st.session_state.get(_KEY_THREAD_ID) and "task" in st.query_params:
+        del st.query_params["task"]
+
     submitted = bool(st.session_state.get(_KEY_SUBMITTED))
 
     # --- 侧栏：D1 LLM 配置表单。OBS-D1-01：用返回值 cfg，禁止直读 session_state ---
@@ -329,6 +335,12 @@ def render() -> None:
         cfg: Optional[LLMConfigSet] = render_llm_config_form(default=prefill)
 
     st.title("论文自动复现 — 输入论文")
+
+    # [S6-07/T-S6-4-4] 任务列表页入口：进程重启 / F5 后可从此挂回历史任务（架构 §4.4）。
+    # 用字面量 "tasks"（= config.STREAMLIT_PAGE_TASKS）与本页既有 current_page 字面量风格一致。
+    if st.button("📋 查看任务列表 / 挂回历史任务", key="btn_to_task_list"):
+        st.session_state[_KEY_CURRENT_PAGE] = "tasks"
+        st.rerun()
 
     # --- 主区上半：arXiv ID 输入 + 获取论文信息 ---
     # BUG-S2-D3-01 修复：在 widget 实例化**之前**消费搜索"选用"的待回填中间键。
@@ -451,6 +463,9 @@ def render() -> None:
         thread_id = controller.start_task(arxiv_id.strip(), cfg)
 
         st.session_state[_KEY_THREAD_ID] = thread_id
+        # [S6-06/T-S6-4-2] URL 持久化：写 task 参数，F5 刷新 / 分享链接可经
+        # app._restore_from_query_params 重连回本任务（架构 §7.6，AC-S6-14 写入面）。
+        st.query_params["task"] = thread_id
         st.session_state[_KEY_SUBMITTED] = True
         st.session_state[_KEY_CURRENT_PAGE] = "progress"
         st.rerun()

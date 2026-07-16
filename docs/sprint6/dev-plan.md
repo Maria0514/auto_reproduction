@@ -530,11 +530,11 @@ graph TD
 6. `_reset_for_tests()` 清空登记表（R-S6-A4 测试间泄漏防线，fixture 内 monkeypatch 清空）。
 
 **自测检查点**：
-- [ ] CP-3.1-1 `get_interrupt_token`：有 interrupt → `id:指纹`（16 字符指纹）；无 interrupt → None；payload 变化 → token 变化；相同 payload → token 相同（换代判定基石）
-- [ ] CP-3.1-2 payload 指纹只存哈希：token 中不含 question 原文；`interrupt.id` getattr 失败时退化为纯指纹（R-S6-A1 防御）
-- [ ] CP-3.1-3 `resume_with` 校验参：`expected_interrupt_token` 不一致 → 返回 False + WARNING 不抛异常；缺省 None → 不校验（plan_review 等既有调用零改动，向后兼容）
-- [ ] CP-3.1-4 **第三道防线**：同 thread 已有存活 worker → `resume_with` 原子拒绝（防重复 resume，跨 tab）；`has_active_worker` 反映登记表真值
-- [ ] CP-3.1-5 `_reset_for_tests` 清空登记表；用例间无 thread_id 残留（R-S6-A4）
+- [x] CP-3.1-1 `get_interrupt_token`：有 interrupt → `id:指纹`（16 字符指纹）；无 interrupt → None；payload 变化 → token 变化；相同 payload → token 相同（换代判定基石）
+- [x] CP-3.1-2 payload 指纹只存哈希：token 中不含 question 原文；`interrupt.id` getattr 失败时退化为纯指纹（R-S6-A1 防御）
+- [x] CP-3.1-3 `resume_with` 校验参：`expected_interrupt_token` 不一致 → 返回 False + WARNING 不抛异常；缺省 None → 不校验（plan_review 等既有调用零改动，向后兼容）
+- [x] CP-3.1-4 **第三道防线**：同 thread 已有存活 worker → `resume_with` 原子拒绝（防重复 resume，跨 tab）；`has_active_worker` 反映登记表真值
+- [x] CP-3.1-5 `_reset_for_tests` 清空登记表；用例间无 thread_id 残留（R-S6-A4）
 
 #### 任务 T-S6-3-2：GraphController get_phase 只读推断（S6-02，架构 §6.1）
 
@@ -549,8 +549,8 @@ graph TD
 2. 纯只读，零 state / 零节点 / 零图变更（方案 B，回归面最小）。
 
 **自测检查点**：
-- [ ] CP-3.2-1 `get_phase`：snapshot.next=('execution',) → active_node='execution'；next 空 → None；空/无快照防御返回安全默认（AC-S6-04 controller 面）
-- [ ] CP-3.2-2 现场 fixture 驱动：`task-cdcd432cda49`（next=('execution',)）→ active_node='execution' 与取证一致
+- [x] CP-3.2-1 `get_phase`：snapshot.next=('execution',) → active_node='execution'；next 空 → None；空/无快照防御返回安全默认（AC-S6-04 controller 面）
+- [x] CP-3.2-2 现场 fixture 驱动：`task-cdcd432cda49`（next=('execution',)）→ active_node='execution' 与取证一致
 
 #### 任务 T-S6-3-3：execution_monitor 单收口窗口（S6-01/02/MF-4/MF-7/R7，主控串行合入）
 
@@ -572,14 +572,14 @@ graph TD
 > **R7 卡片与批次 4 的协调**：R7 孤儿卡片的**渲染 + 停轮询 + 判定**（无 worker）落本批（依赖 T-S6-3-1 登记表）；卡片上「继续执行」按钮绑定的 `resume_task` 实现落批次 4（T-S6-4-3）。本批先渲染卡片 + 按钮占位（按钮触达 controller 方法名约定好、批次 4 补实现），或按 app.py 串行链在批次 4 一并接通——**主控在收口窗口决定接线时机**（两批串行，app.py 同文件，天然可衔接）。
 
 **自测检查点**：
-- [ ] CP-3.3-1 **两序列时序断言**（AC-S6-01/02）：controller mock 按"真→真(同 token)→假"驱动 → awaiting 过渡态渲染 + 注册 autorefresh → worker 消费后自动转后续；"真→真(新 token)"→ 换代渲染新面板不误沿用旧提交；resume 调用**恰一次**（mock 捕获计数）
-- [ ] CP-3.3-2 **换代反例**（AC-S6-02 防死锁 + 防误提交）：同任务串行 gate 第二问（同 id 不同 payload → token 变）正确渲染新面板；同题重问（worker 已死 ∧ token 相同）视为换代不死锁——**防新形态死锁关键用例**
-- [ ] CP-3.3-3 **case①~⑦ 分发审计 + 通则注记**（AC-S6-03）：本页不存在"停轮询且等待后台变化"分支；每分支按通则归类断言；两类面板行为一致（决策面板 mock 时序）
-- [ ] CP-3.3-4 **在途标签**（AC-S6-04）：`_render_progress` active_node 存在 → 显示在途节点不滞后
-- [ ] CP-3.3-5 **MF-7 日志尾部/占位**（AC-S6-23）：`_render_dev_loop_decision_panel(state=...)` 渲染 logs 尾部 4000 字符；空 logs → 占位说明；payload 键结构未被触碰
-- [ ] CP-3.3-6 **MF-4 裸标签扫描**（AC-S6-20）：dev_loop 面板 `execution_errors` 渲染 + 报告渲染均无 `[error_category=...]` 裸标签；生成点前缀不动（guard 幂等重建不破）
-- [ ] CP-3.3-7 **R7 孤儿卡片**：无 worker ∧ next 非空 ∧ 无 interrupt → 孤儿卡片渲染 + 停轮询（autorefresh 未注册）+ 「继续执行」显式按钮存在
-- [ ] CP-3.3-8 **页面级 case 全矩阵 ×3 连跑**（R-S6-1 防 flaky）：case①~⑦ + awaiting + R7 全矩阵三连跑全绿
+- [x] CP-3.3-1 **两序列时序断言**（AC-S6-01/02）：controller mock 按"真→真(同 token)→假"驱动 → awaiting 过渡态渲染 + 注册 autorefresh → worker 消费后自动转后续；"真→真(新 token)"→ 换代渲染新面板不误沿用旧提交；resume 调用**恰一次**（mock 捕获计数）
+- [x] CP-3.3-2 **换代反例**（AC-S6-02 防死锁 + 防误提交）：同任务串行 gate 第二问（同 id 不同 payload → token 变）正确渲染新面板；同题重问（worker 已死 ∧ token 相同）视为换代不死锁——**防新形态死锁关键用例**
+- [x] CP-3.3-3 **case①~⑦ 分发审计 + 通则注记**（AC-S6-03）：本页不存在"停轮询且等待后台变化"分支；每分支按通则归类断言；两类面板行为一致（决策面板 mock 时序）
+- [x] CP-3.3-4 **在途标签**（AC-S6-04）：`_render_progress` active_node 存在 → 显示在途节点不滞后
+- [x] CP-3.3-5 **MF-7 日志尾部/占位**（AC-S6-23）：`_render_dev_loop_decision_panel(state=...)` 渲染 logs 尾部 4000 字符；空 logs → 占位说明；payload 键结构未被触碰
+- [x] CP-3.3-6 **MF-4 裸标签扫描**（AC-S6-20）：dev_loop 面板 `execution_errors` 渲染 + 报告渲染均无 `[error_category=...]` 裸标签；生成点前缀不动（guard 幂等重建不破）
+- [x] CP-3.3-7 **R7 孤儿卡片**：无 worker ∧ next 非空 ∧ 无 interrupt → 孤儿卡片渲染 + 停轮询（autorefresh 未注册）+ 「继续执行」显式按钮存在
+- [x] CP-3.3-8 **页面级 case 全矩阵 ×3 连跑**（R-S6-1 防 flaky）：case①~⑦ + awaiting + R7 全矩阵三连跑全绿
 
 #### 任务 T-S6-3-4：analysis_progress case④bis 双判据 + 段状态（S6-02，架构 §6.2）
 
@@ -595,11 +595,13 @@ graph TD
 3. 数据源统一 `get_phase`（与 execution_monitor 同栈）。
 
 **自测检查点**：
-- [ ] CP-3.4-1 case④bis：`current_step='planning' ∧ active_node='coding'` → 切执行监控页（AC-S6-05，approve 后在途切页核心）；planning interrupt（next=('planning',)）不误切
-- [ ] CP-3.4-2 `_segment_status`：active_node 命中上游节点 → 该段"进行中"（AC-S6-04 段状态）
-- [ ] CP-3.4-3 既有 case④/④bis 用例回归（AC-S5-16 同步）：只换判据不弱化，interrupt 分发优先级不变
+- [x] CP-3.4-1 case④bis：`current_step='planning' ∧ active_node='coding'` → 切执行监控页（AC-S6-05，approve 后在途切页核心）；planning interrupt（next=('planning',)）不误切
+- [x] CP-3.4-2 `_segment_status`：active_node 命中上游节点 → 该段"进行中"（AC-S6-04 段状态）
+- [x] CP-3.4-3 既有 case④/④bis 用例回归（AC-S5-16 同步）：只换判据不弱化，interrupt 分发优先级不变
 
 > **批次 3 收口门**：CP-3.1~3.4 全绿 + **execution_monitor 页面级全矩阵 ×3 连跑全绿**（R-S6-1）+ 全量非 e2e 回归零退化（execution_monitor case 矩阵 sp3 E2/sp5 t43 断言适配）。**app.py 进入批次 4 前不再被其他任务并行触碰**。**停手等 Maria 确认再开批次 4。**
+>
+> 〔2026-07-15 批次 3 收官〕CP-3.1~3.4 全绿。新增 54 用例（controller 17 + monitor 29 + progress 8），全量非 e2e **1888 passed / 0 failed**（相对 1835 基线零退化），execution_monitor + progress 页面级套件 ×3 连跑每轮 168 passed 零抖动（R-S6-1 满足）。零 state / 零节点 / 零 interrupt payload 契约红线守住。报告 `test-reports/2026-07-15_batch3-execution-monitor-consolidation.md`。**遗留衔接**：CP-3.3-7 R7 孤儿卡片的**渲染 + 停轮询 + 「继续执行」按钮**本批已落并测试；按钮绑定的 `resume_task` **续跑实现延批次 4（T-S6-4-3）**——当前按钮用 `getattr(controller, "resume_task", None)` 占位防御（未接通时不崩、提示"后续版本接通"），批次 4 接通后即生效。**唯一非本批失败**：`test_plan_review_e2e::test_e2e_code_only`（浏览器 chromium iframe 时序间歇 flaky，经 git stash baseline 复现证明与本批无关）。
 
 ---
 
@@ -625,9 +627,9 @@ graph TD
 4. resume 有效性：重连后 controller 新实例，但 `resume_with` 本就每次新建独立 SqliteSaver + graph（既有线程模型），resume 语义与原 session 等价（AC-S6-16）。
 
 **自测检查点**：
-- [ ] CP-4.1-1 **无参数路径字节等价**（AC-S6-14 红线）：无 task 参数或已有 thread_id 时 `_restore_from_query_params` 直接 return，main() 行为与现状完全一致（回归断言）
-- [ ] CP-4.1-2 **重连路由矩阵**：task 参数指向各状态 thread（失败/已终止/已完成/等待输入/进行中/已中断）→ 路由到对应页面（AC-S6-14，逐状态断言）
-- [ ] CP-4.1-3 不存在 thread 的 task 参数 → 安全回退（不炸、按 R1 不激活）；session 已有 thread_id 时 query params 不覆盖
+- [x] CP-4.1-1 **无参数路径字节等价**（AC-S6-14 红线）：无 task 参数或已有 thread_id 时 `_restore_from_query_params` 直接 return，main() 行为与现状完全一致（回归断言）
+- [x] CP-4.1-2 **重连路由矩阵**：task 参数指向各状态 thread（失败/已终止/已完成/等待输入/进行中/已中断）→ 路由到对应页面（AC-S6-14，逐状态断言）
+- [x] CP-4.1-3 不存在 thread 的 task 参数 → 安全回退（不炸、按 R1 不激活）；session 已有 thread_id 时 query params 不覆盖
 
 #### 任务 T-S6-4-2：start_task 写 query params（S6-06，架构 §7.6）
 
@@ -643,8 +645,8 @@ graph TD
 3. 多 tab 红线：同一 interrupt 至多一次 resume 由 §1 第二/三道防线承载（token 校验 + 进程级登记表），不做 tab 间状态同步（非目标 11）。
 
 **自测检查点**：
-- [ ] CP-4.2-1 start_task 成功后 URL query params 含 `task=<thread_id>`（AC-S6-14 写入面）
-- [ ] CP-4.2-2 "返回输入页开启新任务"清除 task 参数；清除后 `_restore_from_query_params` 不再激活
+- [x] CP-4.2-1 start_task 成功后 URL query params 含 `task=<thread_id>`（AC-S6-14 写入面）
+- [x] CP-4.2-2 "返回输入页开启新任务"清除 task 参数；清除后 `_restore_from_query_params` 不再激活
 
 #### 任务 T-S6-4-3：derive_task_status + list_threads + resume_task（S6-07，架构 §4）
 
@@ -661,10 +663,10 @@ graph TD
 4. `STREAMLIT_PAGE_TASKS = "tasks"` 常量 + `_PAGE_MAP` 注册。
 
 **自测检查点**：
-- [ ] CP-4.3-1 `derive_task_status` **R1~R7 全行**：以 mock snapshot + 登记表构造每行条件断言状态（AC-S6-15 推导面）；R7 区分锚 = 无存活 worker（进程重启后登记表必空）
-- [ ] CP-4.3-2 `list_threads` 只读枚举：mode=ro URI 连接、SELECT GROUP BY 排序（新任务在前）、论文标识三级回退；原库 md5 前后一致（只读不写业务数据）
-- [ ] CP-4.3-3 **20-thread 真库枚举**（AC-S6-15）：以 `checkpoints_s6_full20.db` fixture 驱动枚举 + 状态推导矩阵；坏 thread（ExecutionMode 反序列化异常）逐条跳过不炸整页（R-S6-A3 容错）
-- [ ] CP-4.3-4 `resume_task` 显式续跑：`invoke(None, config)` 调用 + 原子 check-and-set（有存活 worker → 拒绝）；`STREAMLIT_PAGE_TASKS` 路由常量注册
+- [x] CP-4.3-1 `derive_task_status` **R1~R7 全行**：以 mock snapshot + 登记表构造每行条件断言状态（AC-S6-15 推导面）；R7 区分锚 = 无存活 worker（进程重启后登记表必空）
+- [x] CP-4.3-2 `list_threads` 只读枚举：mode=ro URI 连接、SELECT GROUP BY 排序（新任务在前）、论文标识三级回退；原库 md5 前后一致（只读不写业务数据）
+- [x] CP-4.3-3 **20-thread 真库枚举**（AC-S6-15）：以 `checkpoints_s6_full20.db` fixture 驱动枚举 + 状态推导矩阵；坏 thread（ExecutionMode 反序列化异常）逐条跳过不炸整页（R-S6-A3 容错）
+- [x] CP-4.3-4 `resume_task` 显式续跑：`invoke(None, config)` 调用 + 原子 check-and-set（有存活 worker → 拒绝）；`STREAMLIT_PAGE_TASKS` 路由常量注册
 
 #### 任务 T-S6-4-4：任务列表页（S6-07，架构 §4）
 
@@ -682,12 +684,14 @@ graph TD
 5. `paper_input.py` 入口导航链接到任务列表页。
 
 **自测检查点**：
-- [ ] CP-4.4-1 任务列表页枚举渲染：每条含论文标识 + 状态徽标；**页面无删除/搜索/分页功能**（AC-S6-15 边界断言）
-- [ ] CP-4.4-2 **一键挂回**：点击 → 写 query params + thread_id + 路由正确；挂回不调 `resume_task`（AC-S6-16 显式动作红线——挂回不静默重复执行副作用节点）
-- [ ] CP-4.4-3 列表页不注册 autorefresh（§4.3 频控断言）；入口链接可达
-- [ ] CP-4.4-4 **挂回 resume 有效**（AC-S6-16）：以现场 fixture（`task-cdcd432cda49` 挂起 interrupt）驱动，挂回后对挂起 interrupt 应答有效（resume 语义与原 session 等价）；R7 孤儿卡片「继续执行」显式触发 `resume_task`（与批次 3 R7 卡片接通）
+- [x] CP-4.4-1 任务列表页枚举渲染：每条含论文标识 + 状态徽标；**页面无删除/搜索/分页功能**（AC-S6-15 边界断言）
+- [x] CP-4.4-2 **一键挂回**：点击 → 写 query params + thread_id + 路由正确；挂回不调 `resume_task`（AC-S6-16 显式动作红线——挂回不静默重复执行副作用节点）
+- [x] CP-4.4-3 列表页不注册 autorefresh（§4.3 频控断言）；入口链接可达
+- [x] CP-4.4-4 **挂回 resume 有效**（AC-S6-16）：以现场 fixture（`task-cdcd432cda49` 挂起 interrupt）驱动，挂回后对挂起 interrupt 应答有效（resume 语义与原 session 等价）；R7 孤儿卡片「继续执行」显式触发 `resume_task`（与批次 3 R7 卡片接通）
 
 > **批次 4 收口门**：CP-4.1~4.4 全绿 + 无参数路径字节等价回归（AC-S6-14 红线）+ 20-thread 真库枚举 fixture 靶测 + 全量非 e2e 回归零退化（app.py 路由用例 query params 无参数路径断言）。**批次 3 R7 卡片「继续执行」按钮此时接通 `resume_task`**。**停手等 Maria 确认再开批次 5。**
+>
+> 〔2026-07-15 批次 4 收官〕CP-4.1~4.4 全绿。新增 37 用例（task_status 15 + reconnect 9 + query_params 4 + task_list 9），全量非 e2e **1924 passed（逻辑用例全稳定）+ 1 预存在浏览器 flaky**（`test_e2e_code_only`，chromium iframe 间歇，批次 3 git stash baseline 证明非本批回归；通过时为 1925/0），相对 1888 基线零退化。**20-thread 真库靶测**（checkpoints_s6_full20.db）：list_threads 枚举 20 任务、状态矩阵覆盖 R2~R7 全类型（awaiting×10/interrupted×4/no_report×3/done×1/failed×1/cancelled×1）、新任务在前、论文标识三级回退命中 title_zh、主库 md5 只读不变、坏 thread 跳过不炸（R-S6-A3）。**产品红线守住**：挂回=展示现状绝不调 resume_task（assert_not_called 守门）+ 无参数路径字节等价 + 零 state 变更（旧 checkpoint 直接可消费）。**R7 卡片「继续执行」按钮接通 resume_task**（批次 3→4 衔接闭环）。回归适配：e1 两文件公开方法白名单 + _PAGE_MAP/config 页面常量集合纳入批次 4 三方法+STREAMLIT_PAGE_TASKS；两处 _FakeStreamlit 补 query_params={}（main 接线 _restore 读，无参数路径字节等价）。产出：`app.py`（derive_task_status/list_threads/resume_task/get_task_status/_restore_from_query_params/_route_for_status/_extract_paper_label）+ 新 `ui/pages/task_list.py` + `paper_input.py`（写/清 query params + 入口链接）+ `config.py`（STREAMLIT_PAGE_TASKS）。报告 `test-reports/2026-07-15_batch4-reconnect-task-list.md`。
 
 ---
 

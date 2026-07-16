@@ -23,14 +23,29 @@
     2. state 为 None                → 等待 checkpoint 落盘占位 + 继续轮询；
     3. state.error 非空             → FATAL 卡片 + 重试 / 返回输入页 + 停轮询；
     4. current_step=="cancelled_by_user" → "任务已终止" 卡片 + 返回输入页 + 停轮询；
-    5. is_interrupted 且 interrupt_kind=="dev_loop_failure" → dev_loop 失败决策面板（停轮询）；
-       interrupt_kind=="user_input_request" → 用户输入面板（S4-09，停轮询）；
-       （其余，即 planning interrupt → 跳回 review 页）
+    5. is_interrupted → 先做 S6-01 换代判定（get_interrupt_token + has_active_worker）：
+       5a. token==awaiting_token 且有存活 resume worker → "已收到，处理中"过渡态 + **注册
+           autorefresh**（等后台推进，非停轮询）；worker 消费完自动转后续；
+       5b. 否则（token 变 / 同题重问无 worker）→ 清 awaiting，按 interrupt_kind 渲染新面板
+           （**禁对新 interrupt 沿用旧提交**，配合 resume_with 的 token 校验）：
+           dev_loop_failure → dev_loop 失败决策面板（停轮询）；
+           user_input_request → 用户输入面板（S4-09，停轮询）；
+           其余（planning interrupt）→ 跳回 review 页；
     6. _should_jump_to_report（reporting 完成且 report_path 非空且非 interrupt）→ 跳结果报告页；
     6bis. current_step=="reporting" 且 report_path 为空 且 controller.is_finished →
        "报告未生成"失败/降级提示卡片 + 停轮询（S5-08 #6 兜底，AC-S5-17：图已跑到 END
        但没有报告可跳，继续轮询是假轮询，永远等不来状态变化）；
+    6ter. **§4.2 R7 孤儿在途卡片**：active_node 非空（next 非空）∧ 无 interrupt ∧ 无存活
+       worker（进程重启后登记表必空）→ 孤儿在途终态卡片 + 显式「继续执行」按钮 + **停轮询**
+       （仅用户动作可改变；续跑动作由批次 4 resume_task 实现）；
     7. 否则正常渲染（进度 + sandbox + 错误降级）+ 注册 st_autorefresh（仅此路径注册定时器）。
+
+本页设计通则（S6-01 修订，架构 §1.3）——新增分支必须先按此归类::
+
+    凡"等待后台变化"的状态（case② 等待落盘、case⑤a awaiting 过渡态、case⑦ 正常监控）
+    **必须注册 st_autorefresh**；"停轮询"分支只允许承载"仅用户动作可改变"的状态（终态
+    卡片、待提交的 interrupt 面板、case⑥ter 无 worker 的孤儿在途卡片）。本页不存在
+    "停轮询且等待后台变化"分支（自相矛盾）。
 
 interrupt#3 resume 契约（S4-09，与 core/tools/interaction_tools.py::request_user_input 严格对齐）::
 
@@ -72,6 +87,7 @@ from streamlit_autorefresh import st_autorefresh
 
 from config import (
     ACTIVITY_STREAM_RENDER_TAIL,
+    DEV_LOOP_PANEL_LOG_TAIL_CHARS,
     MAX_FIX_LOOP_COUNT,
     STREAMLIT_PAGE_REPORT,
     STREAMLIT_POLL_INTERVAL,
@@ -103,6 +119,10 @@ _STEP_CANCELLED: str = "cancelled_by_user"
 
 _KEY_THREAD_ID = "thread_id"
 _KEY_CURRENT_PAGE = "current_page"
+# [S6-01/T-S6-3-3，架构 §1.2] 过渡态标志（本页私有单键，缺省 None）：两类面板提交成功
+# （resume_with 返回 True）后写入当前 interrupt_token 再 st.rerun()；case⑤ 入口据此 +
+# has_active_worker 判"处理中过渡态 vs 换代"（对照 plan_review _begin_awaiting，各自单键）。
+_KEY_EXEC_AWAITING_TOKEN = "_exec_awaiting_token"
 # 「改计划」决策的修改意见文本框（原生 st.text_area，AppTest 可见可读）。
 _KEY_REVISE_FEEDBACK = "_exec_revise_feedback"
 # user_input_request 面板：单输入框 + 「记住」勾选（原生组件，AppTest 可见可点）。
@@ -307,6 +327,32 @@ def _parse_node_error(err: object) -> Dict[str, str]:
     }
 
 
+def _format_exec_error_line(err: object) -> str:
+    """[MF-4/AC-S6-20] 把一条**字符串**执行错误里的 ``[error_category=xxx]`` 裸标签经
+    term_map 翻译为中文（纯函数）。
+
+    dev_loop 面板的 ``execution_errors`` 是字符串（execution.py L699），走不到
+    ``_parse_node_error`` 的 dict 分支（那支才剥前缀）——直接渲染会泄漏 ``[error_category=none]``
+    等英文裸标签（AC-S6-20 靶）。本函数抽出分类 humanize 后重排为 ``[中文分类] 摘要``；
+    无标签 → 原样返回。生成点前缀（execution.py 写入侧）不动，只在渲染侧翻译。
+    """
+    text = str(err)
+    marker = "[error_category="
+    idx = text.find(marker)
+    if idx == -1:
+        return text
+    start = idx + len(marker)
+    end = text.find("]", start)
+    if end == -1:
+        return text
+    category = text[start:end].strip()
+    rest = (text[:idx] + text[end + 1:]).strip()
+    if not category:
+        return rest or text
+    label = humanize("error_category", category)
+    return f"[{label}] {rest}".strip() if rest else f"[{label}]"
+
+
 # =========================================================================== #
 # 私有渲染区块
 # =========================================================================== #
@@ -371,16 +417,25 @@ def _render_cancelled_card() -> None:
     _render_back_to_input_button(key="btn_exec_cancelled_back", label="返回输入页开启新任务")
 
 
-def _render_progress(state: Dict[str, Any]) -> None:
-    """进度展示：current_step 阶段 + 修复第 N/3 轮 + fix_loop_history 每轮摘要（CP-E2-2）。"""
+def _render_progress(state: Dict[str, Any], active_node: object = None) -> None:
+    """进度展示：current_step 阶段 + 修复第 N/3 轮 + fix_loop_history 每轮摘要（CP-E2-2）。
+
+    [S6-02/AC-S6-04] active_node（controller.get_phase 只读推断的在途节点）存在时，阶段
+    指示以"「{humanize(active_node)}」进行中"为准——修正 current_step 在 approve 后于节点
+    return 前的标签滞后（LangGraph 只在 return 时提交 state）；缺省回落 current_step 口径。
+    """
     current_step = str(state.get("current_step") or "start")
     fix_loop_count = state.get("fix_loop_count", 0)
 
     st.markdown("### ⚙️ 执行进度")
 
-    # S5-09：未知/上游 step 兜底经 humanize（不裸露内部值；"start" 等内部标记
-    # 会得到 "start（内部标识）" 兜底文案——不崩不静默）。
-    step_display = _STEP_DISPLAY.get(current_step) or humanize("node", current_step)
+    if active_node:
+        # 在途节点优先（只读推断，不滞后）。
+        step_display = f"「{humanize('node', str(active_node))}」进行中"
+    else:
+        # S5-09：未知/上游 step 兜底经 humanize（不裸露内部值；"start" 等内部标记
+        # 会得到 "start（内部标识）" 兜底文案——不崩不静默）。
+        step_display = _STEP_DISPLAY.get(current_step) or humanize("node", current_step)
     cols = st.columns(2)
     cols[0].markdown(f"**当前阶段**：{step_display}")
     cols[1].markdown(f"**{_fix_loop_progress_text(fix_loop_count)}**")
@@ -531,18 +586,22 @@ def _submit_dev_loop_decision(
     thread_id: str,
     decision: str,
     user_feedback: str = "",
+    current_token: Optional[str] = None,
 ) -> None:
-    """提交 dev_loop 失败决策：构造 payload → resume_with → st.rerun()（CP-E2-3 核心写路径）。
+    """提交 dev_loop 失败决策：构造 payload → resume_with（带 token 校验）→ 写 awaiting → rerun。
 
     payload 由 _build_decision_payload 构造，key/取值与 execution.py::_route_user_fix_decision
-    严格对齐。resume_with 异步起后台 worker，提交后 st.rerun() 让本页轮询自愈直到状态转移
-    （沿用 plan_review 决策提交后范式）。
+    严格对齐。[S6-01] resume_with 传 expected_interrupt_token=current_token 防误提交（迟到/
+    换代）；发起成功（返回 True）才把 current_token 写入 awaiting 单键——下一轮 render() 据此
+    渲染"处理中"过渡态 + 注册 autorefresh（等后台推进，替代旧的"停轮询自愈"矛盾语义）。
     """
     payload = _build_decision_payload(decision, user_feedback)
     logger.info(
         "[execution_monitor] 提交 dev_loop 决策 thread=%s decision=%s", thread_id, decision
     )
-    controller.resume_with(thread_id, payload)
+    ok = controller.resume_with(thread_id, payload, expected_interrupt_token=current_token)
+    if ok:
+        st.session_state[_KEY_EXEC_AWAITING_TOKEN] = current_token
     st.rerun()
 
 
@@ -550,13 +609,21 @@ def _render_dev_loop_decision_panel(
     controller,
     thread_id: str,
     payload: Optional[Dict[str, Any]],
+    state: Optional[Dict[str, Any]] = None,
+    current_token: Optional[str] = None,
 ) -> None:
-    """dev_loop 失败决策面板（承载 interrupt#2，本任务重点，CP-E2-3）。
+    """dev_loop 失败决策面板（承载 interrupt#2，本任务重点，CP-E2-3 / S6-01 批次 3）。
 
     展示失败上下文摘要（payload 取 fix_loop_history / execution_errors|execution_result.errors）
-    + 三个原生按钮（AppTest 可见可点）：终止任务 / 改计划（配 user_feedback 文本框）/ 导出代码。
+    + [MF-7] 最近一次运行输出（尾部）+ 三个原生按钮（AppTest 可见可点）：终止任务 /
+    改计划（配 user_feedback 文本框）/ 导出代码。
+
+    [S6-01] current_token 透传给 _submit_dev_loop_decision 做 resume_with token 校验 + awaiting。
+    [MF-7] state 供"最近一次运行输出"区读 execution_result.logs 尾部（从 state 读，interrupt#2
+    payload 键结构零触碰，AC-S4-05 命门不破）。
     """
     payload = payload or {}
+    state = state or {}
 
     st.title("论文自动复现 — 执行失败决策")
     st.error(
@@ -592,12 +659,28 @@ def _render_dev_loop_decision_panel(
         if exec_errors:
             st.markdown("**执行错误**")
             for e in exec_errors:
-                st.markdown(f"- {e}")
+                # [MF-4/AC-S6-20] 字符串错误里的 [error_category=xxx] 裸标签经 term_map 翻译。
+                st.markdown(f"- {_format_exec_error_line(e)}")
 
         rep_stderr = payload.get("representative_stderr")
         if rep_stderr:
             with st.expander("代表性 stderr 片段", expanded=False):
                 st.code(str(rep_stderr))
+
+    # --- [MF-7/AC-S6-23] 最近一次运行输出（尾部）：从 state.execution_result.logs 读，
+    #     interrupt#2 payload 键结构零触碰（AC-S4-05 命门）。空 logs → 占位不静默空白。---
+    exec_result = state.get("execution_result") or {}
+    logs = exec_result.get("logs") if isinstance(exec_result, dict) else None
+    with st.container(border=True):
+        st.markdown("### 🖥️ 最近一次运行输出（尾部）")
+        if logs:
+            tail = str(logs)[-DEV_LOOP_PANEL_LOG_TAIL_CHARS:]
+            st.code(tail)
+        else:
+            st.caption(
+                "暂无运行输出：本回合尚未产出日志（logs 为空），"
+                "可能命令未执行或输出未落盘。"
+            )
 
     # --- 修复历程（每轮：错了什么 + 修复策略）---
     history = _summarize_fix_history(payload.get("fix_loop_history"))
@@ -623,13 +706,17 @@ def _render_dev_loop_decision_panel(
         if st.button(
             "⛔ 终止任务", key="btn_dev_loop_terminate", use_container_width=True
         ):
-            _submit_dev_loop_decision(controller, thread_id, _DECISION_TERMINATE)
+            _submit_dev_loop_decision(
+                controller, thread_id, _DECISION_TERMINATE, current_token=current_token
+            )
     with cols[1]:
         # 导出代码 → {"decision": "export_code"}（降级导出已生成代码）
         if st.button(
             "📄 导出代码", key="btn_dev_loop_export_code", use_container_width=True
         ):
-            _submit_dev_loop_decision(controller, thread_id, _DECISION_EXPORT_CODE)
+            _submit_dev_loop_decision(
+                controller, thread_id, _DECISION_EXPORT_CODE, current_token=current_token
+            )
 
     # --- 改计划 → {"decision": "revise_plan", "user_feedback": <文本框内容>} ---
     with st.expander("✏️ 改计划（回 planning 重新规划）", expanded=True):
@@ -643,7 +730,8 @@ def _render_dev_loop_decision_panel(
         )
         if st.button("🔁 提交改计划", key="btn_dev_loop_revise_plan"):
             _submit_dev_loop_decision(
-                controller, thread_id, _DECISION_REVISE_PLAN, feedback or ""
+                controller, thread_id, _DECISION_REVISE_PLAN, feedback or "",
+                current_token=current_token,
             )
 
 
@@ -652,8 +740,12 @@ def _render_user_input_panel(
     thread_id: str,
     payload: Optional[Dict[str, Any]],
     current_step: object,
+    current_token: Optional[str] = None,
 ) -> None:
     """interrupt#3 用户输入面板（S4-09 / CP-F1-1~2，Maria 硬约束：就一个输入框）。
+
+    [S6-01] current_token 透传给两处 resume_with（正常提交 + 显式降级）做 token 校验 +
+    发起成功写 awaiting 单键（同 dev_loop 面板契约，两类面板统一走同一 awaiting）。
 
     渲染 question + 当前阶段一句上下文 + 单输入框（is_sensitive → password）+
     敏感时「记住此凭证供后续复现复用」勾选（默认不勾）→ 非空校验通过才
@@ -709,7 +801,12 @@ def _render_user_input_panel(
             "is_sensitive=%s remember=%s",
             thread_id, purpose_key, is_sensitive, bool(remember),
         )
-        controller.resume_with(thread_id, _build_user_input_resume(value, remember))
+        ok = controller.resume_with(
+            thread_id, _build_user_input_resume(value, remember),
+            expected_interrupt_token=current_token,
+        )
+        if ok:
+            st.session_state[_KEY_EXEC_AWAITING_TOKEN] = current_token
         st.rerun()
 
     # --- S5-01 显式降级按钮（T-S5-2-3）：仅 gate 发起的 payload 含 allow_degrade=True
@@ -729,7 +826,12 @@ def _render_user_input_panel(
                 "[execution_monitor] 提交显式降级 resume thread=%s purpose_key=%s",
                 thread_id, purpose_key,
             )
-            controller.resume_with(thread_id, _build_degrade_resume())
+            ok = controller.resume_with(
+                thread_id, _build_degrade_resume(),
+                expected_interrupt_token=current_token,
+            )
+            if ok:
+                st.session_state[_KEY_EXEC_AWAITING_TOKEN] = current_token
             st.rerun()
 
 
@@ -768,6 +870,55 @@ def _render_activity_stream_section(controller, thread_id: str) -> None:
         st.caption(_ACTIVITY_EMPTY_NOTICE)
         return
     st.code("\n".join(lines), language=None)
+
+
+def _render_awaiting_transition() -> None:
+    """[S6-01/case⑤a] "已收到，处理中"过渡态（换代 token 相同 ∧ resume worker 存活）。
+
+    与"停轮询"分支不同：本状态"等后台推进"，调用方随即注册 autorefresh（架构 §1.3 通则）。
+    原决策/输入面板此刻不渲染（被占位取代），物理上无按钮可点（第一道防线）。
+    """
+    st.title("论文自动复现 — 处理中")
+    st.info("已收到你的决策，正在恢复执行…（页面将自动刷新，无需操作）")
+    st.caption("处理中：后台正在消费你的提交，状态转移后本页自动更新。")
+
+
+def _render_orphan_task_card(
+    controller, thread_id: str, state: Dict[str, Any], active_node: object
+) -> None:
+    """[§4.2/R7 孤儿在途卡片] next 非空 ∧ 无 interrupt ∧ 无存活 worker（进程重启）→ 终态卡片。
+
+    产品红线：**挂回=展示现状，推进须显式触发**。展示当前在途节点 + 显式「继续执行」按钮
+    （文案明示重放语义）+ **停轮询**（仅用户动作可改变，不注册 autorefresh）。续跑动作
+    `resume_task` 由批次 4（T-S6-4-3）实现——本批渲染卡片 + 按钮骨架，按钮接线在批次 4。
+    """
+    node_disp = humanize("node", str(active_node)) if active_node else "未知阶段"
+    st.title("论文自动复现 — 任务已中断（可继续）")
+    st.warning(
+        f"该任务在「{node_disp}（{active_node}）」阶段中断（进程重启，后台执行线程已不在）。"
+        "任务未失败，但不会自动推进——需要你显式点击「继续执行」才会从断点重新执行。"
+    )
+    with st.container(border=True):
+        st.markdown("### 📌 当前现状")
+        st.markdown(f"**在途节点**：{node_disp}（`{active_node}`）")
+        current_step = state.get("current_step")
+        if current_step:
+            st.markdown(f"**最近记录阶段（current_step）**：{humanize('node', str(current_step))}")
+    st.caption(
+        "点击「继续执行」将从断点节点重新执行——其间的命令 / 工具调用会**重新发生**"
+        "（LangGraph 从 checkpoint 重放到断点，属既有语义）。"
+    )
+    # 批次 3 渲染骨架 + 按钮；resume_task 续跑实现落批次 4（T-S6-4-3），此处接线。
+    if st.button("▶️ 继续执行", key="btn_orphan_resume", use_container_width=True):
+        resume_task = getattr(controller, "resume_task", None)
+        if callable(resume_task):
+            logger.info("[execution_monitor] R7 孤儿续跑 thread=%s node=%s", thread_id, active_node)
+            resume_task(thread_id)
+            st.rerun()
+        else:
+            # 批次 4 未接通前的占位防御（不崩页面）。
+            st.info("续跑能力将在后续版本接通（resume_task 尚未提供）。")
+    _render_back_to_input_button(key="btn_orphan_back")
 
 
 # =========================================================================== #
@@ -816,18 +967,36 @@ def render() -> None:
         _render_cancelled_card()
         return
 
-    # --- case⑤：interrupt 判定（dev_loop_failure → 决策面板；planning → 跳回 review） ---
+    # --- case⑤：interrupt 判定 + S6-01 换代过渡态（架构 §1.2 四行判定表） ---
     if controller.is_interrupted(thread_id):
+        current_token = controller.get_interrupt_token(thread_id)
+        awaiting_token = st.session_state.get(_KEY_EXEC_AWAITING_TOKEN)
+        # case⑤a 过渡态：token==awaiting 且 resume worker 存活 → "处理中" + 注册 autorefresh
+        #（等后台推进，非停轮询）。worker 消费完后 token 变 / interrupt 消失自动转后续。
+        if (
+            awaiting_token is not None
+            and current_token == awaiting_token
+            and controller.has_active_worker(thread_id)
+        ):
+            _render_awaiting_transition()
+            st_autorefresh(interval=STREAMLIT_POLL_INTERVAL, key="execution_poll")
+            return
+        # case⑤b 换代（token 变 / 同题重问无 worker）→ 清 awaiting，渲染新面板
+        #（禁对新 interrupt 沿用旧提交，配合 resume_with token 校验）。
+        if awaiting_token is not None:
+            st.session_state[_KEY_EXEC_AWAITING_TOKEN] = None
         kind = controller.interrupt_kind(thread_id)
         if kind == _INTERRUPT_KIND_DEV_LOOP:
             payload = controller.get_interrupt_payload(thread_id)
-            _render_dev_loop_decision_panel(controller, thread_id, payload)
+            _render_dev_loop_decision_panel(
+                controller, thread_id, payload, state, current_token
+            )
             return  # 决策面板分支不注册 autorefresh（停轮询，等用户决策）
         if kind == _INTERRUPT_KIND_USER_INPUT:
             # interrupt#3（S4-09）：用户输入面板，同页不同面板，同样停轮询等提交。
             payload = controller.get_interrupt_payload(thread_id)
             _render_user_input_panel(
-                controller, thread_id, payload, state.get("current_step")
+                controller, thread_id, payload, state.get("current_step"), current_token
             )
             return
         # planning interrupt（不应在执行监控页出现，但防御性跳回计划审核页）。
@@ -850,11 +1019,20 @@ def render() -> None:
         _render_report_missing_card(state)
         return
 
+    # --- case⑥ter：§4.2 R7 孤儿在途卡片（S6-01/S6-02 只读推断）---
+    #     此处已过 case⑤（非 interrupt）：active_node 非空（next 非空）∧ 无存活 worker
+    #     → 进程重启后的孤儿在途任务（登记表必空）→ 停轮询 + 显式续跑（架构 §4.1 R7）。
+    phase = controller.get_phase(thread_id)
+    active_node = phase.get("active_node") if isinstance(phase, dict) else None
+    if active_node is not None and not controller.has_active_worker(thread_id):
+        _render_orphan_task_card(controller, thread_id, state, active_node)
+        return
+
     # --- case⑦：正常渲染 + 注册 autorefresh（仅此路径注册定时器） ---
     st.title("论文自动复现 — 执行监控")
     st.caption("实时观察代码生成 / 执行验证 / 修复循环进度；页面每 1.5 秒自动刷新。")
 
-    _render_progress(state)
+    _render_progress(state, active_node=active_node)
     st.divider()
     _render_sandbox_info(state)
     st.divider()

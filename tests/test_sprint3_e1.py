@@ -43,7 +43,11 @@ from app import GraphController, _PAGE_MAP
 # 注意：annotations 形态用 from __future__ import annotations，故为字符串形态字面量。
 _GOLDEN_SIGNATURES = {
     "start_task": "(self, arxiv_id: 'str', llm_config_set: 'LLMConfigSet') -> 'str'",
-    "resume_with": "(self, thread_id: 'str', resume_payload: 'Dict') -> 'None'",
+    # [S6-01/T-S6-3-1] 增可选校验参 expected_interrupt_token（缺省 None 向后兼容）+ 返回 None→bool。
+    "resume_with": (
+        "(self, thread_id: 'str', resume_payload: 'Dict', "
+        "expected_interrupt_token: 'Optional[str]' = None) -> 'bool'"
+    ),
     "poll_state": "(self, thread_id: 'str') -> 'Optional[GlobalState]'",
     "is_interrupted": "(self, thread_id: 'str') -> 'bool'",
     "get_interrupt_payload": "(self, thread_id: 'str') -> 'Optional[Dict]'",
@@ -95,8 +99,14 @@ def test_cp_e1_1_no_unexpected_public_methods_added():
     # [S5-07 适配] sprint5 T-S5-4-2 按 dev-plan 规格新增只读方法 get_activity_tail
     # （架构 sprint5 §4 Q-S5-8 落点：活动流尾部快照，UI 轮询消费），纳入预期集合；
     # 守门语义同上不变。
+    # [S6-01/02/T-S6-3-1/3-2] 批次 3 按架构 §1.2/§5/§6.1 新增只读方法 get_interrupt_token /
+    # has_active_worker / get_phase（换代判定原语 + worker 存活判定 + 在途阶段推导）。
+    # [S6-06/07/T-S6-4-3] 批次 4 按架构 §4 新增 list_threads / resume_task / get_task_status
+    # （任务列表枚举 + 孤儿显式续跑 + 单 thread 状态推导入口）。
     expected = set(_GOLDEN_SIGNATURES) | {
-        "interrupt_kind", "get_worker_error", "is_finished", "get_activity_tail"}
+        "interrupt_kind", "get_worker_error", "is_finished", "get_activity_tail",
+        "get_interrupt_token", "has_active_worker", "get_phase",
+        "list_threads", "resume_task", "get_task_status"}
     assert public_methods == expected, (
         f"公开方法集合超出预期：多出 {public_methods - expected}，缺失 {expected - public_methods}"
     )
@@ -195,13 +205,17 @@ def test_cp_e1_3_report_page_registered_in_page_map():
 
 
 def test_cp_e1_3_page_map_keys_use_config_constants_not_literals():
-    """CP-E1-3：_PAGE_MAP 键统一用 config.STREAMLIT_PAGE_* 常量（不新增页面常量，全部复用）。"""
+    """CP-E1-3：_PAGE_MAP 键统一用 config.STREAMLIT_PAGE_* 常量（不用字面量）。
+
+    [S6-07/T-S6-4-3] 批次 4 新增任务列表页常量 STREAMLIT_PAGE_TASKS（架构 §4.4）纳入集合。
+    """
     assert set(_PAGE_MAP.keys()) == {
         config.STREAMLIT_PAGE_INPUT,
         config.STREAMLIT_PAGE_PROGRESS,
         config.STREAMLIT_PAGE_REVIEW,
         config.STREAMLIT_PAGE_EXECUTION,
         config.STREAMLIT_PAGE_REPORT,
+        config.STREAMLIT_PAGE_TASKS,
     }
 
 
@@ -298,6 +312,9 @@ class _FakeStreamlit:
         self.sidebar = _FakeSidebarCtx()
         self.info_called = False
         self.rendered_func_calls: list = []
+        # [S6-06/T-S6-4-1] main() 新增 _restore_from_query_params 读 st.query_params——
+        # 无 task 参数路径直接 return（字节等价红线），空 dict 即满足，dispatch 行为不变。
+        self.query_params: Dict[str, Any] = {}
 
     def set_page_config(self, **kwargs):  # noqa: D401
         return None

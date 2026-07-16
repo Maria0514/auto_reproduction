@@ -405,7 +405,8 @@ def test_cp_e2_3_terminate_button_injects_terminate_payload():
         assert len(btns) == 1
         btns[0].click().run()
     controller.resume_with.assert_called_once_with(
-        "task-exec-001", {"decision": "terminate"}
+        "task-exec-001", {"decision": "terminate"},
+        expected_interrupt_token=controller.get_interrupt_token.return_value,
     )
 
 
@@ -425,7 +426,8 @@ def test_cp_e2_3_export_code_button_injects_export_payload():
         assert len(btns) == 1
         btns[0].click().run()
     controller.resume_with.assert_called_once_with(
-        "task-exec-001", {"decision": "export_code"}
+        "task-exec-001", {"decision": "export_code"},
+        expected_interrupt_token=controller.get_interrupt_token.return_value,
     )
 
 
@@ -454,7 +456,8 @@ def test_cp_e2_3_revise_plan_button_injects_revise_payload_with_feedback():
         assert len(btns) == 1
         btns[0].click().run()
     controller.resume_with.assert_called_once_with(
-        "task-exec-rev", {"decision": "revise_plan", "user_feedback": fb}
+        "task-exec-rev", {"decision": "revise_plan", "user_feedback": fb},
+        expected_interrupt_token=controller.get_interrupt_token.return_value,
     )
 
 

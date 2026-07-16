@@ -915,7 +915,8 @@ def test_g9_revise_plan_empty_feedback_click_injects_empty_string():
         assert len(btns) == 1
         btns[0].click().run()
     controller.resume_with.assert_called_once_with(
-        "task-e2r-rev-empty", {"decision": "revise_plan", "user_feedback": ""}
+        "task-e2r-rev-empty", {"decision": "revise_plan", "user_feedback": ""},
+        expected_interrupt_token=controller.get_interrupt_token.return_value,
     )
 
 
@@ -956,7 +957,8 @@ def test_g10_panel_renders_context_summary_fields():
     at = _run(controller, _SCRIPT_HEADER)
     assert not at.exception, at.exception
     text = _collect_text(at)
-    assert "hardware" in text             # error_category
+    assert "硬件资源不足" in text         # error_category 经 humanize（MF-4/AC-S6-20）
+    assert "[error_category=hardware]" not in text   # 裸标签不泄漏
     assert "CUDA 显存不足" in text         # error_summary
     assert "降低 batch size" in text       # fix_hint
     assert "CUDA out of memory" in text    # representative_stderr (st.code)

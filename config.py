@@ -121,6 +121,9 @@ REACT_MAX_ROUNDS_CODING: int = 12  # coding 节点 ReAct max_rounds
 STREAMLIT_PAGE_EXECUTION: str = "execution"  # UI 路由常量：执行监控页
 STREAMLIT_PAGE_REPORT: str = "report"  # UI 路由常量：结果报告页
 
+# ========== Sprint 6：任务列表页路由常量（S6-07 / architecture §4.4） ==========
+STREAMLIT_PAGE_TASKS: str = "tasks"  # UI 路由常量：任务列表页（枚举 + 挂回）
+
 
 # ========== Sprint 4：execution 内嵌子图 / run_command / secrets（S4-10 / architecture §12.2） ==========
 # 沿用 sp1~sp3 字面量风格（无 env 覆盖）。不新增交互超时常量（Q-F1 Maria 已定一直暂停）。
@@ -144,6 +147,10 @@ ACTIVITY_STREAM_RENDER_TAIL: int = 30  # 执行监控页活动流尾部渲染行
 # S6-B2（T-S6-2-5）：NO_METRICS 早停阈值——连续此轮数零指标则跳过 retry_coding，
 # 走 interrupt#2 通道（无进展口径 = 类别连续复现）。
 NO_METRICS_EARLY_STOP_ROUNDS: int = 2
+
+# S6-01 批次 3（T-S6-3-3 / MF-7，架构 §5.3）：dev_loop 失败决策面板"最近一次运行输出"
+# 区渲染 execution_result.logs 的尾部字符数（logs 写入点已 mask，渲染零再脱敏）。
+DEV_LOOP_PANEL_LOG_TAIL_CHARS: int = 4000
 
 
 # ========== 环境变量读取 ==========

@@ -24,21 +24,26 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import sqlite3
 import threading
 import uuid
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from langgraph.types import Command
 
 from config import (
+    CHECKPOINT_DB_PATH,
     PROJECT_ROOT,
     STREAMLIT_PAGE_EXECUTION,
     STREAMLIT_PAGE_INPUT,
     STREAMLIT_PAGE_PROGRESS,
     STREAMLIT_PAGE_REPORT,
     STREAMLIT_PAGE_REVIEW,
+    STREAMLIT_PAGE_TASKS,
 )
 from core.activity_stream import ActivityEvent, ActivityStreamHandler, snapshot_tail
 from core.checkpointer import get_checkpointer
@@ -75,6 +80,8 @@ _PAGE_MAP: Dict[str, tuple] = {
     # --- Sprint 3 新增两页（E2/E3 将提供下列模块/函数；当前为预留路由入口）---
     STREAMLIT_PAGE_EXECUTION: ("ui.pages.execution_monitor", "render_execution_monitor_page"),
     STREAMLIT_PAGE_REPORT: ("ui.pages.result_report", "render_result_report_page"),
+    # --- Sprint 6 新增：任务列表页（S6-07，枚举 + 挂回）---
+    STREAMLIT_PAGE_TASKS: ("ui.pages.task_list", "render_task_list_page"),
 }
 
 
@@ -118,6 +125,111 @@ def _refresh_llm_config_set(llm_config_set: LLMConfigSet) -> LLMConfigSet:
     return refreshed
 
 
+# ======================================================================
+# [S6-01/T-S6-3-1] 进程级 worker 登记表（架构 §1.2 第三道防线 / §5）
+# ======================================================================
+# 多 tab = 多 Streamlit session = 多 GraphController 实例，但同一进程——实例属性
+# self._workers 无法横跨 tab。故把"存活 worker"权威登记表提升为 **模块级单一登记表**：
+#     - resume_with 原子 check-and-set（防跨 tab / 双击窗口重复 resume，第三道防线）；
+#     - §4 任务状态推导的"在途 vs 孤儿"区分锚（进程重启后登记表必空 → next 非空即孤儿）。
+# 一个抽象两处复用（架构 §1.2 极简裁决）。self._workers 保留为实例侧兼容 shim（既有
+# _join_worker / 测试读点零改动），生产存活判定一律走本登记表 has_active_worker。
+_THREAD_WORKERS: Dict[str, threading.Thread] = {}
+_THREAD_WORKERS_LOCK = threading.Lock()
+
+
+def _register_worker(thread_id: str, thread: threading.Thread) -> None:
+    """登记 thread_id → worker 线程（start_task / resume_with 起线程前调用）。"""
+    with _THREAD_WORKERS_LOCK:
+        _THREAD_WORKERS[thread_id] = thread
+
+
+def _unregister_worker(thread_id: str, thread: threading.Thread) -> None:
+    """worker 线程结束时注销（仅当登记的仍是自己才删——避免误删后续 resume 覆盖的新线程）。
+
+    在 _worker_run / _resume_run 的 finally 调用，保证登记表反映真实存活（架构 §5 纪律）。
+    """
+    with _THREAD_WORKERS_LOCK:
+        if _THREAD_WORKERS.get(thread_id) is thread:
+            del _THREAD_WORKERS[thread_id]
+
+
+def _reset_for_tests() -> None:
+    """清空进程级 worker 登记表（R-S6-A4：用例间 thread_id 泄漏防护）。"""
+    with _THREAD_WORKERS_LOCK:
+        _THREAD_WORKERS.clear()
+
+
+# ======================================================================
+# [S6-07/T-S6-4-3] 任务状态确定性推导（架构 §4.1，纯函数 R1~R7）
+# ======================================================================
+# 状态取值（UI 徽标 + 挂回路由消费；与 derive_task_status 返回值强一致）。
+TASK_STATUS_FAILED = "failed"          # R2：values.error 非空
+TASK_STATUS_CANCELLED = "cancelled"    # R3：current_step==cancelled_by_user
+TASK_STATUS_DONE = "done"              # R4a：next 空 ∧ report_path 非空
+TASK_STATUS_NO_REPORT = "no_report"    # R4b：next 空 ∧ report_path 空（失败·未产报告）
+TASK_STATUS_AWAITING = "awaiting"      # R5：next 非空 ∧ 有 interrupt（等待输入）
+TASK_STATUS_RUNNING = "running"        # R6：next 非空 ∧ 无 interrupt ∧ 有存活 worker
+TASK_STATUS_INTERRUPTED = "interrupted"  # R7：next 非空 ∧ 无 interrupt ∧ 无存活 worker（孤儿）
+
+
+def derive_task_status(snapshot, has_active_worker: bool) -> Optional[str]:
+    """按优先级自上而下短路推导任务状态（架构 §4.1 规则表，纯函数）。
+
+    输入 = snapshot（GraphController._main_graph.get_state 只读组装）+ 该 thread 是否有
+    存活 worker（查进程级 `_THREAD_WORKERS`）。返回状态串；R1（快照不存在/values 空）
+    → None（不列出，与 is_finished 同款空快照防误判 app.py:254）。
+
+    R5~R7 是 PRD"进程重启后无 worker 的在途任务口径"的答案：有 interrupt=等待输入
+    （挂回应答即恢复，resume 是用户显式动作无副作用重放疑虑）；无 interrupt 的在途=已中断，
+    区分锚 = 进程级 worker 登记表（进程重启后必空，next 非空即孤儿，判定确定）。
+    """
+    if not snapshot or not getattr(snapshot, "values", None):
+        return None  # R1
+    values = snapshot.values
+    if values.get("error"):
+        return TASK_STATUS_FAILED  # R2
+    if values.get("current_step") == "cancelled_by_user":
+        return TASK_STATUS_CANCELLED  # R3
+    next_ = getattr(snapshot, "next", None) or ()
+    if not next_:
+        # R4a/R4b：图已到 END
+        return TASK_STATUS_DONE if values.get("report_path") else TASK_STATUS_NO_REPORT
+    if GraphController._has_interrupt(snapshot):
+        return TASK_STATUS_AWAITING  # R5
+    if has_active_worker:
+        return TASK_STATUS_RUNNING  # R6
+    return TASK_STATUS_INTERRUPTED  # R7
+
+
+# 状态 → 中文徽标（任务列表页 / 状态展示消费）。
+TASK_STATUS_LABELS: Dict[str, str] = {
+    TASK_STATUS_FAILED: "失败",
+    TASK_STATUS_CANCELLED: "已终止",
+    TASK_STATUS_DONE: "已完成",
+    TASK_STATUS_NO_REPORT: "失败（未产报告）",
+    TASK_STATUS_AWAITING: "等待输入",
+    TASK_STATUS_RUNNING: "进行中",
+    TASK_STATUS_INTERRUPTED: "已中断",
+}
+
+
+def _extract_paper_label(values: Dict) -> str:
+    """论文标识三级回退（架构 §4.3）：``paper_meta.title_zh → title → user_input``。
+
+    列表页每条 thread 的可读标识；paper_meta 缺失（早期阶段未拉取）时回退原始输入
+    （user_input = arxiv_id）。任一层非空即返回，全空兜底空串（调用方决定占位）。
+    """
+    meta = values.get("paper_meta") or {}
+    if isinstance(meta, dict):
+        for key in ("title_zh", "title"):
+            val = meta.get(key)
+            if val:
+                return str(val)
+    user_input = values.get("user_input")
+    return str(user_input) if user_input else ""
+
+
 class GraphController:
     """GraphController 持有所有跨线程协调逻辑（架构 §2.7.1 参考实现落地）。
 
@@ -159,6 +271,8 @@ class GraphController:
             daemon=True,
             name=f"graph-worker-{thread_id}",
         )
+        # [T-S6-3-1] 进程级登记表注册（在途任务判定锚）+ 实例侧兼容 shim。
+        _register_worker(thread_id, thread)
         with self._lock:
             self._workers[thread_id] = thread
             # 重新启动同一 thread_id 前清掉旧错误（防御；sp2 单 thread_id 不会触发）。
@@ -185,22 +299,61 @@ class GraphController:
             logger.exception("[worker:%s] 异常", thread_id)
             with self._lock:
                 self._worker_errors[thread_id] = e
+        finally:
+            # [T-S6-3-1] 线程结束注销进程级登记表（登记表反映真实存活，架构 §5 纪律）。
+            _unregister_worker(thread_id, threading.current_thread())
 
-    def resume_with(self, thread_id: str, resume_payload: Dict) -> None:
-        """通过**新工作线程**调用 graph.invoke(Command(resume=...))。
+    def resume_with(
+        self,
+        thread_id: str,
+        resume_payload: Dict,
+        expected_interrupt_token: Optional[str] = None,
+    ) -> bool:
+        """通过**新工作线程**调用 graph.invoke(Command(resume=...))，返回是否已发起。
 
         关键：不能在主线程同步调用 invoke()，否则 UI 阻塞；需要新起一个 daemon worker
         （架构 §2.7.1 / R-S2-02）。
+
+        [S6-01/T-S6-3-1] 防误提交 / "同一 interrupt 至多一次 resume"三道防线（架构 §1.2）：
+            - 第二道（token 校验，跨 tab 有效）：``expected_interrupt_token`` 非 None 时，
+              发起线程前重读当前 interrupt_token，不一致 → 拒绝（WARNING + 返回 False，
+              不抛异常），挡住"迟到的提交"（interrupt 已换代/已消失后才点下的按钮）；
+              缺省 None → 不校验（plan_review 等既有调用零改动，向后兼容）。
+            - 第三道（进程级原子 check-and-set，跨 tab / 双击窗口）：模块级 ``_THREAD_WORKERS``
+              该 thread 已有存活线程 → 拒绝（返回 False），防重复 resume。
+        返回值：成功发起 worker → True；被任一防线拒绝 → False（既有调用忽略返回值仍安全）。
         """
+        # 第二道防线：token 校验（非 None 时；发起前重读当前 token）。
+        if expected_interrupt_token is not None:
+            current_token = self.get_interrupt_token(thread_id)
+            if current_token != expected_interrupt_token:
+                logger.warning(
+                    "[resume:%s] interrupt_token 不一致，拒绝迟到提交"
+                    "（期望=%s 实际=%s）",
+                    thread_id, expected_interrupt_token, current_token,
+                )
+                return False
+
         thread = threading.Thread(
             target=self._resume_run,
             args=(thread_id, resume_payload),
             daemon=True,
             name=f"graph-resume-{thread_id}",
         )
-        with self._lock:
+        # 第三道防线：进程级原子 check-and-set（check 与 set 同一临界区）。
+        with _THREAD_WORKERS_LOCK:
+            existing = _THREAD_WORKERS.get(thread_id)
+            if existing is not None and existing.is_alive():
+                logger.warning(
+                    "[resume:%s] 已有存活 worker，拒绝重复 resume（防跨 tab / 双击重放）",
+                    thread_id,
+                )
+                return False
+            _THREAD_WORKERS[thread_id] = thread
+        with self._lock:  # 实例侧兼容 shim（既有 _join_worker / 测试读点）。
             self._workers[thread_id] = thread
         thread.start()
+        return True
 
     def _resume_run(self, thread_id: str, resume_payload: Dict) -> None:
         """resume 工作线程入口。又一个独立 SqliteSaver 实例（架构 §4.3）。
@@ -219,6 +372,9 @@ class GraphController:
             logger.exception("[resume:%s] 异常", thread_id)
             with self._lock:
                 self._worker_errors[thread_id] = e
+        finally:
+            # [T-S6-3-1] 线程结束注销进程级登记表（架构 §5 纪律）。
+            _unregister_worker(thread_id, threading.current_thread())
 
     # ------------------------------------------------------------------
     # 主线程只读
@@ -285,6 +441,174 @@ class GraphController:
             if interrupts:
                 return interrupts[0].value
         return None
+
+    def get_interrupt_token(self, thread_id: str) -> Optional[str]:
+        """返回当前 interrupt 的**复合换代 token** = ``id:指纹``，无 interrupt → None。
+
+        [S6-01/T-S6-3-1，架构 §1.2] 复合三元判定锚：``interrupt.id``（锚）+ payload 的
+        16 字符 sha1 指纹拼成 ``{id}:{fingerprint}``。与 get_interrupt_payload 同一读路径
+        （主线程 _main_graph.get_state 只读）。用于 UI 换代判定：
+
+            - payload 变化 → 指纹变 → token 变（新问题，禁沿用旧 resume 提交）；
+            - 相同 payload → token 相同（同一代，配合 worker 存活判过渡态）。
+
+        安全纪律：token 只含 payload 哈希，敏感 question 原文不外泄（CP-3.1-2）。
+        防御（R-S6-A1）：``interrupt.id`` 取不到（getattr 失败 / 为 None）时退化为**纯指纹**，
+        判定仍可用（同 payload 仍同 token）。
+        """
+        config = _make_config(thread_id)
+        snapshot = self._main_graph.get_state(config)
+        if not (snapshot and snapshot.next):
+            return None
+        for task in (getattr(snapshot, "tasks", None) or ()):
+            interrupts = getattr(task, "interrupts", None) or ()
+            if not interrupts:
+                continue
+            interrupt = interrupts[0]
+            value = getattr(interrupt, "value", None)
+            fingerprint = hashlib.sha1(
+                json.dumps(
+                    value, sort_keys=True, ensure_ascii=False, default=str
+                ).encode("utf-8")
+            ).hexdigest()[:16]
+            interrupt_id = getattr(interrupt, "id", None)
+            if interrupt_id is None:
+                return fingerprint  # R-S6-A1 退化：无 id → 纯指纹
+            return f"{interrupt_id}:{fingerprint}"
+        return None
+
+    def has_active_worker(self, thread_id: str) -> bool:
+        """该 thread 是否有**存活** worker 线程（进程级登记表只读，架构 §1.2 第三道 / §5）。
+
+        判定 = 模块级 ``_THREAD_WORKERS`` 命中 ∧ 线程 ``.is_alive()``。服务两处（一个抽象）：
+            - UI 换代过渡态判定（token 相同 ∧ 有存活 worker → "处理中"，否则视为换代）；
+            - §4 任务状态推导"在途 vs 孤儿"（进程重启后登记表必空 → next 非空即孤儿）。
+        """
+        with _THREAD_WORKERS_LOCK:
+            thread = _THREAD_WORKERS.get(thread_id)
+        return bool(thread is not None and thread.is_alive())
+
+    def get_phase(self, thread_id: str) -> Dict:
+        """只读推导在途阶段（架构 §6.1，S6-02）：``{active_node, current_step}``。
+
+        - ``active_node`` = ``snapshot.next[0]``（next 非空时的在途节点标签）| None；
+        - ``current_step`` = ``snapshot.values["current_step"]``（回落既有口径用）。
+
+        与 is_finished 同一读路径 + 空快照防御（从未启动的 thread 返回 values={} 空快照）：
+        无快照 / 无 values → ``{active_node: None, current_step: None}`` 安全默认。
+        **纯只读无副作用**（不碰登记表、不碰 checkpoint），仅供 UI 阶段标签只读消费。
+        注意：interrupt 暂停时 next 也非空，active_node 会等于 interrupt 节点——消费方靠
+        case 分发顺序（interrupt 分支先于在途标签）区分（架构 §6.2）。
+        """
+        config = _make_config(thread_id)
+        snapshot = self._main_graph.get_state(config)
+        if not snapshot or not getattr(snapshot, "values", None):
+            return {"active_node": None, "current_step": None}
+        next_ = getattr(snapshot, "next", None) or ()
+        active_node = next_[0] if next_ else None
+        current_step = snapshot.values.get("current_step")
+        return {"active_node": active_node, "current_step": current_step}
+
+    def get_task_status(self, thread_id: str) -> Optional[str]:
+        """组装 snapshot + worker 存活 → derive_task_status（R1~R7，S6-07，架构 §4.1）。
+
+        单 thread 的状态推导入口（重连路由 / 列表页共用）。R1（快照不存在）返回 None。
+        """
+        snapshot = self._main_graph.get_state(_make_config(thread_id))
+        return derive_task_status(snapshot, self.has_active_worker(thread_id))
+
+    def list_threads(self) -> List[Dict]:
+        """只读枚举 checkpoints 库全部 thread → 状态 + 论文标识（S6-07，架构 §4.3）。
+
+        - 读路径：``sqlite3`` **mode=ro** URI 连接跑 ``SELECT thread_id, MAX(checkpoint_id)
+          GROUP BY thread_id ORDER BY 2 DESC``（checkpoint_id 时间有序 → 新任务在前）；
+        - 随后逐 thread 走既有 ``_main_graph.get_state`` 组装状态（不新建第二套读栈）+
+          论文标识三级回退（``paper_meta.title_zh → title → user_input``）；
+        - 坏 thread（get_state 异常 / 反序列化失败）**逐条捕获跳过**，不炸整页（R-S6-A3）；
+          R1（空快照）状态为 None 的 thread 不列出。
+
+        返回：``[{thread_id, status, status_label, paper_label}, ...]``（新任务在前）。
+        """
+        db_path = str(CHECKPOINT_DB_PATH)
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        except sqlite3.Error:
+            logger.exception("[list_threads] 打开只读连接失败: %s", db_path)
+            return []
+        try:
+            rows = conn.execute(
+                "SELECT thread_id, MAX(checkpoint_id) FROM checkpoints "
+                "GROUP BY thread_id ORDER BY 2 DESC"
+            ).fetchall()
+        except sqlite3.Error:
+            logger.exception("[list_threads] 枚举 checkpoints 失败")
+            return []
+        finally:
+            conn.close()
+
+        result: List[Dict] = []
+        for row in rows:
+            thread_id = row[0]
+            try:
+                snapshot = self._main_graph.get_state(_make_config(thread_id))
+                status = derive_task_status(
+                    snapshot, self.has_active_worker(thread_id))
+                if status is None:
+                    continue  # R1：不列出
+                values = getattr(snapshot, "values", None) or {}
+                result.append({
+                    "thread_id": thread_id,
+                    "status": status,
+                    "status_label": TASK_STATUS_LABELS.get(status, status),
+                    "paper_label": _extract_paper_label(values),
+                })
+            except Exception:  # noqa: BLE001 - 坏 thread 逐条跳过不炸整页（R-S6-A3）
+                logger.exception("[list_threads] thread %s 组装失败，跳过", thread_id)
+                continue
+        return result
+
+    def resume_task(self, thread_id: str) -> bool:
+        """孤儿在途任务显式续跑（R7 卡片显式按钮**唯一**调用，S6-07，架构 §4.2）。
+
+        新 daemon worker 执行 ``graph.invoke(None, config)``——LangGraph 语义：从最后
+        checkpoint 重启在途节点，**该节点从头重放、其间命令/调用重新发生**（产品红线：
+        推进须用户显式触发，列表页"挂回"绝不调用本方法）。
+
+        并发防护（与 §1.2 第三道防线同一闸门）：进程级原子 check-and-set——已有存活 worker
+        → 拒绝（返回 False），防 TOCTOU / 重复续跑。成功发起 → True。
+        """
+        thread = threading.Thread(
+            target=self._resume_task_run,
+            args=(thread_id,),
+            daemon=True,
+            name=f"graph-resume-{thread_id}",
+        )
+        with _THREAD_WORKERS_LOCK:
+            existing = _THREAD_WORKERS.get(thread_id)
+            if existing is not None and existing.is_alive():
+                logger.warning(
+                    "[resume_task:%s] 已有存活 worker，拒绝重复续跑", thread_id)
+                return False
+            _THREAD_WORKERS[thread_id] = thread
+        with self._lock:
+            self._workers[thread_id] = thread
+        thread.start()
+        return True
+
+    def _resume_task_run(self, thread_id: str) -> None:
+        """孤儿续跑 worker 入口：独立 SqliteSaver + graph，``invoke(None)`` 从断点重启。"""
+        try:
+            worker_checkpointer = get_checkpointer()
+            worker_graph = build_graph(checkpointer=worker_checkpointer)
+            config = _make_config(thread_id)
+            handler = self._get_activity_handler(thread_id)
+            worker_graph.invoke(None, {**config, "callbacks": [handler]})
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[resume_task:%s] 异常", thread_id)
+            with self._lock:
+                self._worker_errors[thread_id] = e
+        finally:
+            _unregister_worker(thread_id, threading.current_thread())
 
     def interrupt_kind(self, thread_id: str) -> Optional[str]:
         """区分当前 interrupt 是 planning(interrupt#1) 还是 dev_loop_failure(interrupt#2)。
@@ -418,6 +742,57 @@ def _init_session_state() -> None:
     # graph_controller 单例由 _get_controller 惰性创建。
 
 
+def _route_for_status(controller: "GraphController", thread_id: str, status: str) -> str:
+    """[S6-06/T-S6-4-1] 任务状态 → 挂回目标页（架构 §4.1 挂回列）。
+
+    done→报告页；awaiting 按 interrupt_kind 分（planning→审核页；dev_loop/user_input→监控页）；
+    failed/cancelled/no_report/running/interrupted → 执行监控页（该页 case 分发渲染对应
+    终态卡片 / 正常轮询 / R7 孤儿卡片）。
+    """
+    if status == TASK_STATUS_DONE:
+        return STREAMLIT_PAGE_REPORT
+    if status == TASK_STATUS_AWAITING:
+        kind = controller.interrupt_kind(thread_id)
+        if kind in (None, "planning"):
+            return STREAMLIT_PAGE_REVIEW
+        return STREAMLIT_PAGE_EXECUTION
+    return STREAMLIT_PAGE_EXECUTION
+
+
+def _restore_from_query_params(controller: "GraphController") -> None:
+    """[S6-06/T-S6-4-1] URL 重连（架构 §7.6）：``query_params['task']`` → 恢复 thread_id + 路由。
+
+    **每个 session 首次加载只尝试一次**（``_restore_attempted`` 标志）：置位后同 session 内
+    rerun / "返回输入页开启新任务"（清空 thread_id）不再重连——否则旧 task 参数会把清空的
+    thread_id 重新激活（CP-4.2-2）。F5 刷新 = 新 session = 标志缺失 → 正常重连。
+
+    **无参数路径字节等价红线**（AC-S6-14 / R-S6-4）：无 task 参数 ∨ session 已有 thread_id
+    → 直接 return，main() 行为与现状完全一致（回归红线）。thread 不存在（R1 空快照）→ 安全
+    回退不激活（不炸）。resume 有效性：重连后 controller 新实例，但 resume_with/resume_task
+    本就每次新建独立 SqliteSaver + graph，resume 语义与原 session 等价（AC-S6-16）。
+    """
+    import streamlit as st
+
+    if st.session_state.get("_restore_attempted"):
+        return
+    st.session_state["_restore_attempted"] = True
+    if st.session_state.get("thread_id"):
+        return  # 字节等价红线：session 已有任务，不覆盖
+    task = st.query_params.get("task")
+    if not task:
+        return  # 字节等价红线：无 task 参数，与现状完全一致
+    status = controller.get_task_status(task)
+    if status is None:
+        logger.info("[restore] query task=%s 不存在或空快照，忽略", task)
+        return
+    st.session_state["thread_id"] = task
+    st.session_state["current_page"] = _route_for_status(controller, task, status)
+    logger.info(
+        "[restore] 重连 thread=%s status=%s → page=%s",
+        task, status, st.session_state["current_page"],
+    )
+
+
 def _render_sidebar() -> Optional[LLMConfigSet]:
     """侧栏渲染 LLM 配置表单（D1 组件），返回其**返回值**（不直读 session_state）。
 
@@ -459,6 +834,10 @@ def main() -> None:
             controller = _get_controller()  # noqa: F841 - 单例预热，供页面消费
     else:
         controller = _get_controller()  # noqa: F841 - 单例预热，供页面消费
+
+    # [S6-06/T-S6-4-1] URL 重连：仅 query_params 含 task ∧ session 无 thread_id 时激活
+    # （每 session 一次）；无参数路径字节等价（AC-S6-14 红线）。
+    _restore_from_query_params(controller)
 
     # 侧栏由各页面自行渲染（D3/D4/D5 各自调 render_llm_config_form）。
     # 此处不调 _render_sidebar()——D3 落地后 paper_input.render() 自己渲染侧栏，

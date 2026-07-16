@@ -259,7 +259,8 @@ def test_cp_f1_2_submit_non_sensitive_value_remember_false():
         at.text_input(key="_exec_user_input_value").set_value("cifar10")
         at.button(key="btn_user_input_submit").click().run()
     controller.resume_with.assert_called_once_with(
-        "task-exec-001", {"value": "cifar10", "remember": False}
+        "task-exec-001", {"value": "cifar10", "remember": False},
+        expected_interrupt_token=controller.get_interrupt_token.return_value,
     )
 
 
@@ -278,7 +279,8 @@ def test_cp_f1_2_submit_sensitive_with_remember_checked():
         at.checkbox(key="_exec_user_input_remember").check()
         at.button(key="btn_user_input_submit").click().run()
     controller.resume_with.assert_called_once_with(
-        "task-exec-001", {"value": "ghp_secret", "remember": True}
+        "task-exec-001", {"value": "ghp_secret", "remember": True},
+        expected_interrupt_token=controller.get_interrupt_token.return_value,
     )
 
 

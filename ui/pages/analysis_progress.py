@@ -121,8 +121,14 @@ def _segment_status(
     current_step: str,
     node_name: str,
     degraded_nodes: List[str],
+    active_node: object = None,
 ) -> Literal["pending", "running", "done", "degraded"]:
     """推断进度条单段状态（架构 §2.10 align D4 契约权威）。
+
+    [S6-02/AC-S6-04] active_node（controller.get_phase 只读推断的在途节点）命中本段节点时，
+    该段直接判 "running"——修正 current_step 只记"最后写入节点"导致的标签滞后（LangGraph
+    只在节点 return 时提交 state，在途节点的段会被 current_step 推成 pending）。纯函数性不破
+    （active_node 是值不是 controller）。
 
     判定基于节点序列索引比较（current_step 只记"最后写入的节点"，无独立完成标志位）::
 
@@ -158,6 +164,13 @@ def _segment_status(
     except ValueError:
         # 非 ORDER 节点：保守视为 pending（不应发生，仅防御）。
         return "pending"
+
+    # [S6-02/AC-S6-04] 在途节点优先修滞后：active_node 命中本段 **且在 current_step 位置
+    # 之后**（node_idx >= cur_idx）→ "running"。只向前升级（pending→running），不把已完成
+    # 段向后降级（node_idx < cur_idx 的历史段仍按索引判 done/degraded）——current_step 只记
+    # "最后写入节点"，在途节点 return 前该段本会被推成 pending，此处纠正。
+    if active_node and node_name == str(active_node) and node_idx >= cur_idx:
+        return "running"
 
     if node_idx > cur_idx:
         return "pending"
@@ -289,8 +302,10 @@ def _render_paper_card(paper_meta: Optional[Dict]) -> None:
                 st.write(abstract)
 
 
-def _render_progress_bar(state: Dict) -> None:
+def _render_progress_bar(state: Dict, active_node: object = None) -> None:
     """渲染 5 段进度条（D5 视觉对齐 mock §3.2 L147-152）。
+
+    [S6-02/AC-S6-04] active_node（只读推断的在途节点）透传给 _segment_status 修正标签滞后。
 
     **逻辑层只用 ORDER 4 段**做状态推断（与 core/graph.py 线性拓扑同序，_segment_status
     单测不变）；**展示层用 DISPLAY_ORDER 5 段**对齐 mock —— 第 5 段 ``post_review``
@@ -309,7 +324,7 @@ def _render_progress_bar(state: Dict) -> None:
     #   reproduction_done})视为 running/done；Sprint 2 永远到不了，恒 pending。
     def _stage_status(node_name: str):
         if node_name in ORDER:
-            return _segment_status(current_step, node_name, degraded_nodes)
+            return _segment_status(current_step, node_name, degraded_nodes, active_node)
         # post_review：Sprint 2 恒 pending；Sprint 3 实现后按 current_step 判断
         if current_step in {"coding", "execution"}:
             return "running"
@@ -595,8 +610,17 @@ def render() -> None:
 
     current_step = str(state.get("current_step") or "")
 
-    # --- case④bis：coding / execution 阶段 → 切执行监控页（S5-08 #4 主修复）---
-    if current_step in (_STEP_CODING, _STEP_EXECUTION):
+    # [S6-02/AC-S6-04/05] 只读推断在途节点（case④ 已过滤 interrupt，此处 active_node 为真在途）。
+    phase = controller.get_phase(thread_id)
+    active_node = phase.get("active_node") if isinstance(phase, dict) else None
+
+    # --- case④bis：coding / execution 在途 → 切执行监控页（S5-08 #4 / AC-S6-05 approve 后在途切页）---
+    #   判据扩为 current_step ∨ active_node ∈ {coding, execution}：approve 后 coding 在途
+    #   （current_step 仍滞后为 'planning'）即切；planning interrupt（case④ 已跳走）不误切。
+    if (
+        current_step in (_STEP_CODING, _STEP_EXECUTION)
+        or (active_node in (_STEP_CODING, _STEP_EXECUTION))
+    ):
         st.session_state[_KEY_CURRENT_PAGE] = STREAMLIT_PAGE_EXECUTION
         st.rerun()
         return
@@ -611,7 +635,7 @@ def render() -> None:
     # --- case⑤：正常渲染 + 注册 autorefresh（仅此路径注册定时器） ---
     _render_paper_card(state.get("paper_meta"))
     st.divider()
-    _render_progress_bar(state)
+    _render_progress_bar(state, active_node)
     st.divider()
     _render_logs(state)
 

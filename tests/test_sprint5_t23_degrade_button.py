@@ -182,7 +182,10 @@ def test_cp_2_3_2_click_degrade_resumes_with_three_key_contract():
         at = AppTest.from_string(_SCRIPT)
         at.run()
         at.button(key=_BTN_DEGRADE_KEY).click().run()
-    controller.resume_with.assert_called_once_with("task-exec-001", _DEGRADE_RESUME)
+    controller.resume_with.assert_called_once_with(
+        "task-exec-001", _DEGRADE_RESUME,
+        expected_interrupt_token=controller.get_interrupt_token.return_value,
+    )
     # 降级路径不触发 L-B1-01 空值拒绝文案。
     assert not any("输入不能为空" in str(el.value) for el in at.error)
 
@@ -196,7 +199,10 @@ def test_cp_2_3_2_degrade_ignores_input_and_remember_state():
         at.text_input(key="_exec_user_input_value").set_value("half-typed-token")
         at.checkbox(key="_exec_user_input_remember").check()
         at.button(key=_BTN_DEGRADE_KEY).click().run()
-    controller.resume_with.assert_called_once_with("task-exec-001", _DEGRADE_RESUME)
+    controller.resume_with.assert_called_once_with(
+        "task-exec-001", _DEGRADE_RESUME,
+        expected_interrupt_token=controller.get_interrupt_token.return_value,
+    )
 
 
 # =========================================================================== #
@@ -212,7 +218,8 @@ def test_cp_2_3_3_normal_submit_still_two_key_contract_with_degrade_button():
         at.checkbox(key="_exec_user_input_remember").check()
         at.button(key="btn_user_input_submit").click().run()
     controller.resume_with.assert_called_once_with(
-        "task-exec-001", {"value": "sk-real-key", "remember": True}
+        "task-exec-001", {"value": "sk-real-key", "remember": True},
+        expected_interrupt_token=controller.get_interrupt_token.return_value,
     )
     args = controller.resume_with.call_args.args
     assert "degrade" not in args[1]
