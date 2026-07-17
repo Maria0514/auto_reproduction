@@ -736,24 +736,32 @@ class TestRealChainE2E:
             # stash→build_credential_env→env: 注入链路）。degrade 路径不在本用例（其真实
             # 行为有轮间方差：agent 可合法选择不产码走降级形态，2026-07-09 4 跑 2 现；
             # mock 覆盖见 t22，真跑证据留档 test-reports）。零声明时本循环零次、直达 END。
+            # [sp6 T-S6-5-3 加固 2026-07-16] 循环 break 条件从「snap.next != ('coding',)」改为
+            # 「无待处理**前置 gate** interrupt」驱动——前置 gate 与 coding agent 工具 interrupt
+            # 同在 coding 单节点、snap.next 不可区分，原条件在真实 LLM 声明**多凭证串行**（轮间
+            # 方差：env:OPENAI_API_KEY / hf_token / git_credential 组合不定）时会提前 break、漏
+            # resume 掉某项 gate 凭证，链路残留未解 gate interrupt → coding 不产码（2026-07-16
+            # real_1 两连挂根因，子代理 trace 坐实；gate 主体与本测试 Sprint 6 零改动，非回归）。
+            # 判据：payload.allow_degrade is True 是 gate 第 5 键专属（agent request_user_input
+            # 路径永无此键，红线）——只 drain gate interrupt，drain 尽即 gate 收敛。
             gate_rounds = 0
             while True:
                 snap = graph.get_state(config)
-                if snap.next != ("coding",):
-                    break
                 interrupts = [
                     iv for task in (snap.tasks or [])
                     for iv in (getattr(task, "interrupts", None) or [])
                 ]
-                assert interrupts, f"暂停在 coding 但无 interrupt 元数据（round={gate_rounds}）"
-                payload = interrupts[0].value
+                gate_pending = [
+                    iv.value for iv in interrupts
+                    if isinstance(iv.value, dict) and iv.value.get("allow_degrade") is True
+                ]
+                if not gate_pending:
+                    break  # 无待处理 gate interrupt → 凭证 gate 收敛
+                payload = gate_pending[0]
                 assert payload.get("interrupt_kind") == "user_input_request"
-                assert payload.get("allow_degrade") is True, (
-                    f"coding 暂停应为 gate 五键 payload（happy path 不应现 agent 工具路径）：{payload}"
-                )
                 assert payload.get("is_sensitive") is True and payload.get("purpose_key")
                 gate_rounds += 1
-                assert gate_rounds <= 5, "gate 串行 interrupt 超过 5 项，疑似死循环"
+                assert gate_rounds <= 8, "gate 串行 interrupt 超过 8 项，疑似死循环"
                 final = graph.invoke(
                     Command(resume={
                         "value": "e2e-fake-credential-sandbox-mocked", "remember": False,

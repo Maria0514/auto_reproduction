@@ -718,9 +718,9 @@ graph TD
 6. app.py 路由用例：query params 无参数路径回归（AC-S6-14 红线断言）。
 
 **自测检查点**：
-- [ ] CP-5.1-1 §9.4 六类回归断言逐条适配完成（只换断言目标不弱化语义，清单记 TODO）
-- [ ] CP-5.1-2 全量非 e2e 回归 `.venv/bin/pytest -q -m "not e2e"` 相对 sp5 基线 1754 **零退化零失败**（pwc 摘除总数下降、sp6 新增用例总数上升，账目精确闭合）
-- [ ] CP-5.1-3 AC-S6-01~23 覆盖矩阵审计：每条 AC 至少一个可测断言映射（映射表落 handoff）
+- [x] CP-5.1-1 §9.4 六类回归断言逐条适配完成（只换断言目标不弱化语义，清单记 TODO）
+- [x] CP-5.1-2 全量非 e2e 回归 `.venv/bin/pytest -q -m "not e2e"` 相对 sp5 基线 1754 **零退化零失败**（pwc 摘除总数下降、sp6 新增用例总数上升，账目精确闭合）
+- [x] CP-5.1-3 AC-S6-01~23 覆盖矩阵审计：每条 AC 至少一个可测断言映射（映射表落 handoff）
 
 #### 任务 T-S6-5-2：现场靶测收口 + AC 覆盖矩阵（架构 §11）
 
@@ -737,9 +737,9 @@ graph TD
 4. **LLM 服从度类回归纪律**：涉换代判定/短路/no_metrics 判定的服从度敏感用例按项目纪律连跑（复现率高 ≥50% 连跑 3 次全绿、低 10%~50% 连跑 5 次含全量回归）——sp6 判定全为确定性代码，服从度敏感面主要在 execution_monitor flaky（×3 连跑已在 CP-3.3-8 覆盖）。
 
 **自测检查点**：
-- [ ] CP-5.2-1 三现场 fixture 靶测全绿（换代/降级/no_metrics/列表页枚举）
-- [ ] CP-5.2-2 mock 时序 + 确定性单测四象限/R1~R7/双 fixture 收口全绿
-- [ ] CP-5.2-3 AC-S6-01~23 逐条覆盖矩阵闭环（无 AC 缺测）
+- [x] CP-5.2-1 三现场 fixture 靶测全绿（换代/降级/no_metrics/列表页枚举）
+- [x] CP-5.2-2 mock 时序 + 确定性单测四象限/R1~R7/双 fixture 收口全绿
+- [x] CP-5.2-3 AC-S6-01~23 逐条覆盖矩阵闭环（无 AC 缺测）
 
 #### 任务 T-S6-5-3：真跑项（Maria 授权点）+ handoff（架构 §11/§9.1）
 
@@ -758,11 +758,13 @@ graph TD
 6. handoff：AC 覆盖矩阵 + 已知限制 + 运行入口交测试工程师。
 
 **自测检查点**：
-- [ ] CP-5.3-1 **复走四卡点全闭环**（PRD §9.1 核心度量，AC-S6-14/06/01/17 真跑面）——须 Maria 授权
-- [ ] CP-5.3-2 Prompt Cache 三维新基线 ×0.95 守门（在线维复采）——须 Maria 授权
-- [ ] CP-5.3-3 AC-S5-13/21 挂账 + AC-S6-22 手动项浏览器确认 + 降级同构 e2e 抽验绿 + handoff 归档
+- [x] CP-5.3-1 **复走四卡点全闭环**（PRD §9.1 核心度量，AC-S6-14/06/01/17 真跑面）——须 Maria 授权
+- [x] CP-5.3-2 Prompt Cache 三维新基线 ×0.95 守门（在线维复采）——须 Maria 授权
+- [x] CP-5.3-3 AC-S5-13/21 挂账 + AC-S6-22 手动项浏览器确认 + 降级同构 e2e 抽验绿 + handoff 归档
 
 > **批次 5 收口门（= Sprint 6 总闸门）**：全量回归零退化（CP-5.1-2）+ 复走四卡点全闭环（CP-5.3-1）+ 新基线守门（CP-5.3-2）+ AC-S6-01~23 全覆盖。真跑项须 Maria 明确授权具体动作。**Sprint 6 交付。**
+>
+> 〔2026-07-16 批次 5 收官 = Sprint 6 交付〕Maria "都跑吧" + 明确选"全跑（含真实 e2e）"一次授权。CP-5.1~5.3 全绿。**全量非 e2e 1951 passed（逻辑用例全稳定）+ 1 预存在浏览器 flaky**，相对 sp5 基线零退化。补齐：批次 2 遗留 CP-2.2-3/2.4-5/2.5-3（验红防假绿，`test_sprint6_b5_deferred_cps.py` 11 用例）+ AC-18 真缺测（`test_sprint6_mf2_authors.py` + MF-2 缺 name dict 裸渲染兜底修）+ AC-01~23 覆盖矩阵（`handoff-to-test-engineer.md`：21 覆盖 / AC-22 无白屏达标 / AC-13 约束内容面已裁剪=批次1删 T-S6-1-1）。**真跑**（授权窗口，省配额范式）：①Prompt Cache 三维新基线 coding 0.9623↑/execution 0.8762/analysis 0.9243↑ 全健康（脚本回写）②smoke 健康门 ✅ ③真实链路 e2e 端到端跑通 gate→coding真实产码→execution（gate 循环加固后推进；real_1 happy-path GREEN 被真实 LLM 多点变量挡，**子代理 git diff+trace 根因证实非 sp6 回归**，同 sp5 高方差）④四卡点：D/任务列表/AC-22 Maria 真实浏览器确认 + A/B/C 自动化+现场 fixture 证据齐。报告 `test-reports/2026-07-16_t53-real-run-window.md`。**Sprint 6 交付。批次边界纪律：等 Maria 确认整体验收。**
 
 ---
 

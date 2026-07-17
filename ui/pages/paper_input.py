@@ -84,12 +84,17 @@ def _get_controller():
     return _app_get_controller()
 
 
+# [MF-2/AC-S6-18] 缺 name 的作者 dict 的占位（避免裸渲染 dict repr）。
+_AUTHOR_UNKNOWN: str = "（作者信息缺失）"
+
+
 def _humanize_authors(authors) -> str:
     """将 authors 字段规范化为可读字符串（Sprint 6 MF-2，架构 §7.8 MF-2）。
 
     支持五种形态：
     - str：直通（deepxiv 已格式化的字符串）
-    - dict：取 name 键（含走查异形样本 {'misc':{},'name':'Bernal...'}）；缺 name 则 str() 兜底
+    - dict：取 name 键（含走查异形样本 {'misc':{},'name':'Bernal...'}）；缺 name 退化占位
+      "（作者信息缺失）"（不裸渲染 dict repr，AC-S6-18）
     - list：逐项递归取 name，逗号拼接
     - 其余：str() 兜底
 
@@ -101,7 +106,10 @@ def _humanize_authors(authors) -> str:
     if isinstance(authors, str):
         result = authors
     elif isinstance(authors, dict):
-        result = authors.get("name") or str(authors)
+        # [MF-2/AC-S6-18 兜底] 缺 name 的 dict 不裸渲染 repr（AC 要求"不裸渲染 dict"），
+        # 退化为占位；有 name 取 name（str 化防非字符串 name）。
+        name = authors.get("name")
+        result = str(name) if name else _AUTHOR_UNKNOWN
     elif isinstance(authors, list):
         parts = []
         for item in authors:
@@ -110,7 +118,8 @@ def _humanize_authors(authors) -> str:
             if isinstance(item, str):
                 parts.append(item)
             elif isinstance(item, dict):
-                parts.append(item.get("name") or str(item))
+                name = item.get("name")
+                parts.append(str(name) if name else _AUTHOR_UNKNOWN)
             else:
                 parts.append(str(item))
         result = ", ".join(parts)
