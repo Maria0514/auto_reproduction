@@ -242,19 +242,23 @@ def test_r1b_retry_round_reentry_reruns_sandbox(monkeypatch):
 
 
 def test_r2_budget_gate_beats_unfixable(monkeypatch):
+    """sp7 S7-01（AC-S7-01 转正）：预算不足 + 不可修复（CUDA OOM）→ 预算门下沉 → 落两段式
+    interrupt#2（不再静默降级压倒不可修复）。首次进入置 await 标记，不再 degraded。
+    断言只换不弱化：原"降级/route=None/degraded"改为"两段式 await/不降级"。"""
     _patch_sandbox(
         monkeypatch,
         run_results=[FakeRunResult(exit_code=1, stderr="RuntimeError: CUDA out of memory")],
     )
     state = _base_state(retry_budget_remaining=DEV_LOOP_MIN_CALLS_PER_ROUND - 1, fix_loop_count=0)
     out = execution(state)
-    # 预算门压倒不可修复：降级到 reporting，不 interrupt、不置 await。
-    assert NODE_NAME in out["degraded_nodes"]
-    assert out.get("_dev_loop_route") is None
-    assert "user_fix_decision" not in out
-    # 失败本身记 permanent（hardware 不可修复），降级另记 degraded。
+    # 预算门下沉：不再静默降级，落两段式 await（首次进入）。
+    assert NODE_NAME not in out.get("degraded_nodes", []), "S7-01：不再静默降级"
+    assert out.get("_dev_loop_route") == "await_dev_loop_interrupt"
+    assert "user_fix_decision" not in out  # 首次进入尚未 interrupt
+    # 失败本身仍记 permanent（hardware 不可修复），但不再有 budget_exhausted degraded。
     types = {e["error_type"] for e in out["node_errors"]}
-    assert "permanent" in types and "degraded" in types
+    assert "permanent" in types, "不可修复失败仍记 permanent"
+    assert "degraded" not in types, "预算门下沉：不再写 degraded NodeError"
 
 
 # ===========================================================================

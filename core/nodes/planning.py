@@ -8,7 +8,7 @@
        code_only / cancel）。
 
 关键设计（架构 §2.4.3 / Q-S2-03 RESOLVED）：
-    - revise / switch_repo **无次数硬上限**，任务级兜底依赖 MAX_TOTAL_LLM_CALLS=120
+    - revise / switch_repo **无次数硬上限**，任务级兜底依赖 MAX_TOTAL_LLM_CALLS=240
       总预算（react_base.budget_check 自然 force_finish）+ cancel 主动出口；
     - _planning_revise_count 仅供 UI 透明展示与 N>=5 软提示判定，节点层不做任何拦截；
     - cancel 决策写 current_step="cancelled_by_user"，由 graph 条件边路由到 END
@@ -878,7 +878,7 @@ def planning(state: GlobalState) -> dict:
         "node_errors": (updates.get("node_errors", state.get("node_errors", [])) or [])[-5:],
         "revise_count": revise_count,                          # UI 透明展示
         "soft_hint_threshold": PLANNING_SOFT_HINT_THRESHOLD,   # =5；UI 软提示判定
-        "max_total_llm_calls": MAX_TOTAL_LLM_CALLS,            # =120；总预算参考
+        "max_total_llm_calls": MAX_TOTAL_LLM_CALLS,            # =240；总预算参考
         "switch_repo_failed": bool(switch_repo_failed),        # S2-13：UI 强制重填标记
     }
     decision = interrupt(payload)

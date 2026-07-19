@@ -230,21 +230,53 @@ def _build_coding_system_prompt(context: Dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _digest_execution_feedback(exec_result: Dict[str, Any]) -> Dict[str, Any]:
-    """把上一轮 ExecutionResult 裁剪为修复用的精简反馈（架构 §2.2.2）。
+# S7-02（架构 §5.3/§5.4）：完整日志落盘子目录名（与 execution._EXEC_LOGS_SUBDIR 同值，
+# 不跨模块导入以免耦合——两侧对同一确定性约定各持常量，路径由 code_output_dir + fix_round 推导）。
+_EXEC_LOGS_SUBDIR: str = "exec_logs"
 
-    裁剪策略（防 stderr 撑爆 context）：
+# S7-02（架构 §5.4 / AC-S7-07）：stderr_tail 语义改为退化指引串——不再塞 logs[-2000:]
+# 系统截断产物（把"截断决策权"从系统收回给 coder），改为指向完整日志文件 + 自读指引。
+# 保键结构稳定（Prompt Cache 无扰、既有 coding prompt/context 对该键引用不破）。
+_STDERR_TAIL_GUIDANCE: str = "完整日志见 log_file_path，请用 read_code_file 自读定位真实报错。"
+
+
+def _resolve_round_log_path(code_output_dir: Optional[str], fix_round: int) -> Optional[str]:
+    """确定性推导本回合完整日志文件绝对路径（S7-02，架构 §5.4 / AA-S7-4）。
+
+    ``<code_output_dir>/exec_logs/round_{fix_round}.log``——与 execution 侧
+    ``_persist_round_log`` 落盘命名逐字对齐。**零 state 字段、零 ExecutionResult
+    字段**：路径确定性可推导不必存。落盘失败时该路径指向不存在文件，coder 用
+    read_code_file 读到"文件不存在"退回 errors 摘要（R-S7-4 降级，不炸）。
+
+    code_output_dir 缺失 → 返回 None（反馈退回 errors 摘要）。
+    """
+    if not code_output_dir:
+        return None
+    try:
+        return str((Path(code_output_dir) / _EXEC_LOGS_SUBDIR / f"round_{int(fix_round)}.log").resolve())
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _digest_execution_feedback(
+    exec_result: Dict[str, Any],
+    code_output_dir: Optional[str] = None,
+    fix_round: int = 0,
+) -> Dict[str, Any]:
+    """把上一轮 ExecutionResult 裁剪为修复用的精简反馈（架构 §2.2.2 + sp7 §5.4）。
+
+    裁剪策略（S7-02 后：反馈以完整日志文件为准，coder 自读定位真错）：
         - errors: 取 ExecutionResult.errors 全部（已是摘要级，每条一句话；首条带
-          ``[error_category=...]`` 前缀，§2.3.2）；
-        - error_category: 从 errors[0] 解析出的细分类（驱动有针对性修复）；
-        - stderr_tail: logs 取尾部 ~2000 字符（错误栈通常在末尾）；
-        - 不注入完整 logs / stdout（已被 sandbox 截断，仍可能很大）。
+          ``[error_category=...]`` 前缀，§2.3.2）——保留（摘要级）；
+        - error_category: 从 errors[0] 解析出的细分类（快速提示，PRD §2.3.2）——保留；
+        - log_file_path: 完整日志入口绝对路径（``<code_output_dir>/exec_logs/round_{n}.log``），
+          由 code_output_dir + fix_round 确定性推导（不从 exec_result 读、不存 state）；
+          code_output_dir 缺失 → None（反馈退回 errors 摘要，§5.4 降级面）；
+        - stderr_tail: **语义改为固定退化指引串**（不再是 logs[-2000:] 系统截断产物，
+          AC-S7-07）——把截断决策权从系统收回给 coder，coder 用 read_code_file 自读
+          log_file_path 定位真报错行。保键结构稳定（Prompt Cache 无扰）。
     """
     errors = list(exec_result.get("errors") or [])
-    logs = exec_result.get("logs") or ""
-    if not isinstance(logs, str):
-        logs = str(logs)
-    stderr_tail = logs[-_STDERR_TAIL_CHARS:] if len(logs) > _STDERR_TAIL_CHARS else logs
 
     # 从 errors[0] 解析 [error_category=xxx] 前缀（execution 节点写入约定，§2.3.2）。
     error_category: Optional[str] = None
@@ -261,7 +293,8 @@ def _digest_execution_feedback(exec_result: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "errors": [e if isinstance(e, str) else str(e) for e in errors],
         "error_category": error_category,
-        "stderr_tail": stderr_tail,
+        "log_file_path": _resolve_round_log_path(code_output_dir, fix_round),
+        "stderr_tail": _STDERR_TAIL_GUIDANCE,
     }
 
 
@@ -324,8 +357,19 @@ def _build_coding_context(state: GlobalState) -> Dict[str, Any]:
     exec_result = state.get("execution_result")
     fix_count = state.get("fix_loop_count", 0) or 0
     if exec_result and fix_count > 0:
+        # payload["fix_round"] 保持 fix_count——它是给 coder system prompt 判"当前第几次
+        # 修复"的语义标识（不是读哪个日志文件），不减 1（架构师 2026-07-19 裁决）。
         payload["fix_round"] = fix_count
-        payload["last_error_summary"] = _digest_execution_feedback(exec_result)
+        # S7-02（架构 §5.4）：log_file_path 读上一轮 execution 已落盘日志——coding 入口
+        # fix_count 已被 execution.py:2143 自增，execution 落盘用本轮入口 fix_loop_count
+        # （首跑落 round_0.log），故 coder 要读的失败日志轮号 = fix_count - 1。首个修复回合
+        # fix_count=1 → round_0.log（首跑失败日志）。外层 fix_count>0 守护 → fix_count-1 恒≥0。
+        # dev-plan §5.4:329 "fix_round=fix_count" 系笔误，以架构师裁决的 fix_count-1 为准。
+        payload["last_error_summary"] = _digest_execution_feedback(
+            exec_result,
+            code_output_dir=payload["code_output_dir"],
+            fix_round=fix_count - 1,
+        )
 
     return payload
 

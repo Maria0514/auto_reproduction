@@ -183,9 +183,9 @@ def test_no_env_override_for_all_sp3_constants(
         "SANDBOX_PIP_INSTALL_TIMEOUT": 1200,
         "SANDBOX_OUTPUT_MAX_BYTES": 1_048_576,
         "SANDBOX_PIP_MAX_RETRIES": 2,
-        "MAX_DEV_LOOP_LLM_CALLS": 60,
-        "DEV_LOOP_MIN_CALLS_PER_ROUND": 2,
-        "REACT_MAX_ROUNDS_CODING": 12,
+        "MAX_DEV_LOOP_LLM_CALLS": 120,
+        "DEV_LOOP_MIN_CALLS_PER_ROUND": 4,
+        "REACT_MAX_ROUNDS_CODING": 24,
         "STREAMLIT_PAGE_EXECUTION": "execution",
         "STREAMLIT_PAGE_REPORT": "report",
     }

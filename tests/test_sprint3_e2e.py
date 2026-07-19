@@ -458,11 +458,13 @@ def test_f2_e2e_4_code_only_skips_execution(monkeypatch, tmp_path):
 # ===========================================================================
 
 
-def test_f2_e2e_5a_degraded_budget_exhausted(monkeypatch, tmp_path):
-    """场景 5a（AC-S3-09 ③）：预算耗尽（入口预算门）→ 直接降级 → reporting degraded。
+def test_f2_e2e_5a_budget_exhausted_interrupt_then_export(monkeypatch, tmp_path):
+    """场景 5a（AC-S3-09 ③ → sp7 S7-01 AC-S7-01/03 转正）：预算耗尽 → **不再静默降级**，
+    预算门下沉 → interrupt#2（用户知情选择）→ export_code → reporting degraded。
 
     可修复失败但 retry_budget_remaining < DEV_LOOP_MIN_CALLS_PER_ROUND → execution 入口
-    预算门直接降级（不回 coding、不 interrupt）→ reporting degraded 报告。
+    预算门下沉为修复准入否决 → 落两段式 interrupt#2（面板文案含"预算已耗尽"语义）→
+    用户 export_code 接受当前结果 → reporting degraded（与旧终点一致，但经用户知情选择）。
     """
     code_dir = str(tmp_path / "deg-budget" / "code")
     _patch_upstream_nodes(monkeypatch, code_output_dir=code_dir)
@@ -472,19 +474,28 @@ def test_f2_e2e_5a_degraded_budget_exhausted(monkeypatch, tmp_path):
     )
 
     init = _initial_state(tmp_path)
-    init["retry_budget_remaining"] = 1  # < DEV_LOOP_MIN_CALLS_PER_ROUND(2) → 入口预算门降级
+    init["retry_budget_remaining"] = 1  # < DEV_LOOP_MIN_CALLS_PER_ROUND → 预算门下沉 → interrupt#2
 
     graph = build_graph(checkpointer=InMemorySaver())
-    final = graph.invoke(init, _new_config())
+    config = _new_config()
+    out1 = graph.invoke(init, config)
 
-    # 不暂停（预算门降级直接出报告，不 interrupt）。
-    assert final.get("__interrupt__") is None, "预算耗尽应降级出报告，不 interrupt"
-    assert execution_module.NODE_NAME in (final.get("degraded_nodes") or []), "execution 应被标记 degraded"
+    # sp7 S7-01：预算耗尽经两段式抵达 interrupt#2（不再静默降级出报告）。
+    assert "__interrupt__" in out1, "预算耗尽应 interrupt#2 暂停（AC-S7-01：不再静默降级）"
+    # 面板文案含"预算已耗尽"语义（AC-S7-03，走 summary/fix_hint 通道经 replace 注入）。
+    intr = out1["__interrupt__"]
+    payload = intr[0].value if isinstance(intr, (list, tuple)) else intr.value
+    assert "预算已耗尽" in payload.get("error_summary", ""), "面板文案应含预算耗尽语义（AC-S7-03）"
+    assert payload["options"] == ["terminate", "revise_plan", "export_code"], "三态无第四态"
+    # sandbox 只跑 1 次（预算门命中不重跑；self-loop 重入 guard 命中跳过 sandbox）。
+    assert cnt["prepare"] == 1
+
+    # 用户选 export_code 接受当前结果 → degraded 报告（旧终点，经知情选择）。
+    final = graph.invoke(Command(resume={"decision": "export_code"}), config)
+    assert execution_module.NODE_NAME in (final.get("degraded_nodes") or []), "export_code → execution degraded"
     assert reporting_module._determine_report_form(final) == "degraded"
     report = _read_report(final.get("report_path"))
     assert "未成功" in report or "降级" in report, "degraded 报告应含未成功/降级结论"
-    # 预算门降级：未回 coding（sandbox 只跑 1 次，无修复回合）。
-    assert cnt["prepare"] == 1
     assert final["current_step"] == "reporting"
 
 
@@ -1009,17 +1020,14 @@ class TestRealChainE2E:
     # ===================================================================
     # real-5 降级（AC-S3-09 ③）
     # ===================================================================
-    def test_real_5_degraded_budget_exhausted(self, monkeypatch, tmp_path):
-        """real-5（AC-S3-09 ③）：可修复失败但预算耗尽（入口预算门）→ 直接降级 →
-        reporting degraded（不回 coding、不 interrupt）。
+    def test_real_5_budget_exhausted_interrupt_then_export(self, monkeypatch, tmp_path):
+        """real-5（AC-S3-09 ③ → sp7 S7-01 AC-S7-01/03 转正）：可修复失败但预算耗尽 →
+        **不再静默降级**，预算门下沉 → interrupt#2（面板含预算耗尽文案）→ export_code →
+        reporting degraded（旧终点，经用户知情选择）。
 
-        真实链路：上游真实 + 真实 coding + 真实 execution 预算门判定 + 真实 reporting degraded 渲染。
+        真实链路：上游真实 + 真实 coding + 真实 execution 预算门下沉判定 + 真实 reporting degraded 渲染。
         mock 边界：sandbox 注入可修复失败（ModuleNotFoundError）；通过 graph.update_state 把
-        retry_budget_remaining 压到 < DEV_LOOP_MIN_CALLS_PER_ROUND(2)，触发 execution 入口预算门降级。
-
-        说明：真实上游会消耗 retry_budget（真实 LLM 调用），到 execution 前剩余预算不确定；
-        为稳定触发「入口预算门」分支，在 approve 前用 update_state 显式把预算压到 1
-        （真实图持久化通道写入，模拟「预算已被上游耗尽」），再 approve 进入 coding→execution。
+        retry_budget_remaining 压到 < DEV_LOOP_MIN_CALLS_PER_ROUND，触发预算门下沉 → interrupt#2。
         """
         from config import DEV_LOOP_MIN_CALLS_PER_ROUND
 
@@ -1036,27 +1044,34 @@ class TestRealChainE2E:
             config = _new_e2e_config()
 
             self._run_to_planning_pause(graph, config, tmp_path)
-            # 显式压低预算到入口预算门以下（< DEV_LOOP_MIN_CALLS_PER_ROUND），稳定触发降级分支。
+            # 显式压低预算到入口预算门以下（< DEV_LOOP_MIN_CALLS_PER_ROUND），稳定触发预算门下沉。
             graph.update_state(config, {"retry_budget_remaining": DEV_LOOP_MIN_CALLS_PER_ROUND - 1})
 
-            final = graph.invoke(Command(resume={"decision": "approve"}), config)
+            out1 = graph.invoke(Command(resume={"decision": "approve"}), config)
             try:
                 conn.commit()
             except Exception:
                 pass
 
+            # sp7 S7-01：预算耗尽经两段式抵达 interrupt#2（不再静默降级）。
+            assert "__interrupt__" in out1, "预算耗尽应 interrupt#2 暂停（AC-S7-01）"
+            intr = out1["__interrupt__"]
+            payload = intr[0].value if isinstance(intr, (list, tuple)) else intr.value
+            assert "预算已耗尽" in payload.get("error_summary", ""), "面板文案含预算耗尽语义（AC-S7-03）"
+            assert payload["options"] == ["terminate", "revise_plan", "export_code"]
+            # sandbox 只跑 1 次（预算门命中不重跑；self-loop 重入 guard 命中跳过 sandbox）。
+            assert cnt["prepare"] == 1
+
+            # 用户 export_code → degraded 报告（旧终点，经知情选择）。
+            final = graph.invoke(Command(resume={"decision": "export_code"}), config)
             snap = graph.get_state(config)
-            assert snap.next == (), f"预算门降级应跑到 END：next={snap.next}"
-            # 不 interrupt（预算门降级直接出报告）。
-            assert final.get("__interrupt__") is None, "预算耗尽应降级出报告，不 interrupt"
+            assert snap.next == (), f"export_code 应跑到 END：next={snap.next}"
             assert execution_module.NODE_NAME in (final.get("degraded_nodes") or []), (
-                "execution 应被标记 degraded"
+                "export_code → execution degraded"
             )
             assert reporting_module._determine_report_form(final) == "degraded"
             report = _read_report(final.get("report_path"))
             assert "未成功" in report or "降级" in report, "degraded 报告应含未成功/降级结论"
-            # 预算门降级：未回 coding（sandbox 只跑 1 次，无修复回合）。
-            assert cnt["prepare"] == 1
         finally:
             try:
                 conn.close()

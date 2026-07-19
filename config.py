@@ -27,9 +27,9 @@ LLM_REQUEST_TIMEOUT: int = 60
 
 # ========== 重试预算 ==========
 
-MAX_NODE_LLM_CALLS: int = 10
-MAX_TOTAL_LLM_CALLS: int = 120
-MAX_FIX_LOOP_COUNT: int = 10
+MAX_NODE_LLM_CALLS: int = 20
+MAX_TOTAL_LLM_CALLS: int = 240
+MAX_FIX_LOOP_COUNT: int = 20
 
 
 # ========== LLM 客户端重试配置 ==========
@@ -55,16 +55,16 @@ LLM_ENABLE_PROMPT_CACHE: bool = _parse_bool_env("LLM_ENABLE_PROMPT_CACHE", True)
 
 # ========== ReAct 配置 ==========
 
-REACT_MAX_ROUNDS_PAPER_INTAKE: int = 5
-REACT_MAX_ROUNDS_PAPER_ANALYSIS: int = 12
+REACT_MAX_ROUNDS_PAPER_INTAKE: int = 10
+REACT_MAX_ROUNDS_PAPER_ANALYSIS: int = 24
 REACT_LLM_TEMPERATURE: float = 0.3
 REACT_RESULT_TAG_OPEN: str = "<result>"
 REACT_RESULT_TAG_CLOSE: str = "</result>"
 TOOL_RESULT_MAX_LENGTH: int = 8000
 
 # Sprint 2 新增 ReAct 轮数上限（沿用 sp1 字面量风格，无 env 覆盖）
-REACT_MAX_ROUNDS_RESOURCE_SCOUT: int = 10
-REACT_MAX_ROUNDS_PLANNING: int = 8
+REACT_MAX_ROUNDS_RESOURCE_SCOUT: int = 20
+REACT_MAX_ROUNDS_PLANNING: int = 16
 
 
 # ========== Sprint 2：planning 人在回路 ==========
@@ -109,11 +109,11 @@ SANDBOX_PIP_MAX_RETRIES: int = 2  # pip install 网络瞬态失败重试次数
 
 
 # ========== Sprint 3：dev_loop 修复循环子预算（S3-08 / architecture §2.1.1） ==========
-# MAX_DEV_LOOP_LLM_CALLS 强约束 < MAX_TOTAL_LLM_CALLS（60 < 120），修复循环子预算天花板。
+# MAX_DEV_LOOP_LLM_CALLS 强约束 < MAX_TOTAL_LLM_CALLS（120 < 240），修复循环子预算天花板。
 
-MAX_DEV_LOOP_LLM_CALLS: int = 60  # 修复循环子预算天花板（强约束 < MAX_TOTAL_LLM_CALLS=120）
-DEV_LOOP_MIN_CALLS_PER_ROUND: int = 2  # 入口预算门：单回合最小 LLM 调用数
-REACT_MAX_ROUNDS_CODING: int = 12  # coding 节点 ReAct max_rounds
+MAX_DEV_LOOP_LLM_CALLS: int = 120  # 修复循环子预算天花板（强约束 < MAX_TOTAL_LLM_CALLS=240）
+DEV_LOOP_MIN_CALLS_PER_ROUND: int = 4  # 入口预算门：单回合最小 LLM 调用数
+REACT_MAX_ROUNDS_CODING: int = 24  # coding 节点 ReAct max_rounds
 
 
 # ========== Sprint 3：Streamlit UI 新增页面路由常量（S3-07 / architecture §2.5） ==========
@@ -128,7 +128,7 @@ STREAMLIT_PAGE_TASKS: str = "tasks"  # UI 路由常量：任务列表页（枚�
 # ========== Sprint 4：execution 内嵌子图 / run_command / secrets（S4-10 / architecture §12.2） ==========
 # 沿用 sp1~sp3 字面量风格（无 env 覆盖）。不新增交互超时常量（Q-F1 Maria 已定一直暂停）。
 
-REACT_MAX_ROUNDS_EXECUTION: int = 10  # execution 内嵌子图轮次 FLOOR（sp5 起语义收窄为预算联动公式下限，见 Sprint 5 段落；budget_check_node 消费）
+REACT_MAX_ROUNDS_EXECUTION: int = 20  # execution 内嵌子图轮次 FLOOR（sp5 起语义收窄为预算联动公式下限，见 Sprint 5 段落；budget_check_node 消费）
 RUN_COMMAND_TIMEOUT: int = 120  # coding run_command 短超时（秒，机制上防跑重活；远小于 SANDBOX_EXEC_TIMEOUT=1800）
 SECRETS_FILE_NAME: str = ".secrets"  # secrets 文件名；实际路径 = Path(workspace_dir) / SECRETS_FILE_NAME（运行期 state 优先，回退 config.WORKSPACE_DIR）
 
@@ -139,8 +139,8 @@ SECRETS_FILE_NAME: str = ".secrets"  # secrets 文件名；实际路径 = Path(w
 #   K = REACT_EXECUTION_ROUNDS_MARGIN；FLOOR = REACT_MAX_ROUNDS_EXECUTION（值 10 不变，语义收窄为下限）；
 #   CAP = REACT_MAX_ROUNDS_EXECUTION_CAP。
 
-REACT_EXECUTION_ROUNDS_MARGIN: int = 5  # 预算联动 K 裕量（prepare 1 + 收尾 1 + 兜底 3）
-REACT_MAX_ROUNDS_EXECUTION_CAP: int = 30  # 联动硬上限（= MAX_DEV_LOOP_LLM_CALLS/2 = 60/2，保修复循环余量）
+REACT_EXECUTION_ROUNDS_MARGIN: int = 10  # 预算联动 K 裕量（prepare 1 + 收尾 1 + 兜底 8）
+REACT_MAX_ROUNDS_EXECUTION_CAP: int = 60  # 联动硬上限（= MAX_DEV_LOOP_LLM_CALLS/2 = 120/2，保修复循环余量）
 ACTIVITY_STREAM_MAX_EVENTS: int = 500  # per-thread deque maxlen（单事件 ≤~300B，内存上界 ~150KB/任务）
 ACTIVITY_STREAM_RENDER_TAIL: int = 30  # 执行监控页活动流尾部渲染行数（复用 st_autorefresh 1500ms 节奏）
 

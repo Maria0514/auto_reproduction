@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import config
 import json
 import sys
 from pathlib import Path
@@ -708,7 +709,7 @@ def case_budget_exhausted(monkeypatch, report: Report) -> None:
         }
 
         responses: List[AIMessage] = []
-        for i in range(11):
+        for i in range(config.REACT_MAX_ROUNDS_PAPER_ANALYSIS - 1):
             responses.append(AIMessage(
                 content="",
                 tool_calls=[_tool_call("read_section",
@@ -759,7 +760,7 @@ def case_budget_exhausted(monkeypatch, report: Report) -> None:
         # 至少要有 retry_budget_remaining 字段
         assert update.get("retry_budget_remaining") is not None
         # LLM 至少调用了 11 轮 reasoning + 1 次 force_finish schema 路径
-        assert len(fake.calls) >= 11, f"LLM 调用次数过少: {len(fake.calls)}"
+        assert len(fake.calls) >= config.REACT_MAX_ROUNDS_PAPER_ANALYSIS - 1, f"LLM 调用次数过少: {len(fake.calls)}"
         report.add(name, True)
     except Exception as exc:  # noqa: BLE001
         report.add(name, False, repr(exc))

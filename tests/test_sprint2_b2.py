@@ -368,7 +368,7 @@ def test_cp_b2_9_force_finish_empty_no_throw(monkeypatch):
     assert ri["selected_repo"] is None
     assert NODE_NAME in update["degraded_nodes"]
     # max_rounds 透传到子图
-    assert fake.captured_initial["max_rounds"] == 10
+    assert fake.captured_initial["max_rounds"] == 20
 
 
 def test_cp_b2_9_force_finish_with_partial_candidate(monkeypatch):
@@ -465,7 +465,7 @@ def test_acc_tool_set_composition_five_tools(monkeypatch):
         "check_url_reachable_tool", "get_paper_brief", "git_clone_and_analyze",
         "search_papers", "web_search",
     ], names
-    assert captured["max_rounds"] == 10
+    assert captured["max_rounds"] == 20
     assert captured["result_schema"]["title"] == "ResourceInfo"
 
 

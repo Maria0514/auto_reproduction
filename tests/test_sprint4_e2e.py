@@ -823,7 +823,13 @@ def test_cp_g2_2_sentinel_zero_plaintext_in_code_report_caplog(
     train_txt = (obs["code_dir"] / "train.py").read_text(encoding="utf-8")
     assert "OBSERVED_CONTEXT_ECHO" in train_txt and "ModuleNotFoundError" in train_txt, \
         "复读器应把执行反馈带进代码（否则落点 ① 为假绿）"
-    assert "****" in train_txt, "复读进代码的 stderr_tail 应携带 mask 占位符"
+    # S7-02（Sprint 7 T-S7-1-3）：coding 侧 stderr_tail 从 logs[-2000:] 改为固定指引串——
+    # 敏感日志内容不再进 coder context（改由 read_code_file 自读落盘 round_n.log），故复读进
+    # 代码的是自读指引而非 mask 后的日志截断。mask 引擎有效性由兄弟测试
+    # test_cp_g2_2_mask_engaged_and_bydesign_stores（断言 history_exec_logs 含 ****）独立守护，
+    # 本落点不再重复覆盖 mask，改为正面锁定 S7-02 自读指引确经反馈链路流入代码（防"链路断裂"假绿）。
+    assert "read_code_file" in train_txt, \
+        "S7-02：复读进代码的执行反馈应含 read_code_file 自读指引（stderr_tail 不再是日志截断产物）"
 
     # 落点 ③：报告 Markdown 零明文。
     report_path = obs["final_values"].get("report_path")

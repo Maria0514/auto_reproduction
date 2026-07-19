@@ -30,7 +30,7 @@ def test_cp_a1_1_new_constants_values_and_types() -> None:
     """
     import config
 
-    assert config.REACT_MAX_ROUNDS_EXECUTION == 10
+    assert config.REACT_MAX_ROUNDS_EXECUTION == 20
     assert type(config.REACT_MAX_ROUNDS_EXECUTION) is int
 
     assert config.RUN_COMMAND_TIMEOUT == 120
@@ -68,8 +68,8 @@ def test_cp_a1_3_existing_constants_baseline_unchanged() -> None:
     """CP-A1-3: sp1~sp3 既有关键常量基线值不动（防 A1 追加时误改）。"""
     import config
 
-    assert config.MAX_TOTAL_LLM_CALLS == 120
-    assert config.MAX_FIX_LOOP_COUNT == 10
-    assert config.MAX_DEV_LOOP_LLM_CALLS == 60
-    assert config.DEV_LOOP_MIN_CALLS_PER_ROUND == 2
-    assert config.REACT_MAX_ROUNDS_CODING == 12
+    assert config.MAX_TOTAL_LLM_CALLS == 240
+    assert config.MAX_FIX_LOOP_COUNT == 20
+    assert config.MAX_DEV_LOOP_LLM_CALLS == 120
+    assert config.DEV_LOOP_MIN_CALLS_PER_ROUND == 4
+    assert config.REACT_MAX_ROUNDS_CODING == 24

@@ -254,7 +254,7 @@ def test_cp_f1_2_multi_round_fix_three_fields_no_loss_no_dup(
 
 def test_cp_f1_3_dev_loop_subbudget_constant_below_total() -> None:
     """CP-F1-3 ②（AC-S3-04 ② 直接验收点）：MAX_DEV_LOOP_LLM_CALLS==60 且 < MAX_TOTAL_LLM_CALLS。"""
-    assert MAX_DEV_LOOP_LLM_CALLS == 60, f"子预算应为 60，实际 {MAX_DEV_LOOP_LLM_CALLS}"
+    assert MAX_DEV_LOOP_LLM_CALLS == 120, f"子预算应为 60，实际 {MAX_DEV_LOOP_LLM_CALLS}"
     assert MAX_DEV_LOOP_LLM_CALLS < MAX_TOTAL_LLM_CALLS, (
         f"子预算 {MAX_DEV_LOOP_LLM_CALLS} 必须 < 总预算 {MAX_TOTAL_LLM_CALLS}"
     )
@@ -303,10 +303,13 @@ def test_cp_f1_3_no_llm_no_budget_change(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_cp_f1_3_entry_budget_gate_degrades(monkeypatch: pytest.MonkeyPatch) -> None:
-    """CP-F1-3 ③（AC-S3-04 ③）：retry_budget_remaining < DEV_LOOP_MIN_CALLS_PER_ROUND
-    且本回合需修复（可修复失败）→ 入口预算门直接降级，不空转再修。
+    """CP-F1-3 ③（AC-S3-04 ③ → sp7 S7-01 AC-S7-01 下沉转正）：
+    retry_budget_remaining < DEV_LOOP_MIN_CALLS_PER_ROUND 且本回合需修复（可修复失败）→
+    入口预算门**下沉为修复准入否决**，不回 coding 空转，落两段式 interrupt#2（首次进入置
+    await 标记，不再静默降级）。
 
-    DEV_LOOP_MIN_CALLS_PER_ROUND 默认 2；预算=1 时不足以启动一回合 → 降级。
+    断言不弱化：核心不变量"预算不足禁止回 coding 空转"（route != retry_coding）逐字保留；
+    并强化为 S7-01 转正断言（route == await + 不再 degraded）。
     """
     assert DEV_LOOP_MIN_CALLS_PER_ROUND >= 1
     _patch_sandbox(
@@ -318,15 +321,12 @@ def test_cp_f1_3_entry_budget_gate_degrades(monkeypatch: pytest.MonkeyPatch) -> 
     state = _base_state(retry_budget_remaining=DEV_LOOP_MIN_CALLS_PER_ROUND - 1)
     updates = execution_module.execution(state)
 
-    # 降级：标 degraded、不路由回 coding。
-    degraded = updates.get("degraded_nodes") or []
     route = updates.get("_dev_loop_route")
-    assert "execution" in degraded or route in (None, "degraded", "budget_exhausted") or (
-        route != "retry_coding"
-    ), (
-        f"预算不足应降级（degraded_nodes={degraded} / _dev_loop_route={route}），不得回 coding 空转"
-    )
+    # 核心不变量（逐字保留）：预算不足禁止回 coding 空转。
     assert route != "retry_coding", "入口预算门触发时禁止回 coding 重试"
+    # sp7 S7-01 转正：不再静默降级，落两段式 await（首次进入等 self-loop 重入后 interrupt#2）。
+    assert "execution" not in (updates.get("degraded_nodes") or []), "S7-01：预算门下沉，不再静默降级"
+    assert route == "await_dev_loop_interrupt", "预算门下沉 → 落两段式 await 标记"
 
 
 # ===========================================================================
@@ -360,10 +360,10 @@ AC_COVERAGE_MAP: Dict[str, List[tuple]] = {
             "test_cp_c3_5_upper_limit_to_interrupt",
         ]),
     ],
-    "AC-S3-04": [  # 预算回写 + 子预算（MAX_DEV_LOOP_LLM_CALLS）+ 入口预算门
+    "AC-S3-04": [  # 预算回写 + 子预算（MAX_DEV_LOOP_LLM_CALLS）+ 入口预算门（sp7 S7-01 下沉转正）
         ("tests.test_sprint3_c3", [
             "test_cp_c3_8_budget_writeback_on_llm_extract",
-            "test_cp_c3_9_entry_budget_gate_degrade",
+            "test_cp_c3_9_entry_budget_gate_routes_to_interrupt",  # sp7 S7-01：预算门下沉转正
             "test_cp_c3_10_dev_loop_budget_ceiling",
         ]),
         ("tests.test_sprint3_a1", ["test_cp_a1_3_dev_loop_budget_strictly_less_than_total"]),

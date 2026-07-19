@@ -506,24 +506,33 @@ def test_cp_c3_8b_no_llm_no_budget_change(monkeypatch):
 
 
 # ===========================================================================
-# CP-C3-9：入口预算门（AC-S3-04 ③）—— retry_budget_remaining < 2 → 直接降级、不 interrupt
+# CP-C3-9：入口预算门（AC-S3-04 ③ → sp7 S7-01 AC-S7-01 转正）——
+# retry_budget_remaining < MIN → **不再静默降级**，而是预算门下沉 → 落既有两段式 interrupt#2
 # ===========================================================================
 
 
-def test_cp_c3_9_entry_budget_gate_degrade(monkeypatch):
+def test_cp_c3_9_entry_budget_gate_routes_to_interrupt(monkeypatch):
+    """sp7 S7-01（AC-S7-01）：入口预算不足一回合 → **不再** _mark_degraded_for_report 静默降级，
+    而是预算门下沉为修复准入否决条件 → 落两段式（首次进入 already_committed=False → 置
+    _dev_loop_route="await_dev_loop_interrupt" return，等 self-loop 重入后 interrupt#2）。
+    断言只换不弱化：原"降级/route=None"改为"两段式 await 标记/不降级"（行为转正，非弱化）。"""
     _patch_sandbox(
         monkeypatch,
         run_results=[FakeRunResult(exit_code=1, stderr="ModuleNotFoundError: x")],
     )
-    state = _base_state(retry_budget_remaining=DEV_LOOP_MIN_CALLS_PER_ROUND - 1)  # < DEV_LOOP_MIN_CALLS_PER_ROUND
+    state = _base_state(retry_budget_remaining=DEV_LOOP_MIN_CALLS_PER_ROUND - 1)  # < MIN
     out = execution(state)
     assert out["execution_result"]["success"] is False
-    assert NODE_NAME in out["degraded_nodes"]
-    assert out.get("_dev_loop_route") is None  # 降级 → reporting，不进修复循环
-    assert "fix_loop_count" not in out  # 不自增
-    assert "user_fix_decision" not in out  # 不 interrupt
-    # 降级 NodeError 三态 degraded。
-    assert any(e["error_type"] == "degraded" for e in out["node_errors"])
+    # AC-S7-01 核心：不再静默降级——degraded_nodes 不含 execution 的 budget_exhausted 降级。
+    assert NODE_NAME not in out.get("degraded_nodes", []), "S7-01：不再静默降级"
+    # 首次进入置两段式 await 标记（self-loop 重入后再 interrupt）。
+    assert out.get("_dev_loop_route") == "await_dev_loop_interrupt"
+    assert "fix_loop_count" not in out  # 不回 coding、不自增
+    assert "user_fix_decision" not in out  # 首次进入尚未 interrupt（两段式第一段）
+    # 不再写 budget_exhausted 降级 NodeError（预算门不再是降级旁路）。
+    assert not any(
+        "budget_exhausted" in (e.get("error_message") or "") for e in out.get("node_errors", [])
+    ), "不再写 budget_exhausted 降级 NodeError"
 
 
 # ===========================================================================
@@ -649,11 +658,16 @@ def test_cp_c3_14_warning_on_failure_and_degrade(monkeypatch, caplog):
     warnings = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
     assert any("执行失败" in m for m in warnings), f"未见执行失败 WARNING: {warnings}"
 
+    # sp7 S7-01（AC-S7-01 转正）：预算不足一回合不再"降级"WARNING（预算门下沉，不再是降级旁路）。
+    # 首次进入落两段式第一段（置 await 标记 return），执行失败仍打 WARNING、非静默吞错。
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger="core.nodes.execution"):
-        execution(_base_state(retry_budget_remaining=1, fix_loop_count=0))
+        out = execution(_base_state(retry_budget_remaining=1, fix_loop_count=0))
     warnings = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
-    assert any("降级" in m for m in warnings), f"未见降级 WARNING: {warnings}"
+    assert any("执行失败" in m for m in warnings), f"未见执行失败 WARNING: {warnings}"
+    # 不再走 budget_exhausted 降级路径（非静默吞错的语义转正——落两段式 interrupt#2）。
+    assert out.get("_dev_loop_route") == "await_dev_loop_interrupt"
+    assert not any("budget_exhausted" in m for m in warnings), "不再打 budget_exhausted 降级 WARNING"
 
 
 # ===========================================================================

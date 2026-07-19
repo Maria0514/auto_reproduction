@@ -273,9 +273,12 @@ def test_cp_c1_3_fix_round_injects_feedback(monkeypatch, tmp_path: Path) -> None
     les = payload["last_error_summary"]
     assert les["error_category"] == "import"
     assert les["errors"], "errors 应注入"
-    # stderr 尾部裁剪到 ~2000 字符（含尾部 ModuleNotFoundError）
-    assert len(les["stderr_tail"]) <= 2000
-    assert "ModuleNotFoundError" in les["stderr_tail"]
+    # sp7 S7-02（AC-S7-07 转正）：stderr_tail 不再是 logs 尾部截断产物，而是固定退化指引串
+    # （把截断决策权收回给 coder）；完整日志经 log_file_path 由 coder 用 read_code_file 自读。
+    assert les["stderr_tail"] == coding_module._STDERR_TAIL_GUIDANCE
+    assert "ModuleNotFoundError" not in les["stderr_tail"], "stderr_tail 不含日志内容（AC-S7-07）"
+    # log_file_path 指向上一轮 execution 落盘日志（fix_count=2 → round_1.log，off-by-one 对齐）。
+    assert les["log_file_path"].endswith("round_1.log"), "fix_count=2 → 读上一轮 round_1.log"
     assert payload.get("code_output_dir") == code_dir
 
     # 首轮（无 execution_result）不应注入修复字段
@@ -604,16 +607,18 @@ def test_reinforce_metrics_convention_in_system_prompt() -> None:
 # ---- 补强6：digest 裁剪 + 解析鲁棒性边界 ----
 
 
-def test_reinforce_digest_stderr_tail_keeps_end_not_full() -> None:
-    """构造超长 logs：注入的是尾部 ~2000 字符（含末尾错误栈），非完整 logs。"""
+def test_reinforce_digest_stderr_tail_is_guidance_not_logs() -> None:
+    """sp7 S7-02（AC-S7-07 转正）：stderr_tail 不再是 logs 尾部截断产物，而是固定退化指引串
+    （不含任何日志内容）——完整日志经 log_file_path 由 coder 用 read_code_file 自读。"""
     tail_marker = "FATAL_AT_END_OF_LOG"
     logs = "HEAD_NOISE " + ("Z" * 6000) + tail_marker
     digest = _digest_execution_feedback(
         {"logs": logs, "errors": ["[error_category=runtime] x"]}
     )
-    assert len(digest["stderr_tail"]) <= 2000
-    assert tail_marker in digest["stderr_tail"], "应保留尾部错误栈"
-    assert "HEAD_NOISE" not in digest["stderr_tail"], "头部噪声应被裁掉"
+    assert digest["stderr_tail"] == coding_module._STDERR_TAIL_GUIDANCE
+    assert tail_marker not in digest["stderr_tail"], "stderr_tail 不含日志尾部内容（AC-S7-07）"
+    assert "HEAD_NOISE" not in digest["stderr_tail"]
+    assert "log_file_path" in digest, "S7-02 新增完整日志入口子键"
 
 
 def test_reinforce_digest_no_category_prefix_and_empty_errors() -> None:
@@ -622,7 +627,8 @@ def test_reinforce_digest_no_category_prefix_and_empty_errors() -> None:
     assert d1["error_category"] is None
     d2 = _digest_execution_feedback({"errors": [], "logs": "short"})
     assert d2["error_category"] is None
-    assert d2["stderr_tail"] == "short"
+    # sp7 S7-02（AC-S7-07）：stderr_tail 恒为固定指引串（不再随 logs 变），语义不依赖 logs 长度。
+    assert d2["stderr_tail"] == coding_module._STDERR_TAIL_GUIDANCE
 
 
 def test_reinforce_digest_non_str_logs_coerced() -> None:

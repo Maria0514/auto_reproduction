@@ -206,10 +206,10 @@ def _build_self_loop_graph(checkpointer):
 @pytest.mark.parametrize(
     "n_steps, expected",
     [
-        (13, 18),  # 回归样本：13 步 + K(5) = 18（现状 10 轮只够 8 步的结构根因治点）
-        (1, 10),   # 1 + 5 = 6 < FLOOR → 钳到 10
-        (40, 30),  # 40 + 5 = 45 > CAP → 钳到 30
-        (0, 10),   # 空计划 → 0 + 5 = 5 < FLOOR → 10
+        (13, 23),  # 回归样本：13 步 + K(10) = 23（翻倍后 FLOOR20/CAP60，sp7 联动）
+        (1, 20),   # 1 + 10 = 11 < FLOOR(20) → 钳到 20
+        (40, 50),  # 40 + 10 = 50 <= CAP(60) → 50
+        (0, 20),   # 空计划 → 0 + 10 = 10 < FLOOR(20) → 20
     ],
 )
 def test_cp_2_5_1_linkage_parametrized(n_steps, expected):
@@ -221,9 +221,9 @@ def test_cp_2_5_1_linkage_parametrized(n_steps, expected):
 def test_cp_2_5_1_formula_constants_and_defensive():
     """公式常量来源 = config 三常量（不写死）；畸形 plan 防御回落 FLOOR 不炸。"""
     # 常量语义：K=5 / FLOOR=10 / CAP=30（T-S5-1-1 已落，此处对账消费面）。
-    assert config.REACT_EXECUTION_ROUNDS_MARGIN == 5
-    assert config.REACT_MAX_ROUNDS_EXECUTION == 10
-    assert config.REACT_MAX_ROUNDS_EXECUTION_CAP == 30
+    assert config.REACT_EXECUTION_ROUNDS_MARGIN == 10
+    assert config.REACT_MAX_ROUNDS_EXECUTION == 20
+    assert config.REACT_MAX_ROUNDS_EXECUTION_CAP == 60
     # 公式与常量一致性（任取一点核对，防止 helper 写死数字）。
     n = 13
     assert _effective_max_rounds({"execution_steps": _plan_steps(n)}) == max(
@@ -245,7 +245,7 @@ def test_cp_2_5_1_global_ledger_reconciliation():
     )
     assert remaining_after_worst_first_run >= config.DEV_LOOP_MIN_CALLS_PER_ROUND, \
         "耗尽 CAP 后子预算余量必须仍能通过入口预算门（容一个修复回合）"
-    assert config.DEV_LOOP_MIN_CALLS_PER_ROUND == 2, "入口门不变（T-S5-2-5 零改动面）"
+    assert config.DEV_LOOP_MIN_CALLS_PER_ROUND == 4, "入口门不变（T-S5-2-5 零改动面）"
 
 
 # ===========================================================================
@@ -262,8 +262,8 @@ def test_cp_2_5_2_truncated_scenario_flag_and_info_log(monkeypatch, caplog):
             monkeypatch, _base_state(), "/tmp/t25-wd", plan,
             final_round_fn=lambda max_rounds: max_rounds,  # 跑满 → force_finish 收尾
         )
-    assert capture["factory_max_rounds"] == 18, "13 步计划联动 → 子图预算 18"
-    assert out.rounds_used == 18
+    assert capture["factory_max_rounds"] == 23, "13 步计划联动 → 子图预算 23"
+    assert out.rounds_used == 23
     assert out.budget_truncated is True
     truncation_logs = [
         r for r in caplog.records
@@ -282,7 +282,7 @@ def test_cp_2_5_2_normal_finish_boundary_not_truncated(monkeypatch, caplog):
             monkeypatch, _base_state(), "/tmp/t25-wd", plan,
             final_round_fn=lambda max_rounds: max_rounds - 1,
         )
-    assert out.rounds_used == 17
+    assert out.rounds_used == 22
     assert out.budget_truncated is False
     assert not any(_TRUNCATION_LOG_MARK in r.message for r in caplog.records), \
         "正常收尾不得产生截断日志（避免误报噪声）"
@@ -397,7 +397,7 @@ def test_cp_2_5_3_human_message_budget_matches_helper(monkeypatch):
         monkeypatch, state, "/tmp/t25-wd", plan, final_round_fn=lambda mr: 3,
     )
     expected = _effective_max_rounds(plan)
-    assert expected == 18
+    assert expected == 23
     assert capture["factory_max_rounds"] == expected, "消费点 1：create_react_subgraph"
     initial = capture["initial"]
     assert initial["max_rounds"] == expected, "消费点 2：ReActState 初始化"

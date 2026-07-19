@@ -51,8 +51,8 @@ def test_cp_a4_2_constant_values() -> None:
     import config
 
     assert config.PLANNING_SOFT_HINT_THRESHOLD == 5
-    assert config.REACT_MAX_ROUNDS_RESOURCE_SCOUT == 10
-    assert config.REACT_MAX_ROUNDS_PLANNING == 8
+    assert config.REACT_MAX_ROUNDS_RESOURCE_SCOUT == 20
+    assert config.REACT_MAX_ROUNDS_PLANNING == 16
 
     # 全表值逐项断言（防回归 / 防默认值漂移）
     assert config.GIT_CLONE_TIMEOUT == 60
@@ -118,11 +118,11 @@ def test_cp_a4_4_sp1_constants_unchanged() -> None:
     默认值已于 2026-06 经 Maria 拍板放大为 120 / 10）。"""
     import config
 
-    assert config.MAX_TOTAL_LLM_CALLS == 120, "MAX_TOTAL_LLM_CALLS 默认放大为 120（2026-06 Maria 拍板）"
-    assert config.MAX_NODE_LLM_CALLS == 10
-    assert config.MAX_FIX_LOOP_COUNT == 10, "MAX_FIX_LOOP_COUNT 默认放大为 10（2026-06 Maria 拍板）"
-    assert config.REACT_MAX_ROUNDS_PAPER_INTAKE == 5
-    assert config.REACT_MAX_ROUNDS_PAPER_ANALYSIS == 12
+    assert config.MAX_TOTAL_LLM_CALLS == 240, "MAX_TOTAL_LLM_CALLS 默认放大为 120（2026-06 Maria 拍板）"
+    assert config.MAX_NODE_LLM_CALLS == 20
+    assert config.MAX_FIX_LOOP_COUNT == 20, "MAX_FIX_LOOP_COUNT 默认放大为 10（2026-06 Maria 拍板）"
+    assert config.REACT_MAX_ROUNDS_PAPER_INTAKE == 10
+    assert config.REACT_MAX_ROUNDS_PAPER_ANALYSIS == 24
     assert config.REACT_LLM_TEMPERATURE == 0.3
     assert config.REACT_RESULT_TAG_OPEN == "<result>"
     assert config.REACT_RESULT_TAG_CLOSE == "</result>"
@@ -208,7 +208,7 @@ def test_aux_5_no_env_override_for_sp2_literals(
 
     reloaded = importlib.reload(config_module)
     try:
-        assert reloaded.REACT_MAX_ROUNDS_RESOURCE_SCOUT == 10
+        assert reloaded.REACT_MAX_ROUNDS_RESOURCE_SCOUT == 20
         assert reloaded.GIT_CLONE_TIMEOUT == 60
         assert reloaded.STREAMLIT_POLL_INTERVAL == 1500
         assert reloaded.PLANNING_SOFT_HINT_THRESHOLD == 5

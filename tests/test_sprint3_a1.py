@@ -52,9 +52,9 @@ def test_cp_a1_2_constant_values() -> None:
     assert config.SANDBOX_OUTPUT_MAX_BYTES == 1_048_576
     assert config.SANDBOX_OUTPUT_MAX_BYTES == 1048576  # 1 MiB 双形态确认
     assert config.SANDBOX_PIP_MAX_RETRIES == 2
-    assert config.MAX_DEV_LOOP_LLM_CALLS == 60
-    assert config.DEV_LOOP_MIN_CALLS_PER_ROUND == 2
-    assert config.REACT_MAX_ROUNDS_CODING == 12
+    assert config.MAX_DEV_LOOP_LLM_CALLS == 120
+    assert config.DEV_LOOP_MIN_CALLS_PER_ROUND == 4
+    assert config.REACT_MAX_ROUNDS_CODING == 24
     assert config.STREAMLIT_PAGE_EXECUTION == "execution"
     assert config.STREAMLIT_PAGE_REPORT == "report"
 
@@ -121,8 +121,8 @@ def test_cp_a1_3_dev_loop_budget_strictly_less_than_total() -> None:
     assert config.MAX_DEV_LOOP_LLM_CALLS < config.MAX_TOTAL_LLM_CALLS, (
         "MAX_DEV_LOOP_LLM_CALLS 必须严格小于 MAX_TOTAL_LLM_CALLS（修复循环子预算不得超总预算）"
     )
-    assert config.MAX_DEV_LOOP_LLM_CALLS == 60
-    assert config.MAX_TOTAL_LLM_CALLS == 120
+    assert config.MAX_DEV_LOOP_LLM_CALLS == 120
+    assert config.MAX_TOTAL_LLM_CALLS == 240
 
 
 # ========== CP-A1-4：sp1/sp2 既有常量零修改 + git diff 实证纯追加 ==========
@@ -134,23 +134,23 @@ def test_cp_a1_4_sp1_sp2_constants_unchanged() -> None:
     import config
 
     # sp1 核心预算 / 重试常量
-    assert config.MAX_TOTAL_LLM_CALLS == 120, "MAX_TOTAL_LLM_CALLS 默认放大为 120（2026-06 Maria 拍板）"
-    assert config.MAX_NODE_LLM_CALLS == 10
-    assert config.MAX_FIX_LOOP_COUNT == 10, "MAX_FIX_LOOP_COUNT 默认放大为 10（2026-06 Maria 拍板）"
+    assert config.MAX_TOTAL_LLM_CALLS == 240, "MAX_TOTAL_LLM_CALLS 默认放大为 120（2026-06 Maria 拍板）"
+    assert config.MAX_NODE_LLM_CALLS == 20
+    assert config.MAX_FIX_LOOP_COUNT == 20, "MAX_FIX_LOOP_COUNT 默认放大为 10（2026-06 Maria 拍板）"
     assert config.LLM_REQUEST_TIMEOUT == 60
     assert config.DEFAULT_LLM_MAX_TOKENS == 8192
     assert config.LLM_MAX_RETRIES == 3
     assert config.LLM_INITIAL_RETRY_DELAY == 2.0
 
     # sp1 ReAct 常量
-    assert config.REACT_MAX_ROUNDS_PAPER_INTAKE == 5
-    assert config.REACT_MAX_ROUNDS_PAPER_ANALYSIS == 12
+    assert config.REACT_MAX_ROUNDS_PAPER_INTAKE == 10
+    assert config.REACT_MAX_ROUNDS_PAPER_ANALYSIS == 24
     assert config.TOOL_RESULT_MAX_LENGTH == 8000
 
     # sp2 常量
     assert config.PLANNING_SOFT_HINT_THRESHOLD == 5
-    assert config.REACT_MAX_ROUNDS_RESOURCE_SCOUT == 10
-    assert config.REACT_MAX_ROUNDS_PLANNING == 8
+    assert config.REACT_MAX_ROUNDS_RESOURCE_SCOUT == 20
+    assert config.REACT_MAX_ROUNDS_PLANNING == 16
     assert config.GIT_CLONE_TIMEOUT == 60
     # Sprint 6 MF-5: PWC_BASE_URL 等 PWC_* 四常量已删除（PwC 下线），断言移除
     assert config.STREAMLIT_PAGE_INPUT == "input"
@@ -247,8 +247,8 @@ def test_aux_no_env_override_for_sp3_literals(
     reloaded = importlib.reload(config_module)
     try:
         assert reloaded.SANDBOX_EXEC_TIMEOUT == 1800
-        assert reloaded.MAX_DEV_LOOP_LLM_CALLS == 60
-        assert reloaded.REACT_MAX_ROUNDS_CODING == 12
+        assert reloaded.MAX_DEV_LOOP_LLM_CALLS == 120
+        assert reloaded.REACT_MAX_ROUNDS_CODING == 24
         assert reloaded.STREAMLIT_PAGE_EXECUTION == "execution"
     finally:
         for key in (

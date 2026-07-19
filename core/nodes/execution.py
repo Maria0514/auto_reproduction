@@ -52,6 +52,7 @@ from config import (
     DEV_LOOP_MIN_CALLS_PER_ROUND,
     MAX_DEV_LOOP_LLM_CALLS,
     MAX_FIX_LOOP_COUNT,
+    MAX_TOTAL_LLM_CALLS,
     NO_METRICS_EARLY_STOP_ROUNDS,
     REACT_EXECUTION_ROUNDS_MARGIN,
     REACT_MAX_ROUNDS_EXECUTION,
@@ -1345,7 +1346,19 @@ def _run_execution_agent(
 
         # sp5 T-S5-2-5（Q-S5-7）：轮次预算与计划步数联动（确定性 helper，两处消费点
         # 同源同值；HumanMessage 内 max_rounds 数字亦出自同一 helper，见装配项 2）。
-        effective_max_rounds = _effective_max_rounds(plan)
+        #
+        # sp7 T-S7-1-1（S7-03，架构 §6.2）：入口收窄——把"本轮子图轮次上限"收窄为
+        # "联动值"与"剩余子预算"的较小值，让现成 budget_check_node（react_base.py:621-629）
+        # 在本轮内即刹住跨回合累计的 dev_calls（单轮不再一口气烧满 CAP 冲过子上限）。
+        # 只改"本轮子图轮次上限"（入口收窄，非新埋点）；零 react_base 改动、零计量口径
+        # 改动（_dev_loop_llm_calls 累加口径一字不动）。保底 1 轮防 0 轮死锁/退化（R-S7-5）。
+        # R-PC4 无扰：context（:1341 已构造，早于此处）里的 max_rounds 仍是联动值不收窄
+        # ——收窄是 agent 无需感知的系统级护栏，不回灌 context，避免动态通道字节因
+        # dev_calls 变化而抖动（架构 §6.2 / AA-S7-6）。
+        base_rounds = _effective_max_rounds(plan)  # 联动公式，不变
+        dev_calls_so_far = state.get("_dev_loop_llm_calls", 0) or 0
+        remaining_sub_budget = max(0, MAX_DEV_LOOP_LLM_CALLS - dev_calls_so_far)
+        effective_max_rounds = max(1, min(base_rounds, remaining_sub_budget))
         subgraph = create_react_subgraph(
             node_name=NODE_NAME,
             system_prompt=system_prompt,
@@ -1691,6 +1704,97 @@ def _aggregate_logs(
     return "\n\n".join(parts)
 
 
+# ---------------------------------------------------------------------------
+# 步骤 5.5：完整日志落盘（S7-02，架构 §5.3）——错误优先编排 + try/except 兜底
+# ---------------------------------------------------------------------------
+
+# 落盘子目录名（<code_output_dir>/exec_logs/，进 workspace 天然被 read_code_file 读到）。
+_EXEC_LOGS_SUBDIR: str = "exec_logs"
+
+
+def _build_error_first_log(
+    prep: Optional[SandboxPrepareResult],
+    run_results: List[SandboxRunResult],
+) -> str:
+    """错误优先编排（架构 §5.3 内容编排，应对 read_code_file 8000 截断 R-S7-3）。
+
+    文件头部先写"错误摘要区"：非零 exit（或 timed_out）步骤的
+    ``[step#i exit=N cmd=...]`` 头 + 其 stderr 段前置；随后完整时序日志
+    （_aggregate_logs 未截断原文）。保证真报错行（stderr / ``No module named`` 类）
+    落在文件头 8000 字符内，coder 用 read_code_file 整读一次即命中。
+    """
+    error_parts: List[str] = []
+    for i, r in enumerate(run_results):
+        if r.exit_code == 0 and not getattr(r, "timed_out", False):
+            continue
+        cmd = " ".join(r.command) if isinstance(r.command, (list, tuple)) else str(r.command)
+        head = f"[step#{i} exit={r.exit_code} timed_out={r.timed_out} cmd={cmd}]"
+        seg = [head]
+        if r.stderr:
+            seg.append(f"[stderr]\n{r.stderr}")
+        error_parts.append("\n".join(seg))
+    # prep 安装失败也是首要错误证据，前置。
+    if prep is not None and not prep.success:
+        failed = getattr(prep, "install_failed_packages", None) or []
+        err = getattr(prep, "error", None)
+        seg = ["[prepare_environment FAILED]"]
+        if failed:
+            seg.append(f"install_failed_packages={list(failed)}")
+        if err:
+            seg.append(f"error={err}")
+        error_parts.insert(0, "\n".join(seg))
+
+    full = _aggregate_logs(prep, run_results)
+    if not error_parts:
+        return full
+    return (
+        "===== 错误摘要区（error-first，真报错前置）=====\n"
+        + "\n\n".join(error_parts)
+        + "\n\n===== 完整时序日志 =====\n"
+        + full
+    )
+
+
+def _persist_round_log(
+    work_dir: str,
+    fix_count: int,
+    prep: Optional[SandboxPrepareResult],
+    run_results: List[SandboxRunResult],
+) -> Optional[str]:
+    """把本回合完整日志落盘到 ``<work_dir>/exec_logs/round_{fix_count}.log``（S7-02，架构 §5.3）。
+
+    - 位置：``<code_output_dir>/exec_logs/``（code_output_dir 在 WORKSPACE_DIR 之下，
+      ``read_code_file`` 天然可读，无需工具微调）；
+    - 命名：``round_{fix_loop_count}.log``（确定性编号，首跑=0，第 N 次修复回合=N；
+      不用时间戳/uuid，Prompt Cache 无扰、coder 可从 fix_round 反推）；
+    - 内容：错误优先编排后的**完整日志原文**（未截断），用 **mask 后**口径
+      （与 execution_result.logs 同脱敏级别，coder 读到的日志不泄凭证）；
+    - 落盘异常兜底（R-S7-4）：写文件失败（IO/越界）**不阻断节点**，try/except 吞异常
+      返回 None（沿 coding gate 工具兜底范式），coder read 到"文件不存在"退回 errors 摘要。
+
+    返回落盘文件绝对路径；失败返回 None。
+    """
+    import os as _os
+
+    try:
+        log_dir = _os.path.join(str(work_dir), _EXEC_LOGS_SUBDIR)
+        _os.makedirs(log_dir, exist_ok=True)
+        log_path = _os.path.join(log_dir, f"round_{int(fix_count)}.log")
+        content = mask_value(_build_error_first_log(prep, run_results)) or ""
+        with open(log_path, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        logger.info(
+            "[%s] 本回合完整日志已落盘: %s (%d chars)", NODE_NAME, log_path, len(content)
+        )
+        return _os.path.abspath(log_path)
+    except Exception as exc:  # noqa: BLE001 — 落盘失败不阻断节点（R-S7-4 兜底）
+        logger.warning(
+            "[%s] 日志落盘失败（不阻断，coder 反馈退回 errors 摘要）: %s: %s",
+            NODE_NAME, type(exc).__name__, exc,
+        )
+        return None
+
+
 def _build_execution_result(
     prep: Optional[SandboxPrepareResult],
     run_results: List[SandboxRunResult],
@@ -1961,7 +2065,17 @@ def _route_user_fix_decision(decision: Any, updates: dict, state: GlobalState) -
         }
         # 回问点 2：fix_loop_count 清零、fix_loop_history 保留（供报告审计，§7）。
         out["fix_loop_count"] = 0
-        logger.info("[%s] interrupt#2 resume: revise_plan（fix_loop_count 清零，history 保留）", NODE_NAME)
+        # sp7 S7-01（Q-S7-1 方案 A，架构 §1.2）：revise_plan = "换计划 = 重新开始"——补齐
+        # 预算语义自洽，防预算耗尽下 revise_plan 空转（新一轮 execution 入口又立刻耗尽）。
+        # 全额重置为 MAX_TOTAL_LLM_CALLS（240，与 state.py:340 初始化同口径）。硬顶不破：
+        # _dev_loop_llm_calls 累计**不重置**（子上限 MAX_DEV_LOOP_LLM_CALLS 硬顶继续生效于
+        # :2036/:2077，叠加 S7-03 收窄），故 revise 后即便预算重满仍不突破 240/120（R-S7-2）。
+        out["retry_budget_remaining"] = MAX_TOTAL_LLM_CALLS
+        logger.info(
+            "[%s] interrupt#2 resume: revise_plan（fix_loop_count 清零，history 保留，"
+            "retry_budget_remaining 全额重置=%d，_dev_loop_llm_calls 不重置）",
+            NODE_NAME, MAX_TOTAL_LLM_CALLS,
+        )
         return out
 
     if kind == "export_code":
@@ -1981,6 +2095,14 @@ def _route_user_fix_decision(decision: Any, updates: dict, state: GlobalState) -
 _NO_METRICS_EARLY_STOP_SUMMARY = (
     f"已连续 {NO_METRICS_EARLY_STOP_ROUNDS + 1} 轮零指标，"
     "自动修复无进展，请检查执行步骤或更换论文"
+)
+
+# sp7 S7-01（架构 §4.3）：预算耗尽终态面板文案，走既有 summary/fix_hint 通道经 replace 注入
+# （复用 sp6 AC-S6-10 范式，零新 payload 键）。与 _NO_METRICS_EARLY_STOP_SUMMARY 同款。
+_BUDGET_EXHAUSTED_SUMMARY = (
+    "修复循环已反复失败，重试预算已耗尽（LLM 调用额度用尽）。"
+    "系统不再自动继续，请在下方三种处置中选择：接受当前结果导出报告 / "
+    "重订计划再试 / 终止任务。"
 )
 
 
@@ -2025,15 +2147,20 @@ def _maybe_interrupt_or_return(
     budget = state.get("retry_budget_remaining", 0) or 0
     dev_calls = state.get("_dev_loop_llm_calls", 0) or 0
 
-    # 入口预算门：预算不足以启动一回合 → 直接降级（不 interrupt，§2.5.4 / PRD §5）。
-    if budget < DEV_LOOP_MIN_CALLS_PER_ROUND:
-        return _mark_degraded_for_report(updates, state, reason="budget_exhausted")
-
+    # sp7 S7-01（架构 §2.3 实现 1）：**删除**入口预算门的独立降级 return——预算门不再是
+    # "提前降级的旁路"（旧 :2029-2030 `if budget < MIN: return _mark_degraded_for_report`
+    # 造成静默降级、_dev_loop_route 被清 None、graph.py 兜底路由 reporting，用户无知情选择）。
+    # 改为**下沉为修复分支的一个准入否决条件**（下方 and budget >= DEV_LOOP_MIN_CALLS_PER_ROUND）：
+    # 预算不足一回合时不回 coding 修复，自动落既有两段式 interrupt#2（:2055 await / :2091 interrupt），
+    # 复用 commit-边界-return + self-loop-重入，`already_committed` guard 一字不改、零新路径、
+    # 零新 guard（架构 §2.2 坐实：预算门命中时 exec_result 已在 updates、sandbox 不重跑）。
+    #
     # 可修复 + 未超限 + 预算够一回合 + 子预算未触顶 + 无 NO_METRICS 早停 → 回 coding 修复。
     if (
         feedback.auto_fixable
         and fix_count < MAX_FIX_LOOP_COUNT
         and dev_calls < MAX_DEV_LOOP_LLM_CALLS
+        and budget >= DEV_LOOP_MIN_CALLS_PER_ROUND  # sp7 S7-01：预算门下沉为修复准入否决条件
         and not _no_metrics_stalled(state, feedback)
     ):
         updates["fix_loop_count"] = fix_count + 1  # 单点自增（§2.5.2）
@@ -2073,6 +2200,17 @@ def _maybe_interrupt_or_return(
             feedback,
             summary=_NO_METRICS_EARLY_STOP_SUMMARY,
             fix_hint=_NO_METRICS_EARLY_STOP_SUMMARY,
+        )
+    elif budget < DEV_LOOP_MIN_CALLS_PER_ROUND:
+        # sp7 S7-01（架构 §2.4）：预算耗尽终态——优先级高于子上限/不可修复/修复耗尽
+        # （预算耗尽是更强的资源终态），低于早停（早停是更具体的"无进展"语境）。
+        # 面板文案走既有 summary/fix_hint 通道经 replace 注入（复用 sp6 AC-S6-10 范式，
+        # 零新 payload 键；_build_dev_loop_interrupt_payload 从 feedback.summary/fix_hint 取）。
+        reason = _BUDGET_EXHAUSTED_SUMMARY
+        panel_feedback = replace(
+            feedback,
+            summary=_BUDGET_EXHAUSTED_SUMMARY,
+            fix_hint=_BUDGET_EXHAUSTED_SUMMARY,
         )
     elif dev_calls >= MAX_DEV_LOOP_LLM_CALLS:
         reason = "子预算触顶"
@@ -2207,6 +2345,15 @@ def execution(state: GlobalState) -> dict:
         degraded_credentials=degraded_credentials,
         budget_truncated=agent_out.budget_truncated,
         metrics_groups=metrics_groups,
+    )
+
+    # 步骤 5.5（sp7 S7-02，架构 §5.3）：本回合完整日志落盘到
+    # <code_output_dir>/exec_logs/round_{fix_loop_count}.log（错误优先编排，coder 可
+    # 用 read_code_file 自读定位真报错行）。只在真跑回合落盘——guard 命中路径本就不
+    # 重跑 sandbox、不经过此处（日志已在上一次真跑回合落盘），无需二次落盘。落盘失败
+    # try/except 兜底不阻断节点（R-S7-4）；路径由 coding 侧确定性推导（不存 state/exec_result）。
+    _persist_round_log(
+        work_dir, state.get("fix_loop_count", 0) or 0, prep, run_results
     )
 
     # 步骤 6：单点 read-modify-write 写 state（落点 B 唯一扣减点：子图 rounds + metrics 抽取，§4.4；

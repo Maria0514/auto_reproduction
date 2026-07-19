@@ -13,11 +13,11 @@ class TestCP111NewConstants:
 
     def test_react_execution_rounds_margin(self):
         assert type(config.REACT_EXECUTION_ROUNDS_MARGIN) is int
-        assert config.REACT_EXECUTION_ROUNDS_MARGIN == 5
+        assert config.REACT_EXECUTION_ROUNDS_MARGIN == 10
 
     def test_react_max_rounds_execution_cap(self):
         assert type(config.REACT_MAX_ROUNDS_EXECUTION_CAP) is int
-        assert config.REACT_MAX_ROUNDS_EXECUTION_CAP == 30
+        assert config.REACT_MAX_ROUNDS_EXECUTION_CAP == 60
 
     def test_activity_stream_max_events(self):
         assert type(config.ACTIVITY_STREAM_MAX_EVENTS) is int
@@ -30,7 +30,7 @@ class TestCP111NewConstants:
     def test_floor_value_unchanged(self):
         """REACT_MAX_ROUNDS_EXECUTION 值不动（仅注释语义收窄为 FLOOR）。"""
         assert type(config.REACT_MAX_ROUNDS_EXECUTION) is int
-        assert config.REACT_MAX_ROUNDS_EXECUTION == 10
+        assert config.REACT_MAX_ROUNDS_EXECUTION == 20
 
 
 class TestCP112BudgetLedgerBoundary:
@@ -54,15 +54,15 @@ class TestCP113ExistingBaselineUnchanged:
     """CP-1.1-3：既有常量基线零改动。"""
 
     def test_budget_constants_baseline(self):
-        assert config.MAX_NODE_LLM_CALLS == 10
-        assert config.MAX_TOTAL_LLM_CALLS == 120
-        assert config.MAX_FIX_LOOP_COUNT == 10
-        assert config.MAX_DEV_LOOP_LLM_CALLS == 60
-        assert config.DEV_LOOP_MIN_CALLS_PER_ROUND == 2
+        assert config.MAX_NODE_LLM_CALLS == 20
+        assert config.MAX_TOTAL_LLM_CALLS == 240
+        assert config.MAX_FIX_LOOP_COUNT == 20
+        assert config.MAX_DEV_LOOP_LLM_CALLS == 120
+        assert config.DEV_LOOP_MIN_CALLS_PER_ROUND == 4
 
     def test_react_rounds_baseline(self):
-        assert config.REACT_MAX_ROUNDS_PAPER_INTAKE == 5
-        assert config.REACT_MAX_ROUNDS_PAPER_ANALYSIS == 12
-        assert config.REACT_MAX_ROUNDS_RESOURCE_SCOUT == 10
-        assert config.REACT_MAX_ROUNDS_PLANNING == 8
-        assert config.REACT_MAX_ROUNDS_CODING == 12
+        assert config.REACT_MAX_ROUNDS_PAPER_INTAKE == 10
+        assert config.REACT_MAX_ROUNDS_PAPER_ANALYSIS == 24
+        assert config.REACT_MAX_ROUNDS_RESOURCE_SCOUT == 20
+        assert config.REACT_MAX_ROUNDS_PLANNING == 16
+        assert config.REACT_MAX_ROUNDS_CODING == 24

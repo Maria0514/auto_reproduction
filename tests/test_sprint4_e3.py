@@ -312,16 +312,19 @@ def test_cp_e3_1_dev_loop_ceiling_to_interrupt(monkeypatch):
     assert agent_cnt["agent"] == 1, "self-loop 重入必须 guard 命中、子图不重跑"
 
 
-def test_cp_e3_1_entry_budget_gate_still_degrades(monkeypatch):
-    """入口预算门逐字保留（CP-C3-9 改造）：预算 < 2 → 降级不 interrupt。"""
+def test_cp_e3_1_entry_budget_gate_routes_to_interrupt(monkeypatch):
+    """sp7 S7-01（AC-S7-01 转正，原 CP-C3-9 改造）：预算 < MIN → **不再静默降级**，
+    预算门下沉为修复准入否决条件 → 落两段式（首次进入置 await 标记 return，不 interrupt）。
+    断言只换不弱化：原"降级/route=None"改为"两段式 await 标记/不降级"。"""
     _patch_agent(monkeypatch, _agent_out(
         _prep(), [_run(exit_code=1, stderr="ModuleNotFoundError: x")], rounds=2,
     ))
     state = _base_state(retry_budget_remaining=DEV_LOOP_MIN_CALLS_PER_ROUND - 1)
     out = execution(state)
-    assert NODE_NAME in out["degraded_nodes"]
-    assert out.get("_dev_loop_route") is None
-    assert "user_fix_decision" not in out
+    assert NODE_NAME not in out.get("degraded_nodes", []), "S7-01：不再静默降级"
+    assert out.get("_dev_loop_route") == "await_dev_loop_interrupt"  # 两段式第一段
+    assert "user_fix_decision" not in out  # 首次进入尚未 interrupt
+    assert "fix_loop_count" not in out
 
 
 # ===========================================================================
@@ -569,11 +572,16 @@ def test_cp_e3_5_coding_digest_consumes_failure_contract(monkeypatch):
     }
     assert rec["error_category"] == "import"
 
-    # coding 侧解析断言（只读 coding.py，零改动消费）。
+    # coding 侧解析断言（只读 coding.py 的通信契约字段）。
     digest = coding_module._digest_execution_feedback(er)
     assert digest["error_category"] == "import"
     assert digest["errors"] == er["errors"]
-    assert digest["stderr_tail"] and digest["stderr_tail"] in er["logs"]
+    # sp7 S7-02（AC-S7-07 转正）：stderr_tail 不再是 logs 截断产物（把截断决策权收回给
+    # coder），改为固定退化指引串；反馈以 log_file_path 为准（此处单参调用 code_output_dir
+    # 缺省 → log_file_path=None，coder 退回 errors 摘要，符合 §5.4 降级面）。
+    assert digest["stderr_tail"] == coding_module._STDERR_TAIL_GUIDANCE
+    assert digest["stderr_tail"] not in er["logs"], "stderr_tail 不得再是 logs 子串（AC-S7-07）"
+    assert "log_file_path" in digest, "S7-02 新增完整日志入口子键"
 
 
 def test_cp_e3_5_coding_digest_parses_credential_category(monkeypatch):
