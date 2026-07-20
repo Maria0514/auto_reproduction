@@ -862,9 +862,16 @@ class TestRealChainE2E:
                 f"达修复上限后应在 execution interrupt#2 暂停：keys={list(out.keys())}"
             )
             snap = graph.get_state(config)
-            assert snap.values.get("fix_loop_count") == MAX_FIX_LOOP_COUNT, (
-                f"fix_loop_count 应自增至上限 {MAX_FIX_LOOP_COUNT}，"
-                f"实际 {snap.values.get('fix_loop_count')}"
+            # S7 翻倍后：共享 retry_budget（初值 MAX_TOTAL_LLM_CALLS=240，被上游 intake/analysis/
+            # scout/planning/coding 首跑预扣）在真实链路里先于 fix_loop_count 触及 MAX_FIX_LOOP_COUNT
+            # 而跌破 DEV_LOOP_MIN_CALLS_PER_ROUND → 走 S7-01 预算门下沉弹 interrupt#2（真跑实测
+            # fix=15 / dev_calls=83 / budget 触底）。三子上限（fix_count / dev_calls / budget）竞争、
+            # 任一触顶即弹面板，故软边界断言"进过多轮修复且未越 fix 上限"；治理契约核心（interrupt#2
+            # DEV_LOOP + 三态）由下方 payload 断言守住（不弱化）。
+            fix_count = snap.values.get("fix_loop_count")
+            assert 2 <= fix_count <= MAX_FIX_LOOP_COUNT, (
+                f"fix_loop_count 应在 [2, {MAX_FIX_LOOP_COUNT}]（进过多轮修复循环且未越 fix 上限），"
+                f"实际 {fix_count}"
             )
             interrupts = [
                 iv for task in (snap.tasks or [])
@@ -874,10 +881,11 @@ class TestRealChainE2E:
             payload = interrupts[0].value
             assert payload.get("interrupt_kind") == INTERRUPT_KIND_DEV_LOOP
             assert payload.get("options") == ["terminate", "revise_plan", "export_code"]
-            # 修复历程满 3 条。
+            # 修复历程与 fix_loop_count 一致（每回合一条）——比硬编 MAX_FIX_LOOP_COUNT 更本质，
+            # 兼容上面软边界（真跑实测 15 条 / fix_count=15）。
             history = snap.values.get("fix_loop_history") or []
-            assert len(history) == MAX_FIX_LOOP_COUNT, (
-                f"fix_loop_history 应记 {MAX_FIX_LOOP_COUNT} 轮，实际 {len(history)}"
+            assert len(history) == fix_count, (
+                f"fix_loop_history 轮数应与 fix_loop_count 一致，实际 history={len(history)} / count={fix_count}"
             )
         finally:
             try:
