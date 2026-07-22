@@ -28,5 +28,10 @@ tests/fixtures/checkpoints_s6_*.db
 tests/fixtures/checkpoints_s6_*.db-shm
 tests/fixtures/checkpoints_s6_*.db-wal
 
+# Sprint 7 fixture：checkpoints_s7_*.db 本体已进版本控制入 CI 防回归（b5f3e63），
+# 仅忽略只读访问产生的 WAL 伴生文件（-shm/-wal，属正常行为、非损伤、勿提交）
+tests/fixtures/checkpoints_s7_*.db-shm
+tests/fixtures/checkpoints_s7_*.db-wal
+
 # 个人面试速览用 HTML 项目报告（不进版本控制）
 docs/reports/

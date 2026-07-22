@@ -125,9 +125,9 @@ LangGraph 主图采用**顺序编排**，节点按固定顺序依次执行。注
                         [END]
 ```
 
-> **修复循环说明（当前代码实证）**：coding 与 execution 是主图上两个**独立节点**，经条件边构成修复循环——**没有 dev_loop 子图、没有共享对话历史、没有 coding_only 节点**。`coding`（ReAct wrapper）生成/修复代码后进入 `execution`；`execution`（手写编排 + 内嵌 ReAct 子图）由内嵌 execution agent 在 venv 沙箱中自主编排环境准备与命令执行，编排层收尾分类错误、做 B 档成功判定。若失败且错误属可自动修复类（syntax/import/dependency/path/runtime）、`fix_loop_count < MAX_FIX_LOOP_COUNT(10)` 且修复循环子预算未耗尽（`MAX_DEV_LOOP_LLM_CALLS=60`），则经 `_route_after_execution` 的 `retry_coding` 分支回边送回 coding，错误摘要 + 分类经 GlobalState（`execution_result` + `[error_category=...]` 前缀 + `fix_loop_history`）单点写回，coding 下一回合读取并修复。若 10 轮修复触顶、错误不可自动修复或预算耗尽，`execution` 节点触发 interrupt#2（`interrupt_kind="dev_loop_failure"`），等待用户三选一决策（详见 §3.3 / §12.8）。路由函数：`_route_after_coding` / `_route_after_execution`（`core/graph.py`）。
+> **修复循环说明（当前代码实证）**：coding 与 execution 是主图上两个**独立节点**，经条件边构成修复循环——**没有 dev_loop 子图、不共享完整对话历史 / 不共享子图 messages / 无 scratchpad（`ReActState.messages` 仍与 `GlobalState` 隔离）、没有 coding_only 节点**；但 coder 经 `GlobalState` 里的**结构化修复历史摘要**（`fix_history_digest`，非对话原文）获得**跨回合记忆**（S7-05，见 §3.2.2）。`coding`（ReAct wrapper）生成/修复代码后进入 `execution`；`execution`（手写编排 + 内嵌 ReAct 子图）由内嵌 execution agent 在 venv 沙箱中自主编排环境准备与命令执行，编排层收尾分类错误、做 B 档成功判定。若失败且错误属可自动修复类（syntax/import/dependency/path/runtime）、`fix_loop_count < MAX_FIX_LOOP_COUNT(20)` 且修复循环子预算未耗尽（`MAX_DEV_LOOP_LLM_CALLS=120`），则经 `_route_after_execution` 的 `retry_coding` 分支回边送回 coding，错误摘要 + 分类经 GlobalState（`execution_result` + `[error_category=...]` 前缀 + `fix_loop_history`）单点写回，coding 下一回合读取并修复。若 20 轮修复触顶、错误不可自动修复或预算耗尽，`execution` 节点触发 interrupt#2（`interrupt_kind="dev_loop_failure"`），等待用户三选一决策（详见 §3.3 / §12.8）。路由函数：`_route_after_coding` / `_route_after_execution`（`core/graph.py`）。
 
-> **Sprint 4 已落地（路线丙）**：coding / execution 为**两个松耦合的真 agent**，**7 节点骨架与名称不变、无 supervisor、不共享 scratchpad**（"真 multi-agent 子图"路线甲已明确否掉）。`coding` 补齐两工具（`run_command` 自验闭环 + `request_user_input`）；`execution` 为**手写编排 + 内嵌 ReAct 子图的 execution agent**（sandbox 能力经 `prepare_environment` / `run_in_sandbox` 工具化 + 挂 `request_user_input`），修复循环边界 / interrupt#2 / commit 边界 self-loop 保留在薄编排层（与 planning 同范式）。通信沿用 state 结构化反馈通道；内嵌子图轮次上限 `REACT_MAX_ROUNDS_EXECUTION=10`，预算由编排层按子图实际轮次单点扣减。详见 `docs/sprint4/prd.md`。
+> **Sprint 4 已落地（路线丙）**：coding / execution 为**两个松耦合的真 agent**，**7 节点骨架与名称不变、无 supervisor、不共享 scratchpad**（"真 multi-agent 子图"路线甲已明确否掉）。`coding` 补齐两工具（`run_command` 自验闭环 + `request_user_input`）；`execution` 为**手写编排 + 内嵌 ReAct 子图的 execution agent**（sandbox 能力经 `prepare_environment` / `run_in_sandbox` 工具化 + 挂 `request_user_input`），修复循环边界 / interrupt#2 / commit 边界 self-loop 保留在薄编排层（与 planning 同范式）。通信沿用 state 结构化反馈通道；内嵌子图轮次上限 `REACT_MAX_ROUNDS_EXECUTION=20`（FLOOR 语义，见预算联动公式），预算由编排层按子图实际轮次单点扣减。详见 `docs/sprint4/prd.md`。
 
 #### 3.2.1 ReAct Agent 架构
 
@@ -177,25 +177,27 @@ class ReActState(TypedDict):
 
 | 节点 | max_rounds | 预期消耗 | 可用工具 |
 |------|-----------|---------|---------|
-| paper_intake | 5 | 2-3 | get_paper_brief, get_paper_head, search_papers |
-| paper_analysis | 12 | 6-10 | get_paper_structure, read_section, get_full_paper, search_papers |
-| resource_scout | 10 | 4-7 | web_search, search_papers, get_paper_brief, search_pwc, git_clone_and_analyze, check_url_reachable |
-| planning | 8 | 3-5 | read_section, get_paper_structure, web_search, check_url_reachable, git_clone_and_analyze |
-| coding | 12（REACT_MAX_ROUNDS_CODING） | 视修复轮次 | write_code_file, read_code_file, list_dir, read_section, web_search, run_command, request_user_input（共 7 工具） |
-| execution（内嵌子图） | 10（REACT_MAX_ROUNDS_EXECUTION） | 视执行步骤 | prepare_environment, run_in_sandbox, request_user_input |
+| paper_intake | 10 | 2-3 | get_paper_brief, get_paper_head, search_papers |
+| paper_analysis | 24 | 6-10 | get_paper_structure, read_section, get_full_paper, search_papers |
+| resource_scout | 20 | 4-7 | web_search, search_papers, get_paper_brief, search_pwc, git_clone_and_analyze, check_url_reachable |
+| planning | 16 | 3-5 | read_section, get_paper_structure, web_search, check_url_reachable, git_clone_and_analyze |
+| coding | 24（REACT_MAX_ROUNDS_CODING） | 视修复轮次 | write_code_file, read_code_file, list_dir, read_section, web_search, run_command, request_user_input（共 7 工具） |
+| execution（内嵌子图） | 20（REACT_MAX_ROUNDS_EXECUTION，FLOOR） | 视执行步骤 | prepare_environment, run_in_sandbox, request_user_input |
 
 > 注：`reporting` 现为纯函数三形态报告（非 ReAct），不在此表；`execution` 行指其内嵌 ReAct 子图（`_run_execution_agent`），编排层收尾本身不调 LLM（仅指标解析档 3 LLM 抽取兜底除外），预算按子图实际轮次由编排层单点扣减。
 
 #### 3.2.2 coding ↔ execution 修复循环（当前代码实证）
 
-系统**没有 dev_loop 子图**，也没有共享对话历史的 multi-agent 区域。编码与执行是主图上两个独立节点，经条件边构成修复循环：
+系统**没有 dev_loop 子图**，也没有共享完整对话历史的 multi-agent 区域——两 agent 不共享子图 messages、无 scratchpad（`ReActState.messages` 与 `GlobalState` 隔离）。编码与执行是主图上两个独立节点，经条件边构成修复循环；coder 侧的"跨回合记忆"不靠共享对话原文，而靠 `GlobalState` 的结构化历史摘要 `fix_history_digest`（S7-05，见本节末）注入：
 
-- `coding`（`core/nodes/coding.py`，ReAct wrapper）：依据 `reproduction_plan` + `resource_info` 生成/修复代码，工具集为 write_code_file / read_code_file / list_dir / read_section / web_search / run_command / request_user_input（共 7 工具；run_command 短超时自验 smoke + extra_env 凭证注入，request_user_input 缺信息就地问用户）。修复回合（`fix_loop_count > 0`）时，`_build_coding_context` 读取上一轮 `execution_result` 与错误分类，注入修复反馈 HumanMessage。产出写回 `code_output_dir`。
-- `execution`（`core/nodes/execution.py`，手写编排 + 内嵌 ReAct 子图）：环境准备与命令执行由 `_run_execution_agent` 内嵌 ReAct 子图自主编排 prepare_environment / run_in_sandbox（另挂 request_user_input，缺凭证就地问用户），收尾只认工具执行的真实 sandbox 结果（收集器 + messages 回读，不认 agent 自述）；编排层随后执行——错误分类（`_classify_execution` / `ErrorCategory`）→ 指标解析（`_parse_metrics` 三档）→ B 档成功判定（`_build_execution_result`：exit 全 0 且 ≥1 指标）→ 单点写回（`_map_execution_result`）→ 修复循环边界 / interrupt#2（`_maybe_interrupt_or_return`）。
-- 修复循环边界：错误属可自动修复类（`AUTO_FIXABLE` = syntax / import / dependency / path / runtime）、`fix_loop_count < MAX_FIX_LOOP_COUNT(10)` 且修复循环子预算未耗尽（`MAX_DEV_LOOP_LLM_CALLS = 60`、入口门 `DEV_LOOP_MIN_CALLS_PER_ROUND = 2`）时，经 `_route_after_execution` 的 `retry_coding` 分支回边送回 coding（`fix_loop_count` 单点自增）。否则触发 interrupt#2。
+- `coding`（`core/nodes/coding.py`，ReAct wrapper）：依据 `reproduction_plan` + `resource_info` 生成/修复代码，工具集为 write_code_file / read_code_file / list_dir / read_section / web_search / run_command / request_user_input（共 7 工具；run_command 短超时自验 smoke + extra_env 凭证注入，request_user_input 缺信息就地问用户）。修复回合（`fix_loop_count > 0`）时，`_build_coding_context` 消费上一轮反馈：`_digest_execution_feedback` 返回 `error_category`（一句快速提示）+ **`log_file_path`（本轮完整报错日志文件路径，由 `_resolve_code_output_dir(state)` + `fix_round` 确定性推导 `<code_output_dir>/exec_logs/round_{n}.log`）** + 退化的 `stderr_tail`（S7-02 后已从 `logs[-2000:]` 截断产物改为固定指引串"完整日志见 log_file_path，请用 read_code_file 自读"，不再含系统截断的日志内容）。coder 拿到路径后**用 `read_code_file` 工具自读完整真报错**定位（不再依赖系统预先截断的 stderr_tail），产出写回 `code_output_dir`。
+- `execution`（`core/nodes/execution.py`，手写编排 + 内嵌 ReAct 子图）：环境准备与命令执行由 `_run_execution_agent` 内嵌 ReAct 子图自主编排 prepare_environment / run_in_sandbox（另挂 request_user_input，缺凭证就地问用户），收尾只认工具执行的真实 sandbox 结果（收集器 + messages 回读，不认 agent 自述）；编排层随后执行——错误分类（`_classify_execution` / `ErrorCategory`）→ 指标解析（`_parse_metrics` 三档）→ B 档成功判定（`_build_execution_result`：exit 全 0 且 ≥1 指标）→ **每轮完整日志按"错误优先编排"落盘 `<code_output_dir>/exec_logs/round_{n}.log`（`_persist_round_log` 纯函数，把 stderr 段 / 非零 exit 步骤前置到文件头部，即便 read_code_file 8000 字符截断也保真报错行在头部可达；IO 失败置空兜底不炸）** → 单点写回（`_map_execution_result`）→ 修复循环边界 / interrupt#2（`_maybe_interrupt_or_return`）。
+- 修复循环边界：错误属可自动修复类（`AUTO_FIXABLE` = syntax / import / dependency / path / runtime）、`fix_loop_count < MAX_FIX_LOOP_COUNT(20)` 且修复循环子预算未耗尽（`MAX_DEV_LOOP_LLM_CALLS = 120`、入口门 `DEV_LOOP_MIN_CALLS_PER_ROUND = 4`）时，经 `_route_after_execution` 的 `retry_coding` 分支回边送回 coding（`fix_loop_count` 单点自增）。否则触发 interrupt#2。
 - interrupt#2 重跑幂等：`execution` 用 `_dev_loop_route="await_dev_loop_interrupt"` 标记 + 主图 self-loop 重入（`graph.py`）+ `_has_committed_result_for_round` guard 保证 sandbox 副作用恰为 1。
 
-**通信契约（松耦合，经 GlobalState 单点写回，无 scratchpad）**：`execution` 产出 `execution_result: ExecutionResult` + `ExecutionResult.errors[0]` 的 `[error_category=...]` 前缀 + `fix_loop_history: List[FixLoopRecord]`；coding 侧 `_build_coding_context` 消费。`ErrorCategory` / `ExecutionFeedback` / `AUTO_FIXABLE` 为 `execution.py` 节点本地对象，**不进 `core/state.py`**。
+**通信契约（松耦合，经 GlobalState 单点写回，无 scratchpad）**：`execution` 产出 `execution_result: ExecutionResult` + `ExecutionResult.errors[0]` 的 `[error_category=...]` 前缀 + `fix_loop_history: List[FixLoopRecord]`，并把每轮完整报错日志按"错误优先编排"落盘 `<code_output_dir>/exec_logs/round_{n}.log`（S7-02）；coding 侧 `_build_coding_context` 消费，反馈 payload 的 `last_error_summary` 内经 `_digest_execution_feedback` 携带 `error_category` + `log_file_path`（确定性推导的日志路径）+ 退化指引串 `stderr_tail`，coder 用 `read_code_file` 自读日志定位真报错。日志文件路径由 `code_output_dir` + `fix_round` 确定性推导，**零 state 字段、零 ExecutionResult 字段新增**。`ErrorCategory` / `ExecutionFeedback` / `AUTO_FIXABLE` 为 `execution.py` 节点本地对象，**不进 `core/state.py`**。S7-02 只作用于 coding 反馈链路（coder 才有 read_code_file 自读工具）；execution 内嵌 agent 无自读工具，其修复反馈维持传 stderr_tail 尾部（正交，不动）。
+
+**跨回合记忆（S7-05 修复循环记忆增强）**：S7-02 让 coder 看到「当前轮真报错」（空间维度），S7-05 进一步让 coder 看到「历次尝试」（时间维度）。`_build_coding_context` 在修复回合额外注入单键 `fix_history_digest`——把 `fix_loop_history` 的**全部记录**（不裁剪、无滚动窗口，受 `MAX_FIX_LOOP_COUNT=20` 硬顶 + `_FIX_NOTE_MAX_CHARS=120` 双封顶控量）渲染成一段多行字符串，每轮一行五元组：`round`（轮号，升序）/ `category`（规则标签，粗过滤）/ `files_touched`（coder 那轮改的文件）/ **`fix_note`**（coder 在 `<result>` 顺带自述的"本轮问题定位 + 修复逻辑"，比规则标签丰富、零新增 LLM 调用）/ `log_path`（S7-02 落盘的真错日志指针，coder 用 `read_code_file` 自读）。链路：coder 输出 `fix_note`/`files_written` → coding 侧 `_map_coding_result` 写 `GlobalState.last_fix_note`/`last_files_written` → 下一回合 execution 的 `_append_fix_record` 取用落进 `FixLoopRecord.fix_note`/`files_touched`（时序天然对齐）。`fix_history_digest` 进 HumanMessage 动态尾部（sort_keys 只排顶层键、字符串值内部顺序自控），**不新造记忆管道、不新增 LLM 调用、不破子图隔离**（`ReActState.messages` 一字不动）；仅给 coder。据此 coder 每个修复回合不再从"失忆"起步，能对照"上轮我以为错在哪、真错日志说什么"做增量修复，打破"反复套同一无效改法"。
 
 **Sprint 4 已落地（路线丙）**：coding / execution 为两个松耦合真 agent（见 §3.2 编排方式末尾说明块与 `docs/sprint4/prd.md`）。`execution` 采用"手写编排 + 内嵌 ReAct 子图"范式（与 planning 同构），本节的修复循环边界 / interrupt#2 / commit 边界 self-loop 保留于薄编排层；sandbox 能力经 `prepare_environment` / `run_in_sandbox` 工具化。
 
@@ -210,7 +212,7 @@ class ReActState(TypedDict):
   - **更换仓库**：查看候选仓库列表，选择不同的仓库（或要求重新搜索），`planning` 节点基于更换后的仓库信息重新生成计划
   - **切换模式**：选择"只编码不执行"（code_only）时，coding 完成后不进入 execution 直接出报告（当前无独立 `coding_only` 节点）
 - **恢复执行**：用户确认后，通过 `graph.invoke(Command(resume=user_feedback))` 恢复图执行
-- **execution 失败中断（interrupt#2）**：当修复循环触顶（`fix_loop_count` 达 `MAX_FIX_LOOP_COUNT=10`）、错误不可自动修复或修复循环子预算耗尽时，`execution` 节点触发 `interrupt(interrupt_kind="dev_loop_failure")`，暂停图执行。Streamlit UI 展示失败详情（各轮错误摘要与修复尝试，来自 `fix_loop_history`），用户从以下三个选项中选择：
+- **execution 失败中断（interrupt#2）**：当修复循环触顶（`fix_loop_count` 达 `MAX_FIX_LOOP_COUNT=20`）、错误不可自动修复或修复循环子预算耗尽时，`execution` 节点触发 `interrupt(interrupt_kind="dev_loop_failure")`，暂停图执行。Streamlit UI 展示失败详情（各轮错误摘要与修复尝试，来自 `fix_loop_history`），用户从以下三个选项中选择：
   - **A. 导出代码包 + 错误诊断报告**：将已生成代码和详细错误诊断打包交付，流程进入 reporting 节点
   - **B. 回退到计划审核**：利用 LangGraph checkpoint 回退到 planning 节点的 interrupt 点，用户修改计划后重新执行
   - **C. 终止任务**：terminate 直接路由到 END（不经 reporting、不生成终止报告，`core/graph.py` `_route_after_execution`）；checkpoint 与 workspace 产物（论文分析、计划、代码、日志）原样保留，可手动取用
@@ -409,7 +411,7 @@ class NodeError(TypedDict):
 
 class FixLoopRecord(TypedDict):
     """单轮 coding↔execution 修复循环的记录"""
-    round_number: int                # 第几轮（1..MAX_FIX_LOOP_COUNT=10）
+    round_number: int                # 第几轮（1..MAX_FIX_LOOP_COUNT=20）
     error_summary: str               # 本轮 execution 节点失败的错误摘要
     error_category: str              # 错误分类（权威源：core/nodes/execution.py 的 ErrorCategory 枚举）：
                                      #   可自动修复："syntax" | "import" | "dependency" | "path" | "runtime"
@@ -417,6 +419,12 @@ class FixLoopRecord(TypedDict):
                                      #   成功："none"（无 oom/other——OOM 归 "hardware"）
     fix_strategy: str                # coding 节点采用的修复策略描述
     timestamp: str                   # ISO 8601 时间戳
+    # --- Sprint 7 新增（S7-05 修复循环记忆增强，跨回合记忆五元组的两个丰富字段）---
+    fix_note: str                    # coder 在 <result> 顺带自述的"本轮问题定位 + 修复逻辑"（一两句，≤_FIX_NOTE_MAX_CHARS=120）；
+                                     #   比 error_category 规则标签丰富，承载 coder 本轮真实修复意图；由 coding 侧经 GlobalState.last_fix_note 传入。
+                                     #   旧 checkpoint 兼容：helper 侧 .get("fix_note", "") 兜底
+    files_touched: List[str]         # coder 那轮改动的文件列表（比标签丰富的"改了哪"信号）；由 GlobalState.last_files_written 传入。
+                                     #   旧 checkpoint 兼容：.get("files_touched", []) 兜底
 
 
 # ========== 全局状态 ==========
@@ -463,12 +471,19 @@ class GlobalState(TypedDict):
     # --- 错误追踪（§12.3）---
     node_errors: List[NodeError]             # 所有节点的错误历史
     degraded_nodes: List[str]                # 以降级模式完成的节点列表
-    retry_budget_remaining: int              # 剩余 LLM 调用预算（默认 MAX_TOTAL_LLM_CALLS=120）
+    retry_budget_remaining: int              # 剩余 LLM 调用预算（默认 MAX_TOTAL_LLM_CALLS=240）
 
     # --- 修复循环追踪（§12.6/12.8）---
-    fix_loop_count: int                      # 已完成的 coding↔execution 修复循环轮次（默认 0，上限 MAX_FIX_LOOP_COUNT=10）
+    fix_loop_count: int                      # 已完成的 coding↔execution 修复循环轮次（默认 0，上限 MAX_FIX_LOOP_COUNT=20）
     fix_loop_history: List[FixLoopRecord]    # 每轮修复的结构化记录
     user_fix_decision: Optional[str]         # 修复循环失败（interrupt#2）后用户选择："export_code" | "revise_plan" | "terminate"
+
+    # --- Sprint 7 修复循环记忆增强（S7-05）：coding→execution 单点传递通道 ---
+    # coder 本轮自述与改动文件由 coding 节点 _map_coding_result 单点写入；下一回合 execution
+    # 的 _append_fix_record 取用，落进新建 FixLoopRecord 的 fix_note / files_touched（时序天然对齐：
+    # coding 先跑写值 → execution 后跑取值）。旧 checkpoint 兼容：读取侧 .get(..., "")/.get(..., []) 兜底。
+    last_fix_note: str                       # 上一轮 coder 自述的"问题定位 + 修复逻辑"（供 execution append 写进 FixLoopRecord.fix_note）；单值 last-write-wins，绝不加 reducer
+    last_files_written: List[str]            # 上一轮 coder 改动的文件列表（供 execution append 写进 FixLoopRecord.files_touched）；单点写 last-write-wins，绝不加 reducer
 
     # --- 工作目录 ---
     workspace_dir: str
@@ -918,7 +933,7 @@ LangGraph SqliteSaver 缓存的是 **GlobalState 与 ReActState 快照**（业�
 
 | 编号 | 风险 | 影响程度 | 可能性 | 缓解策略 |
 |------|------|---------|--------|---------|
-| R1 | LLM 生成的代码无法正确运行 | 高 | 高 | 引入代码验证步骤（语法检查、import 检查）；coding↔execution 经条件边构成多轮修复循环（上限 MAX_FIX_LOOP_COUNT=10），错误分类驱动"可自动修复则回边、否则 interrupt#2" |
+| R1 | LLM 生成的代码无法正确运行 | 高 | 高 | 引入代码验证步骤（语法检查、import 检查）；coding↔execution 经条件边构成多轮修复循环（上限 MAX_FIX_LOOP_COUNT=20），错误分类驱动"可自动修复则回边、否则 interrupt#2" |
 | R2 | deepxiv API 配额耗尽或服务不可用 | 中 | 中 | 实现请求缓存（同一论文不重复请求）；配额接近上限时提前告警；支持用户注册高级 token |
 | R3 | 复现实验耗时过长导致用户体验差 | 中 | 高 | 在 planning 阶段给出准确的时间预估；支持任务中断和恢复；实时展示执行进度 |
 | R4 | venv 沙箱隔离不足导致系统环境被污染 | 中 | 低 | venv 严格限定在工作目录内创建；不使用 `--system-site-packages`；v2 升级为 Docker 隔离 |
@@ -1115,11 +1130,11 @@ def node_fn(state: GlobalState) -> dict:
 
 #### coding ↔ execution 修复循环
 
-编码与执行的修复循环由主图条件边实现（`core/graph.py` 的 `_route_after_coding` / `_route_after_execution`），**不是** dev_loop 子图、无共享对话历史。coding（ReAct wrapper）生成/修复代码后进入 execution（手写编排 + 内嵌 ReAct 子图）；execution 经内嵌 agent 在 venv 沙箱自主编排环境准备与 execution_steps 执行，编排层分类错误、做 B 档成功判定。
+编码与执行的修复循环由主图条件边实现（`core/graph.py` 的 `_route_after_coding` / `_route_after_execution`），**不是** dev_loop 子图、不共享完整对话历史 / 不共享子图 messages / 无 scratchpad（`ReActState.messages` 与 `GlobalState` 隔离）；但 coder 经 `GlobalState` 的结构化修复历史摘要 `fix_history_digest`（非对话原文）获得跨回合记忆（S7-05，见 §3.2.2）。coding（ReAct wrapper）生成/修复代码后进入 execution（手写编排 + 内嵌 ReAct 子图）；execution 经内嵌 agent 在 venv 沙箱自主编排环境准备与 execution_steps 执行，编排层分类错误、做 B 档成功判定。
 
 **终止/路由条件**（`execution` 节点 `_maybe_interrupt_or_return` + `_route_after_execution` 判断）：
 - 执行成功（B 档：exit 全 0 且 ≥1 指标）或降级 → 出 `reporting`。
-- 失败且错误属可自动修复类（`AUTO_FIXABLE` = syntax / import / dependency / path / runtime）、`fix_loop_count < MAX_FIX_LOOP_COUNT(10)` 且修复循环子预算未耗尽（`MAX_DEV_LOOP_LLM_CALLS(60)`、入口门 `DEV_LOOP_MIN_CALLS_PER_ROUND(2)`）→ 经 `retry_coding` 回边送回 coding（`fix_loop_count` 单点自增）。
+- 失败且错误属可自动修复类（`AUTO_FIXABLE` = syntax / import / dependency / path / runtime）、`fix_loop_count < MAX_FIX_LOOP_COUNT(20)` 且修复循环子预算未耗尽（`MAX_DEV_LOOP_LLM_CALLS(120)`、入口门 `DEV_LOOP_MIN_CALLS_PER_ROUND(4)`）→ 经 `retry_coding` 回边送回 coding（`fix_loop_count` 单点自增）。
 - 触顶 / 不可自动修复 / 子预算耗尽 → 触发 interrupt#2（`interrupt_kind="dev_loop_failure"`），等待用户三选一决策（§12.8）。
 
 coding 修复回合经 GlobalState 获取上下文：上一轮 `execution_result` + `[error_category=...]` 前缀 + `fix_loop_history`（各轮错误摘要与修复策略），由 `_build_coding_context` 注入修复反馈 HumanMessage。
@@ -1149,8 +1164,8 @@ LangGraph SqliteSaver 在每个节点完成后自动保存 checkpoint，错误�
 | 维度 | 上限 | 说明 |
 |------|------|------|
 | 单节点 LLM 调用次数（ReAct） | 各节点差异化配置（详见 §3.2.1 各节点 max_rounds 表） | 超出后节点 force_finish，以当前最佳结果写入状态 |
-| coding↔execution 修复循环 | MAX_FIX_LOOP_COUNT=10 轮 / 子预算 MAX_DEV_LOOP_LLM_CALLS=60 次 LLM 调用 | 超出后触发 interrupt#2 等待用户决策（对应 `GlobalState.fix_loop_count`） |
-| 单任务总 LLM 调用 | 120 次（`MAX_TOTAL_LLM_CALLS`，可配置） | 全局保护，防止成本失控；与上一行修复循环子预算构成强约束 60 < 120 |
+| coding↔execution 修复循环 | MAX_FIX_LOOP_COUNT=20 轮 / 子预算 MAX_DEV_LOOP_LLM_CALLS=120 次 LLM 调用 | 超出后触发 interrupt#2 等待用户决策（对应 `GlobalState.fix_loop_count`） |
+| 单任务总 LLM 调用 | 240 次（`MAX_TOTAL_LLM_CALLS`，可配置） | 全局保护，防止成本失控；与上一行修复循环子预算构成强约束 120 < 240 |
 
 预算对用户不透明、不可调。预算接近耗尽时系统给出 WARNING 级通知；最终报告中记录总修复尝试次数。
 
@@ -1175,9 +1190,9 @@ LangGraph SqliteSaver 在每个节点完成后自动保存 checkpoint，错误�
 | paper_intake | API 超时/连接失败 | NotFoundError、AuthenticationError | 无降级，致命错误需用户介入 |
 | paper_analysis | LLM 超时/限流、章节读取失败 | LLM 上下文溢出 | 章节降级链 → 全文提取 → 标记缺失 |
 | resource_scout | git clone 失败、websearch 失败 | 零资源 | deepxiv github_url → web search → from_scratch（Sprint 6 MF-5：PwC 通道已移除） |
-| planning | LLM 超时/限流 | LLM 不可用 | 用户拒绝不设硬上限（理论上用户不满意就要一直修改），由总 LLM 预算 `MAX_TOTAL_LLM_CALLS = 120` 自然兜底；UI 在 N ≥ 5 时软提示切 code_only 但不锁按钮；提供"终止当前任务"按钮作为主动出口（详见 Sprint 2 PRD AC-S2-06 / AC-S2-13） |
+| planning | LLM 超时/限流 | LLM 不可用 | 用户拒绝不设硬上限（理论上用户不满意就要一直修改），由总 LLM 预算 `MAX_TOTAL_LLM_CALLS = 240` 自然兜底；UI 在 N ≥ 5 时软提示切 code_only 但不锁按钮；提供"终止当前任务"按钮作为主动出口（详见 Sprint 2 PRD AC-S2-06 / AC-S2-13） |
 | coding | LLM 输出格式错误、git clone 失败 | 磁盘满/权限问题 | 经 state 接收 execution 错误反馈，修复回合重新生成代码 |
-| execution | pip install 部分失败 | venv 创建失败、OOM、超时 | 错误分类驱动 coding↔execution 修复循环（上限 10 轮），不可修复则 interrupt#2 |
+| execution | pip install 部分失败 | venv 创建失败、OOM、超时 | 错误分类驱动 coding↔execution 修复循环（上限 20 轮），不可修复则 interrupt#2 |
 | reporting | LLM 超时/限流 | 文件写入失败 | 降级为结构化模板报告 |
 
 ### 12.10 沙箱错误处理
@@ -1302,3 +1317,5 @@ prepare_venv() 失败
 *2026-05-24 更新：架构定位校准——明确本系统是"基于 LangGraph 的 agentic workflow"（流水线骨架 + 节点内 ReAct agent），而非完整的 multi-agent 系统；真 multi-agent 交互仅存在于 dev_loop 子图（coding ↔ execution）。Sprint 3 计划将 dev_loop 升级为 Coder / Executor / Reviewer 三 agent supervisor 模式，详见 docs/TODO.md "未来计划" 区段。*
 *2026-07-02 更新（重大校准）：使文档与 Sprint 3 已落地代码及 Sprint 4 已确认方向（路线丙）对齐。（1）删除全文对 `dev_loop` 子图 / `coding_agent`+`execution_agent` 共享对话历史 multi-agent / `coding_only` 节点的描述——这些从未落地，且路线甲已被 Sprint 4 明确否掉。（2）修正为当前真实形态：主图 7 个独立节点，coding（ReAct wrapper）↔ execution（手写确定性七步节点 + interrupt#2）经条件边（`_route_after_coding` / `_route_after_execution`）构成修复循环，上限 `MAX_FIX_LOOP_COUNT=10`（原文档误写 5 轮）+ 子预算 `MAX_DEV_LOOP_LLM_CALLS=60`。（3）interrupt 点纠正为两个：interrupt#1（planning 后，`kind="planning"`）、interrupt#2（execution 失败，`kind="dev_loop_failure"`）。（4）叠加 Sprint 4 路线丙方向：coding/execution 升级为两个松耦合真 agent（7 节点骨架不变、不上 supervisor、不共享 scratchpad），coding 补 run_command + request_user_input，execution 升级为手写编排 + 内嵌 ReAct 子图的 execution agent + sandbox 工具化；新增第三类 interrupt#3（`kind="user_input_request"`）通用交互能力；新增 `ErrorCategory.CREDENTIAL_REQUIRED`；凭证经 sandbox `extra_env` 注入、敏感值不进 state（§7.4）。Q-A1/Q-A2（execution ReAct 化编排安置与预算对账）、Q-B1（run_command venv/超时）、Q-E1（.secrets 路径）等具体方案留待 Sprint 4 架构文档细化，本全局文档只写到方向层。依据 docs/sprint4/prd.md。*
 *2026-07-05 更新（v1.1，文档一致性审查修复）：16 项对齐代码现状——（1）预算常量：MAX_TOTAL_LLM_CALLS 50→120（3 处，config.py 权威），§12.7 注明修复循环子预算强约束 60 < 120；（2）execution 节点形态：Sprint 4 阶段 E 已收官，全文由"手写确定性七步 + Sprint 4 方向"改为现在时——手写编排 + `_run_execution_agent` 内嵌 ReAct 子图（prepare_environment / run_in_sandbox + request_user_input），§3.2.1 表补 execution 行（REACT_MAX_ROUNDS_EXECUTION=10）；（3）§7.4 凭证注入 sp4 缺口已补齐：prepare_venv extra_env 形参（D1）、.secrets 路径与 secrets_store 六接口 + build_credential_env（A3）；（4）interrupt#3（user_input_request）与 coding 双工具（run_command + request_user_input）升级为与 #1/#2 并列的正式机制描述；（5）§5 模块结构树按磁盘实况重写（删除从未存在的 search_tools/shell_tools/file_tools/remote_docker/report_view/paper_card/progress_bar/error_display，补 secrets_store/pwc_tools/code_fs_tools/run_command_tool/interaction_tools/_repo_scoring/result_report），§2 架构图与 §13 表同步订正；（6）terminate 路由改为实况：terminate/cancelled_by_user 直接 END，不经 reporting、不生成终止报告（core/graph.py）；（7）FixLoopRecord.error_category 枚举对齐 execution.py ErrorCategory（无 oom/other，OOM 归 hardware）；（8）§4 GlobalState 补齐 6 字段（_planning_pending_repo_url/_planning_switch_failed/_dev_loop_route/_dev_loop_llm_calls/pending_user_input/collected_inputs），声明以 core/state.py 为唯一权威源；（9）CUDA OOM 行为改为 HARDWARE 分类触发 interrupt#2（"自动 batch_size 减半重试"从未实现）；（10）§9 异步方案改为"主线程只读轮询 + worker 线程 invoke/resume(Command)"，消除与 §12.7 裁定的 update_state 矛盾；（11）默认模型改 azure/openai/gpt-5.4（Claude 降为兼容选项，默认链路自动型缓存实测命中 spike S-3）；（12）max_tokens 默认 8192（2 处）；（13）resource_scout 工具补 search_pwc（6 工具）、planning 补 git_clone_and_analyze（5 工具）；（14）ReActState.status 枚举对齐 react_base.py（reasoning/tool_call/done/budget_exhausted）；（15）§8.1 checkpointer 示例改为手动 sqlite3.connect + WAL 形态（from_conn_string 已否决）；（16）版本头升 v1.1、增"最后更新"字段。*
+*2026-07-20 更新（Sprint 7 · S7-05 修复循环记忆增强，档 B）：coder 每个修复回合原本从 fresh messages 起步、看不到自己前几轮试过什么（现场 thread task-99eef17bccf2 实测 4 轮全栽在同一 import）——现补上"跨回合记忆"。（1）§4 `FixLoopRecord` 加两个丰富字段：`fix_note`（coder 在 `<result>` 顺带自述的"本轮问题定位 + 修复逻辑"，一两句 ≤_FIX_NOTE_MAX_CHARS=120，比 error_category 规则标签丰富、零新增 LLM 调用）、`files_touched`（coder 那轮改动的文件列表）；均旧 checkpoint `.get` 兜底。（2）§4 `GlobalState` 加两个 coding→execution 单点传递字段：`last_fix_note` / `last_files_written`（coding 侧 `_map_coding_result` 写、下一回合 execution `_append_fix_record` 取，时序天然对齐）。（3）§3.2.2 修复循环信息流补"跨回合记忆"机制：`_build_coding_context` 在修复回合注入单键 `fix_history_digest`，把 `fix_loop_history` 全部记录（不裁剪、无窗口，受 MAX_FIX_LOOP_COUNT=20 + _FIX_NOTE_MAX_CHARS=120 双封顶控量）渲染成多行字符串，每轮一行五元组 round/category/files_touched/fix_note/log_path，进 HumanMessage 动态尾部。（4）§3.2 / §3.2.2 / §12.6 多处"无共享对话历史"表述精确化（非推翻）：coding/execution 仍不共享完整对话历史 / 不共享子图 messages / 无 scratchpad（`ReActState.messages` 与 `GlobalState` 隔离），但 coder 经 `GlobalState` 结构化历史摘要（`fix_history_digest`，非对话原文）获得跨回合记忆——区分"不共享对话原文"与"有结构化历史记忆"两件事。全程不新造记忆管道、不新增 LLM 调用、不破子图隔离、不改 react_base，仅给 coder。依据 docs/sprint7/architecture.md v1.1 §13、prd.md §2.5。*
+*2026-07-18 更新（Sprint 7 批次 0~2 已上线欠账补齐）：（1）预算全部翻倍（config.py `4dc0a75` 权威）——`MAX_TOTAL_LLM_CALLS` 120→240、`MAX_FIX_LOOP_COUNT` 10→20、`MAX_DEV_LOOP_LLM_CALLS` 60→120、`DEV_LOOP_MIN_CALLS_PER_ROUND` 2→4，各节点 ReAct 轮次同步翻倍（paper_intake 5→10 / paper_analysis 12→24 / resource_scout 10→20 / planning 8→16 / coding 12→24 / execution 10→20），全文正文/表格/注释/风险登记同步；修复循环子预算强约束更新为 120 < 240。（2）S7-02 信息流（coder 看得到真报错）：§3.2.2 coder 修复反馈由旧机制"`_build_coding_context` 读上一轮 execution_result 与错误分类、注入修复反馈 HumanMessage"改为 S7-02 后真实形态——execution 每轮把完整报错日志按"错误优先编排"落盘 `<code_output_dir>/exec_logs/round_{n}.log`（`_persist_round_log`），coder 修复反馈改传日志文件路径 `log_file_path`（由 `code_output_dir` + `fix_round` 确定性推导），`stderr_tail` 从 `logs[-2000:]` 截断产物退化为固定指引串，coder 用现有 `read_code_file` 工具自读完整真报错定位；通信契约段同步。S7-02 只作用于 coding 反馈链路（coder 有 read_code_file），execution 侧 stderr_tail 维持不动。零 state / 零 ExecutionResult 字段新增。依据 docs/sprint7/prd.md §2.3、docs/sprint7/architecture.md §5。*

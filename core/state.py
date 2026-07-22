@@ -174,12 +174,24 @@ class NodeError(TypedDict):
 
 
 class FixLoopRecord(TypedDict):
-    """单轮 execution↔coding 修复循环的记录。"""
+    """单轮 execution↔coding 修复循环的记录。
+
+    Sprint 7 S7-05（修复循环记忆增强，档 B，架构 v1.1 §13.7）新增 2 字段：
+        - fix_note: coder 本轮自述"问题定位 + 修复逻辑"一两句（≤_FIX_NOTE_MAX_CHARS）；
+          由 coding 侧 _map_coding_result 写 last_fix_note、execution 侧 _append_fix_record 取。
+        - files_touched: coder 本轮改的文件列表（来自 write_code_file 成功记录）；同链路。
+    两字段均 TypedDict 加键——旧 checkpoint（task-99eef17bccf2 现场无此 2 键）由消费侧
+    ``.get("fix_note", "")`` / ``.get("files_touched", [])`` 兜底，不 KeyError。**既有
+    round_number/error_summary/error_category/fix_strategy/timestamp 不变、顺序不动。**
+    """
     round_number: int
     error_summary: str
     error_category: str
     fix_strategy: str
     timestamp: str
+    # === Sprint 7 S7-05 新增（修复循环记忆增强，档 B，旧 checkpoint 兼容）===
+    fix_note: str
+    files_touched: List[str]
 
 
 class GlobalState(TypedDict):
@@ -263,6 +275,17 @@ class GlobalState(TypedDict):
     credential_degradations: Dict[str, str]
     simulation_notice: Optional[str]
     honesty_audit: Optional[Dict]
+    # === Sprint 7 S7-05 新增（修复循环记忆增强，档 B，架构 v1.1 §13.7）===
+    # coding→execution 单向传递通道（单点由 coding 的 _map_coding_result 写、execution 的
+    # _append_fix_record 取写进 FixLoopRecord）。均单值 / List 单点写、last-write-wins 正确，
+    # **绝不加 reducer**（must-fix-1）。旧 checkpoint（task-99eef17bccf2 现场无此 2 键）由
+    # 消费侧 ``.get("last_fix_note", "")`` / ``.get("last_files_written", [])`` 兜底，不 KeyError。
+    # - last_fix_note：coder 上轮在 <result> 自述"问题定位 + 修复逻辑"一两句（截断到
+    #   _FIX_NOTE_MAX_CHARS）；R-PC4 安全（值只经 map→FixLoopRecord→HumanMessage 动态尾部，
+    #   从不进 SystemMessage 稳定前缀）。
+    # - last_files_written：coder 上轮 write_code_file 成功写入的文件绝对路径列表。
+    last_fix_note: str
+    last_files_written: List[str]
 
 
 def _is_legacy_llm_config(value: Any) -> bool:
@@ -353,4 +376,6 @@ def create_initial_state(
         credential_degradations={},
         simulation_notice=None,
         honesty_audit=None,
+        last_fix_note="",
+        last_files_written=[],
     )

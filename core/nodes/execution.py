@@ -1956,7 +1956,18 @@ def _append_fix_record(
     round_no: int,
     feedback: ExecutionFeedback,
 ) -> List[FixLoopRecord]:
-    """单点 read-modify-write 追加 FixLoopRecord（must-fix-1，严禁 reducer）。"""
+    """单点 read-modify-write 追加 FixLoopRecord（must-fix-1，严禁 reducer）。
+
+    S7-05（修复循环记忆增强，档 B，架构 v1.1 §13.7）：追加 2 字段取值——
+        - fix_note = state["last_fix_note"]：coder 本轮自述"定位+修复逻辑"。时序自洽
+          （§13.7 / R-S7-10）：coding 先跑（_map_coding_result 写 last_fix_note）→
+          execution 后跑（本函数取），此时 state["last_fix_note"] 恰是本轮对应 coder 输出
+          （第 N 轮 record 记录 coder 第 N 轮改了什么 + execution 第 N 轮跑出什么真错）。
+        - files_touched = state["last_files_written"]：coder 本轮改的文件列表（同链路）。
+    ``.get`` 兜底旧 checkpoint（task-99eef17bccf2 现场无这 2 键 → ""/[]，R-S7-8，不 KeyError）。
+    既有 round_number/error_summary/error_category/fix_strategy/timestamp 全不变；单点
+    read-modify-write（严禁 reducer）不变。
+    """
     history = list(state.get("fix_loop_history", []))  # 读出整列表
     history.append(
         FixLoopRecord(
@@ -1965,6 +1976,9 @@ def _append_fix_record(
             error_category=feedback.category.value,
             fix_strategy=feedback.fix_hint,
             timestamp=datetime.now(timezone.utc).isoformat(),
+            # S7-05：coding→execution 传递字段取值（时序天然对齐，见上）。
+            fix_note=state.get("last_fix_note", "") or "",
+            files_touched=list(state.get("last_files_written", []) or []),
         )
     )
     return history  # return 整列表（last-write-wins，安全）

@@ -302,9 +302,10 @@ def test_cp_c3_4_retry_coding_increments(monkeypatch):
     history = out["fix_loop_history"]
     assert len(history) == 1
     rec = history[0]
-    # FixLoopRecord 5 字段。
+    # FixLoopRecord 字段（S7-05 契约扩展后 7 字段：原 5 + fix_note/files_touched）。
     assert set(rec.keys()) == {
-        "round_number", "error_summary", "error_category", "fix_strategy", "timestamp"
+        "round_number", "error_summary", "error_category", "fix_strategy", "timestamp",
+        "fix_note", "files_touched",
     }
     assert rec["round_number"] == 1
     assert rec["error_category"] == "import"

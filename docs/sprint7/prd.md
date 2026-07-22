@@ -1,6 +1,7 @@
-# Sprint 7 PRD（增补条目）v0.3 草案：修复循环失控治理——山穷水尽不问人、烧过头拦不住、coder 看不到真报错
+# Sprint 7 PRD（增补条目）v0.4 草案：修复循环失控治理 + 记忆增强——山穷水尽不问人、烧过头拦不住、coder 看不到真报错、修不好还记不住历史
 
-> 状态：**v0.3 草案**——2026-07-18 产品经理代理据 Maria 拍板的决策更新。本文是"技术诊断→产品需求"的转化，非需求发现。术语与格式对齐 `docs/sprint6/prd.md`（需求 S7-0X、AC-S7-0X、假设 A-S7-X、开放问题 Q-S7-X）。
+> 状态：**v0.4 草案**——2026-07-20 主控据 Maria 决策更新（新增 S7-05）。本文是"技术诊断→产品需求"的转化，非需求发现。术语与格式对齐 `docs/sprint6/prd.md`（需求 S7-0X、AC-S7-0X、假设 A-S7-X、开放问题 Q-S7-X）。
+> **v0.4 变更说明**：新增需求 **S7-05「修复循环记忆增强」**（Maria 亲自提出的质疑立项；原拟单开 Sprint 8，经 Maria 决定并入 sp7、`docs/sprint8/` 作废）。coder 每个修复回合"失忆"——看不到自己前几轮试过什么。Maria 三点决策：①**否决"只注入 fix_loop_history 摘要"的最小档**——那几个字段是规则模板文案、信息太粗太模糊；②认可"完整对话 + 工具调用结果全塞"会撑爆 context；③**要架构师设计一套中间方案**（信息比规则标签丰富、又控量不爆）。方案待架构，详见 §2.5。此需求与既有 S7-01~03（已交付）主题连贯——S7-02 治"coder 看当前轮真错"（空间维度）、S7-05 治"coder 看历史尝试"（时间维度），同属"让 coder 修得好"的信息供给。
 > 作者：产品经理代理｜日期：2026-07-18
 > **v0.3 变更说明**：Maria 决定**砍掉 S7-04（附B/验证门升级），完全移除、不进 backlog**——S7-02 已让 coder 在 execution 报错后自读完整日志、自主定位 import 错误，"生成后进 sandbox 前再加一道 import 预检"在 S7-02 之上属多余，直接砍避免过度工程。本 PRD 主题从"四个失控点/S7-01~04"收回"三个失控点/S7-01~03"。其余（S7-01/S7-02/S7-03、预算翻倍、AC-S7-01~08、Q-S7-1~6、所有假设）不变。
 > **v0.2 更新说明（沿留，供追溯）**：
@@ -104,6 +105,7 @@ if budget < DEV_LOOP_MIN_CALLS_PER_ROUND:
 | S7-01 | 预算耗尽纳入 interrupt#2 人工升级（不再静默降级）+ 预算翻倍 | thread task-99eef17bccf2 + 代码定位 | **P0** |
 | S7-02 | 修复循环 coder 看得到真报错：完整日志落盘 + 反馈改传日志文件路径 + coder 自读 | 附A 转正（信息链路 bug） | **P1** |
 | S7-03 | 修复子上限拦得住：单轮内可刹车，不再冲过 `MAX_DEV_LOOP_LLM_CALLS` | 实测烧 92 超 60 | **P1** |
+| S7-05 | 修复循环记忆增强：coder 跨回合看到历次尝试（比规则标签丰富、又不爆 context，方案待架构） | Maria 质疑（coder 失忆） | **P1（待架构方案）** |
 
 **范围说明**：三条构成"修复循环失控治理族"，S7-01 是 P0 主线（含预算翻倍这一既定参数），S7-02/S7-03 为 P1（信息链路 bug + 机制层缺陷，均有实测坐实、不再依赖评测数据驱动）。均遵循最小设计（S7-02 复用现有读文件工具、不新造观测管道；S7-01 不新增 interrupt 种类/不加第四态；S7-03 只补刹车粒度不改计量口径）。
 
@@ -194,6 +196,40 @@ if budget < DEV_LOOP_MIN_CALLS_PER_ROUND:
 **非目标**（S7-03 不做）：
 1. 不追求"精确不越界一次不差"——ReAct 子图内检查点有天然粒度，产品要求是"约束在确定性小范围内"，不是"零越界"（避免过度工程做逐调用拦截）。
 2. 不改 `REACT_MAX_ROUNDS_*` 轮次上限语义（那是轮次不是调用数，正交）。
+
+### 2.5 S7-05 修复循环记忆增强（P1，方案待架构）
+
+**需求**：coding↔execution 修复循环里，coder 每个修复回合从 fresh messages 起步，看不到自己前几轮试过什么，极可能反复套用同一种无效改法（现场 thread task-99eef17bccf2 实测 4 轮全栽在 import）。给 coder 补上"跨回合记忆"，使它能从"上轮改了什么、结果如何"里学习、做增量修复决策，而非每轮当新病人从头问诊。
+
+**缺口坐实（源码级）**：
+- `react_base.py:49` `ReActState.messages` 与 GlobalState **完全隔离**；coder 每修复回合从稳定 SystemMessage + curated HumanMessage（`_build_coding_context`，coding.py:301）重新构造，子图内 messages 结束即丢、不回写 GlobalState。
+- `fix_loop_history`（`state.py:176` 结构完整、`execution.py:2167` 每轮 `_append_fix_record` 写入）**已维护但从未注入 coder**——`_build_coding_context` 全程没引用它。
+- 且其字段（error_summary/error_category/fix_strategy）是 `_classify_execution`（execution.py:215-351）的**规则模板文案**（匹配 stderr 关键词套预设描述，零 LLM），信息粗——这正是 Maria 否决"只注入这些摘要"的原因（太模糊）。
+
+**Maria 决策（v0.4，要"两极之间"的中间方案）**：
+- 否决**档 A「只注入 fix_loop_history 规则摘要」**——信息太粗太模糊，coder 看了只知"又是 import"、不知"上轮具体改了啥、为啥没成"。
+- 否决**档 C「完整对话 + 工具调用结果全塞」**——会撑爆 context（长度随回合线性增长、逼近 token 上限）。
+- **要架构师设计档 B：一套信息比规则标签丰富、又控量不爆的记忆机制。**
+
+**与 S7-02 边界**：S7-02 治"当前轮真报错可见"（空间维度，已交付），S7-05 治"历史尝试记忆"（时间维度）。正交不重复。
+
+**技术约束（给架构师，已澄清、勿推翻）**：
+- **Prompt Cache 非障碍**（Maria 校正）：GPT-5.4/OpenAI 是 token 级自动前缀缓存，历史放**整个 prompt 的动态尾部**（稳定前缀之后）前缀照常命中、只有历史段 miss（正常增量）。不采用任何"塞历史破坏 cache"的理由。
+- **sort_keys 坑**：当前 curated payload 走 `json.dumps(sort_keys=True)`（coding.py:347），新增历史字段会按字母序插中间、打乱前缀字节——要让历史落尾部得绕开 sort_keys 块。
+- **context 长度要控**：这是"档 B 而非档 C"的核心动因，架构方案须给出显式控量机制。
+
+**架构须回答（方案设计要点，留架构师）**：
+1. **每轮记什么**——比规则标签丰富（如 coder 上轮关键动作/代码 diff 摘要 + execution 上轮真错关键行），又比全对话省。信息选取的粒度与来源？
+2. **怎么控量**——滚动窗口（最近 K 轮）/ 只留关键轮 / 结构化压缩表示；是否引入比规则模板更丰富的每轮摘要（若要 LLM 二次摘要须评估成本，Maria 反过度工程）。
+3. **放哪**——动态尾部避 sort_keys 的具体落法（承接原拟 Sprint 8 的 sort_keys 问题）。
+4. **跨 agent 范围**——只给 coder 自己的历史，还是也把 execution agent 的关键信息纳入。
+5. **是否触碰子图隔离**——档 A 只往 HumanMessage 注数据不破隔离；若档 B 要 coder 看到自己历轮真实推理，是否需回写子图 messages（破隔离）——权衡代价。
+
+**验收标准**：AC-S7-09~14（见 architecture v1.1 §13.8；AC-S7-11/12 须逐环验红防"coder 说了但没进历史"假绿）；须遵循"注入生效可观测、非假绿"与现有 coding context 回归零退化。
+
+**架构方案已定**（`docs/sprint7/architecture.md` v1.1 §13，Maria 二轮修订）：每轮**五元组** round/category/files_touched/**fix_note（coder 在 `<result>` 顺带自述"本轮问题定位+修复逻辑"）**/log_path，**全部记录保留无窗口**（MAX_FIX_LOOP_COUNT=20 + fix_note 120 字双封顶控量）；渲染成单键 `fix_history_digest` 塞 curated context 尾部（sort_keys 只排顶层键）；链路 coder→`_map_coding_result` 写 `last_fix_note`→下轮 `_append_fix_record` 取（时序天然对齐）；只给 coder、不破子图隔离、不加 LLM、不加 execution 判定理由。state +4 键旧 checkpoint 兼容。
+
+**非目标**：不做"历史无脑全量堆积"（撑爆）；不与 S7-02 当前轮日志链路重复。
 
 ---
 

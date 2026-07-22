@@ -1,6 +1,6 @@
 # Sprint 7 核心架构设计文档：修复循环失控治理族（S7-01~03）
 
-**文档版本**：v1.0（单段交付：Q-S7-1~6 六项技术裁决 + 三需求文件级方案 + 变更总表 + 收口/批次/风险/测试/AC 映射）
+**文档版本**：v1.1（v1.0 = Q-S7-1~6 六项裁决 + S7-01~03 三需求方案；**v1.1 增补 §13 = S7-05 修复循环记忆增强档 B 方案**，Maria 决策后新增）
 **日期**：2026-07-19
 **作者**：架构师代理
 **对应 PRD**：`docs/sprint7/prd.md` v0.3（Maria 拍板，2026-07-18；开放问题 Q-S7-1~6 全部在本文裁决）
@@ -446,4 +446,149 @@ effective_max_rounds = max(1, min(base_rounds, remaining_sub_budget))
 
 ---
 
-*（全文完：Q-S7-1~6 六项裁决 + 三需求文件级方案 + 变更总表 + 收口/测试/风险/假设/映射。docs/sprint7/architecture.md v1.0 交付，待 Maria 审阅后转全栈开发代理进入翻倍批——批次边界逐批确认制照旧。）*
+## 13. S7-05 修复循环记忆增强（coder 跨回合记忆，档 B）
+
+**对应 PRD**：`docs/sprint7/prd.md` v0.4 §2.5（Maria 亲提立项，要"两极之间"的档 B）
+**日期**：2026-07-20（Maria 审阅后三点修订：去窗口全保留 / 每轮加 coder 自述定位+逻辑 / 不加 execution 判定理由）
+**前置事实（改变方案形态）**：S7-02 已交付——每轮真错日志已以错误优先编排落盘 `<code_output_dir>/exec_logs/round_{n}.log`、确定性命名、`_resolve_round_log_path`（coding.py:243）已能推导任意轮路径。S7-05 复用此产物，**不新造记忆管道、不新增 LLM 调用**。
+
+> **本节架构特征（先说结论）**：记忆增强 = 每轮结构化五元组（round / category / files_touched / **coder 自述定位+逻辑** / log_path）压成一两行，**全部修复记录保留不裁剪**（受 `MAX_FIX_LOOP_COUNT=20` 硬顶，token 上界可控，§13.4 估算），渲染成单个字符串键 `fix_history_digest` 塞进 curated context 尾部（sort_keys 只排顶层键、字符串值内部顺序自控，避坑）。跨 agent 只给 coder，不破子图隔离，不加 LLM 二次摘要。**唯一 state 契约增量 = `FixLoopRecord` 加两字段（fix_note + files_touched）+ GlobalState 加两个 coding→execution 传递字段。**
+
+### 13.1 五问裁决表（Maria 修订后）
+
+| PRD 问题 | 裁决（修订后） |
+|---|---|
+| 1. 每轮记什么 | **结构化五元组**：`round` / `category`(规则标签，仅粗过滤) / `files_touched`(coder 那轮改了哪些文件) / **`fix_note`（coder 自述"本轮问题定位 + 修复逻辑"一两句——修订2新增，比规则标签丰富的核心，非系统嚼碎/非规则模板/非额外 LLM）** / `log_path`(S7-02 已落盘真错日志指针)。 |
+| 2. 怎么控量 | **全部记录保留、不设滚动窗口**（Maria 修订1：要完整轨迹）。控量靠"每轮压一两行 + `fix_note` 硬性字符上限"，token 总量受 `MAX_FIX_LOOP_COUNT=20` 硬顶封死、远不到档 C 爆量级（§13.4 估算）。**不引入 LLM 二次摘要**（§13.5）。 |
+| 3. 放哪 | 整个 curated context 是**一个** `json.dumps(sort_keys=True)` 块（react_base.py:854）——无字典层"尾部"可言。裁决：历史渲染成**多行字符串**塞单键 `fix_history_digest`，sort_keys 只排顶层键、字符串值内部顺序自控（§13.3）。 |
+| 4. 跨 agent | **只给 coder**。execution 关键信息已在 log_path 指向的日志里，coder 自读即得。 |
+| 5. 子图隔离 | **不破**。历史全来自 GlobalState 已有信号(fix_loop_history + coder result 落库)+磁盘日志(S7-02)，只往 HumanMessage 注数据，`ReActState.messages` 一字不动，不去捞子图内推理对话（§13.6）。 |
+
+**修订3（Q3 确认）**：**不纳入 execution 判定理由**（不把 `_classify_execution` 的 fix_strategy 规则模板文案进历史段）——那是档 A 味道，已否决。execution 侧的"真错"由 log_path 自读覆盖，"判定理由"无需单列。
+
+### 13.2 每轮记什么：五元组（修订2 核心）
+
+```
+第 N 轮修复记录 → {
+  round: N,                              # 轮号（确定性，对齐 fix_loop_count）
+  category: "import",                    # fix_loop_history 现有 category（仅粗过滤/分组）
+  files_touched: ["src/train.py"],       # coder 那轮改了哪些文件（比标签丰富）
+  fix_note: "定位：train.py 缺 sys.path 致 src 不可导入；修复：入口加 sys.path.insert",  # ★修订2：coder 自述定位+逻辑（一两句，≤_FIX_NOTE_MAX_CHARS）
+  log_path: ".../exec_logs/round_{N}.log"  # S7-02 已落盘真错日志文件指针
+}
+```
+
+**`fix_note` 的信息学定位（为何不是档 A、不是额外 LLM）**：
+- **不是档 A 规则模板**：`fix_note` 是 **coder 本轮推理的真实意图声明**（coder 本就在推理"我判断错在哪、我打算怎么改"，只是顺带用一句话结构化输出出来），不是 `_classify_execution` 关键词匹配套的预设文案。它承载"这一轮 coder 具体怎么想的"——正是 Maria 要的"上轮为啥没成"。
+- **不是额外 LLM 调用**：`fix_note` 在 coder 现有的 `<result>` 输出里**顺带产出**，不新增任何 LLM 调用、不烧 `_dev_loop_llm_calls`（与 S7-03 刚修的子上限刹车零冲突）。这是修订2 的机制关键——把"生成记忆"的成本转嫁到 coder 本就要做的单次推理上。
+- **与 log_path 互补**：`fix_note` 是 coder 侧"我改了什么、为什么这么改"（主观意图），log_path 是 execution 侧"结果真错是什么"（客观事实）。coder 下轮读历史时两相对照即知"我上轮以为缺 sys.path 就修了，但真错日志说还是 No module named——我的定位或修法有漏"。这个对照正是打破"反复套无效改法"的关键。
+
+### 13.2.1 coder 输出约定改动（R-PC4 安全性确认）
+
+在 `_CODING_SYSTEM_PROMPT_BODY`（coding.py:126，稳定前缀）的"修复回合模式"段（现 :164-167）与 `<result>` 输出字段定义（现 :170-176）各加一条固定文案：
+
+```
+修复回合模式段新增一句（对所有修复回合字节一致）：
+- 在 <result> 中额外输出 fix_note 字段：用一两句话说明"本轮问题定位 + 修复逻辑"
+  （定位到什么错、打算怎么改），供后续修复回合参考你之前的尝试。首轮生成可留空/省略。
+
+<result> 字段定义新增一行：
+  "fix_note": str | null    // 本轮问题定位+修复逻辑，一两句（≤120字）；首轮可 null
+```
+
+**R-PC4 安全确认（Maria 点名要确认这条加法安全）**：
+- `_CODING_SYSTEM_PROMPT_BODY` 是 Prompt Cache 稳定前缀（跨论文/跨任务字节恒定，coding.py:184-185 纪律）。新增的这两句是**对所有回合一致的固定文案**（无 f-string 插值、无论文级动态变量、无轮号——它只是"请你顺带声明定位+逻辑"这个恒定指令），**字节级稳定不破前缀**。
+- coder 每轮**输出**的 `fix_note` 值是动态的，但它进的是 coder 的 `<result>`（LLM 输出）→ 经 `_map_coding_result` 落 GlobalState → 下轮进 `fix_history_digest`（HumanMessage 动态尾部），**从不进 SystemMessage**。SystemMessage 稳定前缀只多了"请声明"这条恒定指令，不含任何 fix_note 值。**R-PC4 守住。**
+
+### 13.3 字符串渲染示例（sort_keys 避坑，全保留）
+
+```python
+payload["fix_history_digest"] = _digest_fix_loop_history(state, code_output_dir)
+# 值形如（预渲染多行字符串，全部轮次、轮号升序，不裁剪）：
+#   "修复历史（共4轮，全部保留）：
+#    round1 [import] 改 src/train.py | 定位:缺sys.path致src不可导入 修复:入口加sys.path.insert | 真错见 exec_logs/round_1.log
+#    round2 [import] 改 src/train.py | 定位:sys.path路径写错 修复:改成绝对路径 | 真错见 exec_logs/round_2.log
+#    round3 [import] 改 src/train.py,src/model.py | 定位:model.py也缺导入 修复:补两处import | 真错见 exec_logs/round_3.log
+#    round4 [import] 改 src/train.py | 定位:包名拼写错 修复:util->utils | 真错见 exec_logs/round_4.log"
+```
+
+避坑机制（与 v1.0 R-PC4 纪律一致）：
+- sort_keys 只排**顶层键名**；`fix_history_digest` 作为一个键，其**字符串值内部**（轮号升序、每轮一行）由 `_digest_fix_loop_history` 控制，sort_keys 管不到字符串内部。
+- 稳定前缀 = SystemMessage（coding.py:850 单独一条）；`fix_history_digest` 进 HumanMessage 动态尾部，碰不到稳定前缀，R-PC4 天然守住。
+- 字节幂等：同一 state 下渲染确定性（轮号升序、路径确定性推导、无时间戳/uuid），与 credential_degradations 注入同款（coding.py:346-354）。
+- 只在修复回合注入（`exec_result and fix_count>0` 分支内，与 last_error_summary 同守护），首轮零扰动。
+
+### 13.4 控量可行性论证（修订1：全保留，无窗口）
+
+**Maria 修订1去掉 K=3 窗口、要完整轨迹。控量改由硬顶 + 字符上限双重封死，token 上界估算如下**：
+- **轮数上界**：修复回合受 `MAX_FIX_LOOP_COUNT=20`（翻倍后，config.py）硬顶——历史最多 20 条记录，**不可能无限增长**。
+- **每轮字符量**：round + category + files_touched 约 40~70 字符；`fix_note` 硬性上限 `_FIX_NOTE_MAX_CHARS = 120`（渲染时超长截断，防 coder 长篇撑爆）；log_path 尾部提示约 30 字符（只写相对 `exec_logs/round_N.log`，段首给一次根路径即可）。**每轮合计 ≤ ~220 字符**。
+- **全保留总量上界**：20 轮 × 220 字符 ≈ **4400 字符**（约 1500~2200 token，中文/路径混合），加段首说明约 4500 字符。
+- **与档 C 对比**：档 C（完整对话+工具调用全塞）单轮就可能上万 token、随回合线性膨胀到十万级。本方案全保留上界 ≈ 2200 token 封顶，**差两个数量级，远不到档 C 爆量级**。且实际修复很少跑满 20 轮（现场 4 轮），典型量 < 1000 token。
+
+**结论**：全保留在 `MAX_FIX_LOOP_COUNT=20` 硬顶 + `_FIX_NOTE_MAX_CHARS=120` 双重封死下 token 上界确定、可控，满足档 B"控量不爆"。**删除 `_MEMORY_WINDOW_K`、删除"仅显示最近K轮"提示**——不再需要窗口概念。
+
+### 13.5 是否引入 LLM 二次摘要（保持否决）
+
+**不引入**（Maria 修订2 明确"不能额外调 LLM 二次摘要，烧 `_dev_loop_llm_calls` 与 S7-03 冲突"）。修订2 的 `fix_note` 恰是替代方案——它把"生成丰富记忆"的成本转嫁到 coder **本就要做的单次推理**上（顺带输出一句），零新增 LLM 调用、零 `_dev_loop_llm_calls` 消耗，却拿到比规则标签丰富的"coder 自述定位+逻辑"。比"另起 LLM 嚼碎历史"成本低一个量级，且信息更真（coder 真实意图，非二次转述）。
+
+### 13.6 子图隔离结论（不破，保持）
+
+**不破。** 五元组全部来自：fix_loop_history（GlobalState 已有）+ coder result 落库（经 `_map_coding_result`，见 §13.7 链路）+ 磁盘日志（S7-02）。只往 HumanMessage 注数据，`ReActState.messages` 一字不动。`fix_note` 是 coder 主动在 `<result>` 声明的一句话（走正常 result 提取链路），**不是去捞子图内的推理对话 messages**——捞后者才要破隔离回写 GlobalState（档 C 病），本方案不碰。
+
+### 13.7 落点清单（供 dev-plan，修订后）
+
+**核心链路问题（Maria 点名重点）：coder 的 fix_note 产生在 coding 节点，但 `fix_loop_history` 由 execution 节点 `_append_fix_record`(execution.py:2167) 写——怎么传？**
+
+**链路方案（确定）**：coder 的 fix_note 经 GlobalState 一个新字段 `last_fix_note` 由 coding 写、execution append 时取。时序：
+1. **coding 节点**：coder 在 `<result>` 输出 `fix_note` → `_map_coding_result`（coding.py:523）从 result 提取，写进 `updates["last_fix_note"]`（新字段，单点写）。
+2. **execution 节点下一回合**：`_run_execution_agent` 跑完、`_maybe_interrupt_or_return` 判定"可修复→回 coding"时，`_append_fix_record`(execution.py:2167) 追加本轮 FixLoopRecord——**此时 state 里的 `last_fix_note` 正是上一轮 coder 写的**（这一轮 execution 是在跑上一轮 coder 改的代码），把它写进 `FixLoopRecord.fix_note`。
+3. **files_touched 同链路**：coder result 的 `files_written` 同样经 `_map_coding_result` 写 `updates["last_files_written"]`，`_append_fix_record` 取。
+
+> **时序自洽确认**：第 N 轮 FixLoopRecord 记录的是"coder 第 N 轮改了什么(files_touched/fix_note) + execution 第 N 轮跑出什么真错(category/log_path)"。coding 先跑(写 last_fix_note)→execution 后跑(跑代码+append record 取 last_fix_note)，`_append_fix_record` 执行时 `last_fix_note` 恰是本轮对应 coder 的输出。**链路时序天然对齐，无需调整谁写/写入时机。**
+
+| 项 | 文件:落点 | 类型 | 说明 |
+|---|---|---|---|
+| `_FIX_NOTE_MAX_CHARS = 120` | coding.py 模块级常量 | 新常量 | fix_note 渲染字符上限，防撑爆 |
+| coder 输出约定 +fix_note | coding.py `_CODING_SYSTEM_PROMPT_BODY`(:164-176) + result_schema(:89-112) | prompt/schema 改 | 修复回合段+`<result>`字段加 fix_note（固定文案，R-PC4 安全，§13.2.1） |
+| fix_note/files_written 落库 | coding.py `_map_coding_result`(:523) | 逻辑+state写 | 从 result 提取 fix_note→`updates["last_fix_note"]`；files_written→`updates["last_files_written"]`（截断到 _FIX_NOTE_MAX_CHARS） |
+| `last_fix_note`/`last_files_written` | **state.py GlobalState** | 新字段(2个) | coding→execution 传递通道（单点由 coding 写、execution append 取） |
+| `fix_note` + `files_touched` | **state.py `FixLoopRecord`**(:176) | state 结构 | FixLoopRecord 加 `fix_note: str` + `files_touched: List[str]` |
+| append 取 fix_note/files | **execution.py `_append_fix_record`**(:1954-1970) | 写入 | 从 `state["last_fix_note"]`/`state["last_files_written"]` 取，写进新建 FixLoopRecord |
+| `_digest_fix_loop_history` | coding.py 新 helper | 新纯函数 | 读 fix_loop_history 全部记录+推导 log_path，渲染多行字符串(轮号升序、全保留、fix_note 截断、确定性字节幂等)；空历史返回 None |
+| `fix_history_digest` 注入 | coding.py `_build_coding_context`(:359-372) | 加1键 | 非空才注入，与 last_error_summary 同守护 |
+
+**state 契约增量**：`GlobalState` +2 传递字段（last_fix_note / last_files_written）、`FixLoopRecord` +2 字段（fix_note / files_touched）。均 TypedDict 加键，旧 checkpoint 兼容（helper 里 `.get(..., "")`/`.get(..., [])` 兜底）。**不动 react_base、不动 interrupt payload 键、不新增 LLM 调用。**
+
+### 13.8 AC 建议（AC-S7-09 起，修订后）
+
+| 编号 | 归属 | 验收标准 | 可测方式 |
+|---|---|---|---|
+| **AC-S7-09** | S7-05 | 修复回合 coder 的 curated context 含 `fix_history_digest`，内容含**全部**历史轮的 round+category+files_touched+**fix_note**+log_path，轮号升序、多行字符串 | 构造 fix_loop_count≥2 现场 mock（`task-99eef17bccf2` 同构 4 轮 import），断言 `_build_coding_context` 返回含 `fix_history_digest`、含各轮 log_path 与 fix_note；断言首轮不注入 |
+| **AC-S7-10** | S7-05 | **全保留控量生效**：历史全部保留不裁剪；fix_note 超 `_FIX_NOTE_MAX_CHARS` 被截断；digest 总量受 MAX_FIX_LOOP_COUNT 封顶、不爆 | 构造 fix_loop_count=20（顶格）mock，断言 digest 含全部 20 轮（无窗口丢弃）、每轮 fix_note ≤120 字符、总字节 ≤ 上界估算(§13.4)；断言无"仅显示最近K轮"字样（窗口已删） |
+| **AC-S7-11** | S7-05 | **coder 定位+逻辑确经链路落库并注入（须验红，修订2核心可测点）**：coder `<result>` 输出 fix_note → `_map_coding_result` 写 `last_fix_note` → 下轮 `_append_fix_record` 写进 FixLoopRecord.fix_note → `_digest_fix_loop_history` 渲染进 digest | 端到端链路 mock：模拟 coder result 含 fix_note="定位X修复Y" → 断言 `_map_coding_result` 返回含 `last_fix_note`；驱动 `_append_fix_record` → 断言 FixLoopRecord.fix_note==该值；断言 digest 含该值。**验红**：注掉链路任一环（map 不写/append 不取/digest 不渲染）后断言变红（防"coder 说了但没进历史"假绿，沿 AC-S6-10 教训） |
+| **AC-S7-12** | S7-05 | 注入生效非假绿（须验红）：digest 里 log_path 指向历史轮日志真实存在且含真错行；coder 可 read_code_file 读到 | 落盘 round_1..4.log 含 `No module named 'src'`，断言 digest 的 log_path 与磁盘对齐、read_code_file 读到真错。**验红**：注掉 fix_history_digest 注入后断言变红 |
+| **AC-S7-13** | S7-05 | R-PC4 守门：`fix_history_digest` 只进 HumanMessage、SystemMessage 稳定前缀字节不变（含新增"请声明 fix_note"固定文案后仍跨任务恒定）；同一 state 下 digest 字节幂等（无时间戳/uuid） | 断言注入前后 `_build_coding_system_prompt` 字节一致；断言新增 fix_note 指令是固定文案（两次不同 state 下 system prompt 该段字节相同）；断言同一 state 两次 `_digest_fix_loop_history` 字节相同 |
+| **AC-S7-14** | S7-05 | 回归零退化：既有 coding context 键（last_error_summary/credential_degradations/code_output_dir）不受影响；sort_keys 幂等块结构不破；`_map_coding_result` 既有字段(code_output_dir/simulation_notice 等)不变 | 既有 coding context + map_result 套件零失败；断言 human_payload 仍合法 sort_keys JSON、既有键值不变 |
+
+**验红命门**：AC-S7-11/12 是防假绿核心——修订2 引入了 coding→execution 跨节点链路(3 环)，任一环断裂都会导致"coder 说了但历史里没有"的假绿，必须逐环验红。
+
+### 13.9 风险 + 开放问题（修订后：去窗口 Q1、加 coder 输出捕获风险）
+
+| 编号 | 风险 | 缓解 | 回退 |
+|---|---|---|---|
+| R-S7-8 | coder 不输出/乱输出 fix_note（LLM 不遵守输出约定，或输出空/无关内容） | `_map_coding_result` 提取时校验(非空字符串才落值、截断到上限)；缺失则 fix_note 留空，历史段仍保留 round+category+files_touched+log_path（仍优于档 A） | fix_note 恒退化为空，方案降级为"四元组含 log_path 自读"，不炸 |
+| R-S7-9 | coder fix_note 长篇大论撑爆 | `_FIX_NOTE_MAX_CHARS=120` 渲染截断 + prompt 明写"一两句"双重约束 | 截断硬拦，上界确定 |
+| R-S7-10 | 链路时序错位（last_fix_note 被下轮覆盖前未被 append 取到） | §13.7 时序自洽已坐实(coding 先写→execution 后取，append 时 last_fix_note 恰为本轮 coder 输出)；单点写、last-write-wins | 若并发异常，退化为 fix_note 空（R-S7-8） |
+| R-S7-11 | 历史轮日志文件被清理致 log_path 指向不存在 | 同 S7-02 R-S7-4：coder read 到"文件不存在"退回当前轮反馈，不炸 | 降级到 sp6 现状 |
+| R-S7-12 | 全保留在极端 20 轮 + files_touched 多文件时 token 偏大 | §13.4 估算上界 ≈2200 token 封顶，可接受；files_touched 只记文件名不记内容 | 若实测偏大，可对 files_touched 记数量而非全列（单点，非本 Sprint） |
+
+**开放问题（留 Maria）**：
+- ~~Q1（窗口 K）~~ **已删**（修订1 去窗口、全保留）。
+- **Q2（fix_note 字符上限 120 是否合适）**：倾向 120（中文一两句足够表达"定位X+修复Y"）。单点常量随时可调，非阻塞。
+- **Q3（execution 判定理由）**：**已确认不加**（修订3）——不纳入 `_classify_execution` fix_strategy 规则文案，避免档 A 味道。execution 侧信息由 log_path 自读覆盖。
+- **Q4（coder 遵守输出约定的稳定性）**：fix_note 依赖 coder 遵守新输出约定。首个开发批建议对现场靶(4 轮 import)做真跑抽验确认 coder 稳定输出 fix_note（合并既有 Maria 授权窗口，省配额）；若遵守率低，R-S7-8 退化兜底不阻断功能。**这是修订2 唯一依赖 LLM 行为的软点**，但有确定性退化保护。
+
+---
+
+*（v1.1 全文完：v1.0 六项裁决 + S7-01~03 方案，§13 增补 S7-05 记忆增强档 B（Maria 三点修订后：全保留无窗口 + coder 自述 fix_note 定位/逻辑 + 不加 execution 判定理由）。核心 = 复用 S7-02 落盘日志 + coder 顺带自述，零新管道/零新增 LLM/零 react_base 改动/子图隔离不破；state 加 4 键（2 传递+2 记录）旧 checkpoint 兼容；token 上界受 MAX_FIX_LOOP_COUNT=20 + _FIX_NOTE_MAX_CHARS=120 双封顶。待 Maria 拍板 Q2/Q4 后转 dev-plan → 开发；files_written 取值链路由 dev 实现时按 §13.7 落。）*

@@ -565,10 +565,12 @@ def test_cp_e3_5_coding_digest_consumes_failure_contract(monkeypatch):
     }
     assert er["errors"][0].startswith("[error_category=import]")
 
-    # fix_loop_history 逐字同 sp3 FixLoopRecord 5 字段。
+    # fix_loop_history 逐字同 FixLoopRecord 字段（S7-05 契约扩展后 7 字段：
+    # 原 5 + fix_note/files_touched）。
     rec = out["fix_loop_history"][0]
     assert set(rec.keys()) == {
         "round_number", "error_summary", "error_category", "fix_strategy", "timestamp",
+        "fix_note", "files_touched",
     }
     assert rec["error_category"] == "import"
 

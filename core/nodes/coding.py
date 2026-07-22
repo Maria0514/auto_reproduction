@@ -71,6 +71,12 @@ NODE_NAME: str = "coding"
 # 上一轮 execution stderr 注入修复回合的尾部裁剪上限（架构 §2.2.2，防撑爆 context）。
 _STDERR_TAIL_CHARS: int = 2000
 
+# S7-05（修复循环记忆增强，档 B，架构 v1.1 §13.4/§13.7）：coder 自述 fix_note 字符上限。
+# Maria 拍板定值 120（中文一两句足以表达"定位X+修复Y"，Q2 已确认）。落库时（_map_coding_result）
+# 与渲染时（_digest_fix_loop_history）双重截断——防 coder 长篇撑爆 curated context（R-S7-9）。
+# token 上界与 MAX_FIX_LOOP_COUNT=20 双封顶保证全保留历史不爆（§13.4 估算 ≈2200 token）。
+_FIX_NOTE_MAX_CHARS: int = 120
+
 # S6-B2（T-S6-2-2）：降级凭证通用指令常量（coding/execution 两侧值一致）。
 # 降级非空时注入 HumanMessage payload，告知 agent 全程走模拟路径。
 _CREDENTIAL_DEGRADATIONS_DIRECTIVE: str = (
@@ -107,6 +113,13 @@ CODING_OUTPUT_SCHEMA: Dict[str, Any] = {
         "simulation_notice": {
             "type": ["string", "null"],
             "description": "无法真实实验时的模拟声明：中文说明哪部分是模拟、为什么（能真实实验时置 null）。",
+        },
+        # S7-05（修复循环记忆增强，档 B）：修复回合 coder 自述"本轮问题定位+修复逻辑"
+        # 一两句（≤120字）；首轮生成可 null。经 _map_coding_result 落 last_fix_note、
+        # 下轮 execution _append_fix_record 取写进 FixLoopRecord.fix_note，供后续修复回合参考。
+        "fix_note": {
+            "type": ["string", "null"],
+            "description": "修复回合本轮问题定位+修复逻辑，一两句（≤120字）；首轮可 null。",
         },
     },
     "required": ["files_written", "summary"],
@@ -165,6 +178,8 @@ request_user_input 使用纪律（强约束）：
 - 此时表示上一轮执行失败，进入修复回合。**不要从头重新生成全部代码**。
 - 先 read_code_file / list_dir 读出 code_output_dir 下的现有代码，定位 last_error_summary 指向的错误（含 error_category / stderr 尾部）。
 - 仅对出错处做有针对性的最小修改，用 write_code_file 覆盖被修改的文件；保持入口脚本的 <METRICS> 输出约定不变。
+- 若 HumanMessage 中出现 fix_history_digest（历次修复轨迹），先读它了解你前几轮试过什么、结果如何，做增量修复决策，避免反复套已被证明无效的改法。
+- 在 <result> 中额外输出 fix_note 字段：用一两句话说明"本轮问题定位+修复逻辑"（定位到什么错、打算怎么改），供后续修复回合参考你之前的尝试。首轮生成可留空/省略。
 
 输出要求：
 - 完成代码写入后，必须在 <result>...</result> 标签内输出严格 JSON，字段如下：
@@ -172,7 +187,8 @@ request_user_input 使用纪律（强约束）：
     "files_written": [str, ...],   // 本轮写入/修改的文件路径
     "entry_script": str | null,    // 复现入口脚本路径
     "summary": str,                // 本轮工作的中文摘要
-    "notes": str | null            // 降级/遗留问题等（可选）
+    "notes": str | null,           // 降级/遗留问题等（可选）
+    "fix_note": str | null         // 修复回合：本轮问题定位+修复逻辑，一两句（≤120字）；首轮可 null
   }
 - files_written 必须如实反映 write_code_file 成功写入的文件，不要捏造；至少应包含入口脚本。
 - 不要在 <result> 之外再夹杂任何其它 JSON 块。
@@ -298,6 +314,72 @@ def _digest_execution_feedback(
     }
 
 
+def _digest_fix_loop_history(
+    state: GlobalState,
+    code_output_dir: Optional[str],
+) -> Optional[str]:
+    """把 fix_loop_history 全部记录渲染成单个多行字符串（S7-05，档 B，架构 §13.3/§13.7）。
+
+    每轮渲染一行五元组（round / category / files_touched / fix_note / log_path）：
+        ``round{N} [category] 改 {files} | 定位+修复:{fix_note} | 真错见 exec_logs/round_{N-1}.log``
+
+    设计要点：
+        - **全部记录保留、无滚动窗口**（Maria 修订1：要完整轨迹）；控量靠 MAX_FIX_LOOP_COUNT=20
+          硬顶 + _FIX_NOTE_MAX_CHARS=120 字符上限双封顶（§13.4，token 上界 ≈2200）。
+        - **轮号升序**（按 round_number 排序，确定性）。
+        - **log_path 确定性推导**：round_number = execution 入口 fix_count+1，S7-02 落盘用
+          入口 fix_count 命名 round_{fix_count}.log，故第 N 轮真错日志 = round_{N-1}.log。
+          段首给一次 code_output_dir 根路径，每行只写相对 ``exec_logs/round_{N-1}.log``（控量）。
+        - **fix_note 渲染再截断到 _FIX_NOTE_MAX_CHARS**（双保险，R-S7-9；落库已截、渲染再截）。
+        - **字节幂等**（R-PC4，§13.3）：无时间戳/uuid、轮号升序、files_touched 取 basename
+          保列表原序、同一 state 两次渲染字节相同。这是 HumanMessage 动态尾部单键字符串值，
+          sort_keys（react_base.py:854）只排顶层键、管不到字符串内部（§13.3 避坑）。
+        - **旧 checkpoint 兜底**（R-S7-8）：FixLoopRecord 无 fix_note/files_touched 键 →
+          ``.get(..., "")`` / ``.get(..., [])`` 兜底，该段留空、其余四元组照常渲染，不炸。
+        - **空历史返回 None**（首轮/无记录，调用侧不注入）。
+    """
+    history = state.get("fix_loop_history") or []
+    if not history:
+        return None
+
+    # 轮号升序（确定性；round_number 缺失兜底为 0，稳定排序保原序）。
+    def _round_of(rec: Any) -> int:
+        try:
+            return int(rec.get("round_number", 0)) if isinstance(rec, dict) else 0
+        except (ValueError, TypeError):
+            return 0
+
+    ordered = sorted(
+        [r for r in history if isinstance(r, dict)],
+        key=_round_of,
+    )
+    if not ordered:
+        return None
+
+    lines: List[str] = [
+        f"修复历史（共{len(ordered)}轮，全部保留；真错日志根目录 "
+        f"{code_output_dir or '?'}/{_EXEC_LOGS_SUBDIR}/）："
+    ]
+    for rec in ordered:
+        rnd = _round_of(rec)
+        category = str(rec.get("error_category", "") or "").strip() or "unknown"
+        files = rec.get("files_touched") or []
+        # 只记文件名（basename），不记完整路径 / 内容（控量，§13.4 / R-S7-12）。
+        file_names = [
+            Path(str(f)).name for f in files if isinstance(f, (str, Path)) and str(f).strip()
+        ]
+        files_seg = "、".join(file_names) if file_names else "(未记录)"
+        fix_note = str(rec.get("fix_note", "") or "").strip()[:_FIX_NOTE_MAX_CHARS]
+        note_seg = fix_note if fix_note else "(coder 未自述)"
+        # log_path：第 N 轮真错日志 = round_{N-1}.log（S7-02 落盘命名对齐，见 docstring）。
+        log_rel = f"{_EXEC_LOGS_SUBDIR}/round_{max(0, rnd - 1)}.log"
+        lines.append(
+            f"round{rnd} [{category}] 改 {files_seg} | 定位+修复:{note_seg} | 真错见 {log_rel}"
+        )
+
+    return "\n".join(lines)
+
+
 def _build_coding_context(state: GlobalState) -> Dict[str, Any]:
     """curated 上下文（HumanMessage 通道，sort_keys 字节幂等，对齐 planning 范式）。
 
@@ -370,6 +452,18 @@ def _build_coding_context(state: GlobalState) -> Dict[str, Any]:
             code_output_dir=payload["code_output_dir"],
             fix_round=fix_count - 1,
         )
+
+        # S7-05（修复循环记忆增强，档 B，架构 §13.3/§13.7）：跨回合五元组记忆——
+        # 全部历史轮（round/category/files_touched/fix_note/log_path）渲染成单键
+        # fix_history_digest 注入 curated context 尾部，让 coder 从"上轮改了什么、
+        # 结果如何"做增量修复决策。**非空才注入**（与 last_error_summary 同守护，首轮
+        # 零扰动）；单键字符串值内部由 helper 自控（sort_keys 只排顶层键，§13.3 避坑）；
+        # 字节幂等（无时间戳/uuid），R-PC4 无扰（只进 HumanMessage 动态尾部）。
+        fix_history_digest = _digest_fix_loop_history(
+            state, code_output_dir=payload["code_output_dir"]
+        )
+        if fix_history_digest:
+            payload["fix_history_digest"] = fix_history_digest
 
     return payload
 
@@ -448,24 +542,28 @@ def _resolve_code_output_dir(state: GlobalState) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _has_written_any_file(react_messages: Optional[Any], code_dir: str) -> bool:
-    """扫描 ReAct 子图最终 messages，判断本轮是否有成功的 write_code_file 调用。
+def _collect_written_files(react_messages: Optional[Any], code_dir: str) -> List[str]:
+    """扫描 ReAct 子图最终 messages，收集本轮成功写入的文件绝对路径列表（S7-05）。
 
-    判定标准：存在 ``name=write_code_file`` 的 ToolMessage，其内容解析为
-    ``{"success": true, "path": <在 code_dir 内>}``（code_fs_tools 写工具的成功序列化
-    契约）。失败 / 越界 / 异常的 write 返回 ``{"success": false, ...}``，不计入；
-    success=true 但 ``path`` 落在 code_dir 之外的也不计（坑1-C：防 agent 写到臆想路径
-    后仍被误判为有产出）。
+    与 ``_has_written_any_file`` 同一套 ToolMessage 解析（BUG-S1-02 规避：json.loads
+    合法 JSON，不走 str(dict) repr；过滤失败 ToolMessage：空 / ``Error in `` / ``tool ``
+    前缀跳过）：存在 ``name=write_code_file`` 的 ToolMessage，其内容解析为
+    ``{"success": true, "path": <在 code_dir 内>}``——收集其 ``path``（去重、保序）。
+    success=false / 越界 / 异常不计（坑1-C）。存在 write ToolMessage 但零成功记录时打
+    WARNING（不静默吞错，BUG-S1-02 纪律）。
 
-    BUG-S1-02 治理：write_code_file 用 json.dumps（合法 JSON），这里用 json.loads
-    解析，不走 str(dict) repr。
+    S7-05（架构 §13.7 files_touched 链路）：``_map_coding_result`` 用它抽取
+    ``last_files_written``，`_append_fix_record` 取写进 FixLoopRecord.files_touched。
+    这是 files_touched 的唯一事实源——不新增数据源、不破子图隔离（只读 final messages）。
     """
+    collected: List[str] = []
+    seen: set = set()
     if not react_messages:
-        return False
+        return collected
     try:
         from langchain_core.messages import ToolMessage
     except Exception:  # pragma: no cover - defensive
-        return False
+        return collected
 
     found_write_tool = False
     for m in react_messages:
@@ -492,27 +590,45 @@ def _has_written_any_file(react_messages: Optional[Any], code_dir: str) -> bool:
             parsed = json.loads(content_strip)
         except (ValueError, TypeError):
             continue
-        if isinstance(parsed, dict) and parsed.get("success") is True:
-            # 落点校验（坑1-C）：只认落在 code_dir 内的成功 write。
-            # 工具 success=true 返回的 path 是 str(target.resolve())，已是绝对真实路径。
-            written_path = parsed.get("path")
-            if not written_path:
-                continue   # 无 path 字段不计（防御）
-            try:
-                rp = Path(str(written_path)).resolve()
-                cd = Path(code_dir).resolve()
-                if rp == cd or rp.is_relative_to(cd):
-                    return True
-            except (OSError, ValueError):
-                continue
-            # 写成功但落在 code_dir 外 → 不计，继续扫描。
+        if not (isinstance(parsed, dict) and parsed.get("success") is True):
+            continue
+        written_path = parsed.get("path")
+        if not written_path:
+            continue   # 无 path 字段不计（防御）
+        try:
+            rp = Path(str(written_path)).resolve()
+            cd = Path(code_dir).resolve()
+        except (OSError, ValueError):
+            continue
+        if not (rp == cd or rp.is_relative_to(cd)):
+            continue   # 落在 code_dir 外 → 不计（坑1-C）
+        abs_path = str(rp)
+        if abs_path not in seen:
+            seen.add(abs_path)
+            collected.append(abs_path)
 
-    if found_write_tool:
+    if found_write_tool and not collected:
         logger.warning(
             "[%s] write_code_file ToolMessage 存在但无任何成功写入记录（无法解析出 "
-            "success=true）", NODE_NAME,
+            "success=true 的 code_dir 内 path）", NODE_NAME,
         )
-    return False
+    return collected
+
+
+def _has_written_any_file(react_messages: Optional[Any], code_dir: str) -> bool:
+    """扫描 ReAct 子图最终 messages，判断本轮是否有成功的 write_code_file 调用。
+
+    判定标准：存在 ``name=write_code_file`` 的 ToolMessage，其内容解析为
+    ``{"success": true, "path": <在 code_dir 内>}``（code_fs_tools 写工具的成功序列化
+    契约）。失败 / 越界 / 异常的 write 返回 ``{"success": false, ...}``，不计入；
+    success=true 但 ``path`` 落在 code_dir 之外的也不计（坑1-C：防 agent 写到臆想路径
+    后仍被误判为有产出）。
+
+    BUG-S1-02 治理：write_code_file 用 json.dumps（合法 JSON），这里用 json.loads
+    解析，不走 str(dict) repr。S7-05 起复用 ``_collect_written_files`` 同套解析（返回
+    列表两用），布尔判定 = 收集到 ≥1 个成功写入路径。
+    """
+    return bool(_collect_written_files(react_messages, code_dir))
 
 
 # ---------------------------------------------------------------------------
@@ -555,6 +671,22 @@ def _map_coding_result(
         if isinstance(raw_notice, str) and raw_notice.strip():
             simulation_notice = raw_notice
 
+    # S7-05（修复循环记忆增强，档 B，架构 §13.7）：coding→execution 传递字段单点写。
+    # - last_fix_note：coder 在 <result> 自述"本轮问题定位+修复逻辑"（非空字符串才落值、
+    #   截断到 _FIX_NOTE_MAX_CHARS，同 simulation_notice 校验范式）；缺失/空/非字符串 →
+    #   留空 ""（R-S7-8 退化，不炸）。R-PC4 安全：值只经 map→FixLoopRecord→HumanMessage
+    #   动态尾部，从不进 SystemMessage。
+    last_fix_note: str = ""
+    if isinstance(result, dict):
+        raw_fix_note = result.get("fix_note")
+        if isinstance(raw_fix_note, str) and raw_fix_note.strip():
+            last_fix_note = raw_fix_note.strip()[:_FIX_NOTE_MAX_CHARS]
+    # - last_files_written：coder 本轮 write_code_file 成功写入路径列表（唯一事实源 =
+    #   react_messages 的 write_code_file ToolMessage，复用 _collect_written_files 同套
+    #   json.loads 解析 + code_dir 落点校验 + 失败 ToolMessage 过滤；BUG-S1-02 规避）；
+    #   拿不到 → []（R-S7-8 退化）。
+    last_files_written: List[str] = _collect_written_files(react_messages, code_dir)
+
     # ReAct 失败判定：result 空 / 无 success 写文件记录 → degraded，不死循环。
     if not result or not isinstance(result, dict) or not _has_written_any_file(
         react_messages, code_dir
@@ -577,6 +709,10 @@ def _map_coding_result(
         "simulation_notice": simulation_notice,
         "node_errors": node_errors,
         "degraded_nodes": degraded_nodes,
+        # S7-05（架构 §13.7）：coding→execution 传递字段单点写（execution 下一回合
+        # _append_fix_record 取写进 FixLoopRecord.fix_note / files_touched）。
+        "last_fix_note": last_fix_note,
+        "last_files_written": last_files_written,
         # 不写 fix_loop_count（must-fix-2）；
         # retry_budget_remaining 由 wrapper 自动 setdefault 回写（不在此覆盖，must-fix-2）。
     }

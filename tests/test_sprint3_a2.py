@@ -140,23 +140,31 @@ def test_cp_a2_3_aux_three_list_fields_annotation_is_plain_list() -> None:
         )
 
 
-# ========== CP-A2-4：FixLoopRecord 仍为 5 字段 ==========
+# ========== CP-A2-4：FixLoopRecord 字段冻结（sp7 S7-05 契约扩展后 7 字段） ==========
 
 
 def test_cp_a2_4_fixlooprecord_unchanged_five_fields() -> None:
-    """CP-A2-4: FixLoopRecord.__annotations__ 仍为 5 字段，未追加 multi-agent 字段。"""
+    """CP-A2-4: FixLoopRecord.__annotations__ 字段冻结，未追加 multi-agent 字段。
+
+    sp7 S7-05（修复循环记忆增强，档 B，架构 v1.1 §13.7）经 PRD/架构正式批准契约扩展：
+    原 5 字段 + fix_note/files_touched = 7 字段。multi-agent 专属字段守门保留（不弱化）——
+    S7-05 的 fix_note 是 coder 自述记忆，非 reviewer/coder_confidence 那类 multi-agent 产物。
+    """
     expected = {
         "round_number",
         "error_summary",
         "error_category",
         "fix_strategy",
         "timestamp",
+        # sp7 S7-05 契约扩展（coder 跨回合记忆）
+        "fix_note",
+        "files_touched",
     }
     actual = set(FixLoopRecord.__annotations__.keys())
     assert actual == expected, (
-        f"FixLoopRecord 应保持 5 字段 {expected}，实测：{actual}"
+        f"FixLoopRecord 应为 7 字段 {expected}，实测：{actual}"
     )
-    # 显式断言未引入 multi-agent 专属字段（顺延 sp4+）
+    # 显式断言未引入 multi-agent 专属字段（顺延 sp4+，强约束保留不弱化）
     for forbidden in ("reviewer_verdict", "coder_confidence", "agent_trace"):
         assert forbidden not in actual, f"FixLoopRecord 不应含 multi-agent 字段 {forbidden}"
 
