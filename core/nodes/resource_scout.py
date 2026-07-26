@@ -445,7 +445,7 @@ def _map_resource_scout_result(
 
     # 空结果 / error：不抛致命异常，降级 from_scratch。
     if not result or not isinstance(result, dict):
-        message = "resource_scout ReAct agent 未返回有效结果，降级 from_scratch"
+        message = "未取得资源侦察结果，已降级为从零实现"
         logger.warning("[%s] %s", NODE_NAME, message)
         resource_info = ResourceInfo(
             repos=[],
@@ -465,7 +465,7 @@ def _map_resource_scout_result(
 
     error_msg = result.get("error")
     if error_msg:
-        message = _coerce_str(error_msg) or "resource_scout 报告错误，降级 from_scratch"
+        message = _coerce_str(error_msg) or "资源侦察过程报错，已降级为从零实现"
         logger.warning("[%s] agent 报告错误: %s（降级 from_scratch）", NODE_NAME, message)
         resource_info = ResourceInfo(
             repos=[],
@@ -507,7 +507,7 @@ def _map_resource_scout_result(
         resource_info["selected_repo"] = None
         if NODE_NAME not in degraded_nodes:
             degraded_nodes.append(NODE_NAME)
-        message = "resource_scout 未找到可用代码仓库，降级 from_scratch"
+        message = "未找到可用的开源代码仓库，已降级为从零实现"
         logger.warning("[%s] %s", NODE_NAME, message)
         node_errors.append(make_node_error(NODE_NAME, "degraded", message, None))
     else:

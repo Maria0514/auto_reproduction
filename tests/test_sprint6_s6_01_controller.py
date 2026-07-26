@@ -123,7 +123,7 @@ def test_cp_3_1_1_token_id_and_fingerprint(controller):
 def test_cp_3_1_1_token_none_when_no_interrupt(controller):
     ctrl, fake = controller
     tid = "task-abc"
-    # next 空 → 无 interrupt
+    # tasks 无 interrupt → token None（[BUG-E2E2-03] 判定锚是 tasks，不是 next）
     fake.set_snapshot(tid, _FakeSnapshot(values={}, next_=(), tasks=()))
     assert ctrl.get_interrupt_token(tid) is None
     # 无快照
@@ -132,6 +132,23 @@ def test_cp_3_1_1_token_none_when_no_interrupt(controller):
     # next 非空但 task 无 interrupt
     fake.set_snapshot("task-run", _FakeSnapshot(values={}, next_=("coding",), tasks=(_FakeTask(),)))
     assert ctrl.get_interrupt_token("task-run") is None
+
+
+def test_e2e2_token_available_when_next_empty_with_interrupt(controller):
+    """[BUG-E2E2-03] next 为空元组但 tasks 挂 interrupt（同一次节点执行内的第 2 次
+    interrupt）→ token 必须照常返回 ``{id}:{指纹}``，不得退化为 None。
+
+    token=None 会让 resume_with 的 token 校验（app.py:327-335）把用户的正常提交
+    误判为「迟到提交」并拒绝，用户永远提交不上去。
+    """
+    ctrl, fake = controller
+    tid = "task-e2e2"
+    fake.set_snapshot(tid, _interrupt_snapshot({"question": "缺 GOOGLE_API_KEY"}, next_=(), id_="int-77"))
+    token = ctrl.get_interrupt_token(tid)
+    assert token is not None, "next 为空元组不代表没有挂起 interrupt"
+    id_part, fp_part = token.split(":", 1)
+    assert id_part == "int-77"
+    assert len(fp_part) == 16
 
 
 def test_cp_3_1_1_payload_change_changes_token(controller):

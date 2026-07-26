@@ -95,6 +95,23 @@ def test_cp_4_3_1_r4a_done_and_r4b_no_report():
     assert derive_task_status(_snap({"current_step": "reporting"}, next_=()), False) == TASK_STATUS_NO_REPORT
 
 
+def test_e2e2_r5_wins_over_r4_when_next_empty():
+    """[BUG-E2E2-03] next 为空元组 ∧ 挂起 interrupt（同一次节点执行内的第 2 次
+    interrupt）→ awaiting，而非 R4b 的 no_report「失败·未产报告」。
+
+    现场：coding 凭证 gate 串行索要第 2 项时 LangGraph 把 __resume__ 计入 task.writes
+    → next 被清空（main.py:1118-1138），旧顺序 R4 先判会把「等待输入」误报成失败。
+    """
+    assert derive_task_status(_snap({"current_step": "coding"}, next_=(), interrupt=True), False) == TASK_STATUS_AWAITING
+
+
+def test_e2e2_r5_wins_over_r4a_done_when_next_empty():
+    """[BUG-E2E2-03] 同形态 + report_path 非空 → 仍 awaiting（挂起 interrupt 压过 done）。"""
+    assert derive_task_status(
+        _snap({"current_step": "reporting", "report_path": "/x/r.md"}, next_=(), interrupt=True), False
+    ) == TASK_STATUS_AWAITING
+
+
 def test_cp_4_3_1_r5_awaiting_when_interrupt():
     # next 非空 + interrupt → awaiting（无论 worker 存活与否，R5 优先于 R6/R7）
     assert derive_task_status(_snap({"current_step": "coding"}, next_=("coding",), interrupt=True), True) == TASK_STATUS_AWAITING
@@ -111,7 +128,8 @@ def test_cp_4_3_1_r7_interrupted_no_worker():
 
 
 def test_cp_4_3_1_priority_order_short_circuit():
-    """R2>R3>R4>R5>R6>R7 自上而下短路：多条件同时命中取最高优先。"""
+    """R2>R3>R5>R4>R6>R7 自上而下短路：多条件同时命中取最高优先
+    （[BUG-E2E2-03] R5 已提到 R4 之前；R2/R3 仍压过 R5，产品红线）。"""
     # error + next 非空 + interrupt → 仍 R2 失败（error 最高）
     assert derive_task_status(_snap({"error": "e"}, next_=("coding",), interrupt=True), True) == TASK_STATUS_FAILED
 

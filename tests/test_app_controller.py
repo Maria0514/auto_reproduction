@@ -244,7 +244,11 @@ def test_cp_d2_4_is_interrupted_true_at_planning_interrupt(patched_controller):
 
 
 def test_cp_d2_4_is_interrupted_false_at_end(patched_controller):
-    """CP-D2-4：graph 已推进到 END（next 为空元组）返回 False。"""
+    """CP-D2-4：graph 已推进到 END —— tasks 无 interrupt 元数据 → False。
+
+    （[BUG-E2E2-03] 因果澄清：判定锚是 tasks 而非 next；图到 END 时 snapshot.tasks
+    必为空元组，tasks_w_writes 只遍历 next_tasks，langgraph/pregel/main.py:1129-1134。）
+    """
     controller, fake_graph, _ = patched_controller
     thread_id = "task-end"
     fake_graph.set_snapshot(
@@ -252,6 +256,26 @@ def test_cp_d2_4_is_interrupted_false_at_end(patched_controller):
         _FakeSnapshot(values={"current_step": "reporting"}, next_=(), tasks=()),
     )
     assert controller.is_interrupted(thread_id) is False
+
+
+def test_e2e2_is_interrupted_true_when_next_empty_with_interrupt(patched_controller):
+    """[BUG-E2E2-03] next 为空元组但 tasks 挂 interrupt（同一次节点执行内的第 2 次
+    interrupt，如 coding 凭证 gate 串行索要第 2 项）→ 必须判为 True。
+
+    LangGraph 的 get_state 走 apply_pending_writes=True，把带 __resume__ writes 的
+    task 从 next 中剔除（main.py:1118-1138），故 next 空 ≠ 无挂起 interrupt。
+    """
+    controller, fake_graph, _ = patched_controller
+    thread_id = "task-second-interrupt"
+    fake_graph.set_snapshot(
+        thread_id,
+        _FakeSnapshot(
+            values={"current_step": "coding"},
+            next_=(),
+            tasks=(_FakeTask(name="coding", interrupts=(_FakeInterrupt({"purpose_key": "env:GOOGLE_API_KEY"}),)),),
+        ),
+    )
+    assert controller.is_interrupted(thread_id) is True
 
 
 def test_cp_d2_4_is_interrupted_false_when_next_but_no_interrupt(patched_controller):

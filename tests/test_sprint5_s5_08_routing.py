@@ -348,6 +348,36 @@ def test_cp_0_2_3_case6bis_finished_no_report_renders_failure_card_stops_polling
     controller.is_finished.assert_called_once_with("task-s5-08-exec")
 
 
+def test_e2e2_case5_wins_over_case6bis_when_finished_and_interrupted():
+    """[BUG-E2E2-03] case⑤ 必须先于 case⑥bis：即使 is_finished=True，只要有挂起
+    interrupt（user_input_request）就渲染用户输入面板，而不是「报告未生成」失败卡片。
+
+    钉的是 execution_monitor 的 case 分发顺序（:971 case⑤ 先于 :1018 case⑥bis）——
+    未来若有人调换两者顺序，等输入的任务会被渲染成失败卡片、用户永远填不上。
+    两个分支都停轮询，故 autorefresh 同样不注册。
+    """
+    controller = _make_controller_mock(
+        state=_make_state(current_step="reporting", report_path=None),
+        is_finished=True,
+        is_interrupted=True,
+        interrupt_kind="user_input_request",
+        interrupt_payload={
+            "interrupt_kind": "user_input_request",
+            "question": "请提供 GOOGLE_API_KEY",
+            "is_sensitive": True,
+            "purpose_key": "env:GOOGLE_API_KEY",
+            "allow_degrade": True,
+        },
+    )
+    at, ar = _run_monitor(controller)
+    assert not at.exception, at.exception
+    text = _collect_text(at)
+    assert "需要你补充信息" in text, "有挂起 interrupt 时必须渲染用户输入面板"
+    assert "报告未生成" not in text, "case⑥bis 不得抢在 case⑤ 之前"
+    assert at.session_state["current_page"] == "execution"
+    ar.assert_not_called()  # 等用户提交，停轮询
+
+
 def test_cp_0_2_3_case6bis_empty_string_report_path_also_triggers():
     """case⑥bis 边界：report_path=""（空串）同样触发失败卡片（与 case⑥ bool 判定对偶）。"""
     controller = _make_controller_mock(
@@ -436,7 +466,12 @@ def test_cp_0_2_4_is_finished_running_false():
 
 def test_cp_0_2_4_is_finished_interrupted_false():
     """三态②（interrupt 暂停）：next 非空 + task 含 interrupts → is_finished=False
-    （is_interrupted=True，两方法在同一 snapshot 上语义正交）。"""
+    （is_interrupted=True，两方法在同一 snapshot 上语义正交）。
+
+    正交性由 is_finished 的 ``not _has_interrupt`` 合取项保证（[BUG-E2E2-03]）：
+    同一次节点执行内的第 2 次 interrupt 暂停时 next 也是空元组，只看 next 会让两方法
+    同时为 True，正交性破裂。
+    """
     c = _controller_with_snapshot(
         _FakeSnapshot(
             values={"current_step": "planning"},

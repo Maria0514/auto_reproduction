@@ -16,8 +16,10 @@
     - LangGraph 1.1.10 的 SqliteSaver.put 强制要求 config["configurable"]["checkpoint_ns"]，
       故所有直接调 saver / graph.get_state / graph.invoke 的 config 统一经
       _make_config(thread_id) 注入 thread_id + checkpoint_ns=""（根命名空间，S-2 spike L50）；
-    - is_interrupted 判定 = snapshot.next 非空 且 snapshot.tasks 含 interrupt 元数据
-      （S-1 spike CP-S1-3 实证形态）；
+    - is_interrupted 判定 = snapshot.tasks 含 interrupt 元数据（**不以 snapshot.next
+      为前置门槛**）。BUG-E2E2-03：动态 interrupt 在"同一次节点执行内的第 2 次暂停"
+      时 get_state().next 为空元组（LangGraph 把 __resume__ 计入 task.writes），
+      S-1 spike CP-S1-3 只观测过首问态形态，不构成 next 门槛的依据；
     - 工作线程异常一律 try/except 写入 self._worker_errors[thread_id]，由 UI 检测展示
       （100% 工作线程崩溃感知率，架构 §2.7.1）。
 """
@@ -166,15 +168,17 @@ def _reset_for_tests() -> None:
 # 状态取值（UI 徽标 + 挂回路由消费；与 derive_task_status 返回值强一致）。
 TASK_STATUS_FAILED = "failed"          # R2：values.error 非空
 TASK_STATUS_CANCELLED = "cancelled"    # R3：current_step==cancelled_by_user
-TASK_STATUS_DONE = "done"              # R4a：next 空 ∧ report_path 非空
-TASK_STATUS_NO_REPORT = "no_report"    # R4b：next 空 ∧ report_path 空（失败·未产报告）
-TASK_STATUS_AWAITING = "awaiting"      # R5：next 非空 ∧ 有 interrupt（等待输入）
-TASK_STATUS_RUNNING = "running"        # R6：next 非空 ∧ 无 interrupt ∧ 有存活 worker
+TASK_STATUS_DONE = "done"                # R4a：无挂起 interrupt ∧ next 空 ∧ report_path 非空
+TASK_STATUS_NO_REPORT = "no_report"      # R4b：无挂起 interrupt ∧ next 空 ∧ report_path 空
+TASK_STATUS_AWAITING = "awaiting"        # R5：有挂起 interrupt（不看 next，BUG-E2E2-03）
+TASK_STATUS_RUNNING = "running"          # R6：next 非空 ∧ 无 interrupt ∧ 有存活 worker
 TASK_STATUS_INTERRUPTED = "interrupted"  # R7：next 非空 ∧ 无 interrupt ∧ 无存活 worker（孤儿）
 
 
 def derive_task_status(snapshot, has_active_worker: bool) -> Optional[str]:
     """按优先级自上而下短路推导任务状态（架构 §4.1 规则表，纯函数）。
+
+    优先级 ``R1>R2>R3>R5>R4>R6>R7``（[BUG-E2E2-03] R5 已上移到 R4 之前）。
 
     输入 = snapshot（GraphController._main_graph.get_state 只读组装）+ 该 thread 是否有
     存活 worker（查进程级 `_THREAD_WORKERS`）。返回状态串；R1（快照不存在/values 空）
@@ -183,6 +187,7 @@ def derive_task_status(snapshot, has_active_worker: bool) -> Optional[str]:
     R5~R7 是 PRD"进程重启后无 worker 的在途任务口径"的答案：有 interrupt=等待输入
     （挂回应答即恢复，resume 是用户显式动作无副作用重放疑虑）；无 interrupt 的在途=已中断，
     区分锚 = 进程级 worker 登记表（进程重启后必空，next 非空即孤儿，判定确定）。
+    R5 先于 R4 是 BUG-E2E2-03 的修复面（动态 interrupt 暂停时 next 可为空元组）。
     """
     if not snapshot or not getattr(snapshot, "values", None):
         return None  # R1
@@ -191,12 +196,17 @@ def derive_task_status(snapshot, has_active_worker: bool) -> Optional[str]:
         return TASK_STATUS_FAILED  # R2
     if values.get("current_step") == "cancelled_by_user":
         return TASK_STATUS_CANCELLED  # R3
-    next_ = getattr(snapshot, "next", None) or ()
-    if not next_:
-        # R4a/R4b：图已到 END
-        return TASK_STATUS_DONE if values.get("report_path") else TASK_STATUS_NO_REPORT
+    # [BUG-E2E2-03] R5 提到 R4 之前：同一次节点执行内的第 2 次 interrupt 暂停时
+    # snapshot.next 为空元组（langgraph/pregel/main.py:1118-1138 把 __resume__ 计入
+    # task.writes），若先判 R4 会把"等待输入"误判成 done/no_report。
+    # 反向安全性：图真到 END 时 snapshot.tasks 为空（main.py:1129-1134
+    # tasks_w_writes 只遍历 next_tasks）→ 本行必不命中 → 仍落 R4，行为与改动前一致。
     if GraphController._has_interrupt(snapshot):
         return TASK_STATUS_AWAITING  # R5
+    next_ = getattr(snapshot, "next", None) or ()
+    if not next_:
+        # R4a/R4b：图已到 END（且无挂起 interrupt）
+        return TASK_STATUS_DONE if values.get("report_path") else TASK_STATUS_NO_REPORT
     if has_active_worker:
         return TASK_STATUS_RUNNING  # R6
     return TASK_STATUS_INTERRUPTED  # R7
@@ -387,29 +397,49 @@ class GraphController:
         return snapshot.values if snapshot else None
 
     def is_interrupted(self, thread_id: str) -> bool:
-        """判定 graph 是否处于 planning interrupt 暂停状态。
+        """判定 graph 是否停在**挂起的 interrupt** 上（三类 interrupt 通用）。
 
-        判定形态（S-1 spike CP-S1-3 实证）：snapshot.next 元组非空 **且** snapshot.tasks
-        中至少一个 task 含 interrupt 元数据。图已推进到 END 时 snapshot.next 为空元组，
-        返回 False。
+        判定依据 = ``snapshot.tasks[*].interrupts`` 非空（_has_interrupt）。
+        **严禁再引入 ``snapshot.next`` 作为前置门槛**（BUG-E2E2-03 根因）：本项目
+        全程使用动态 interrupt（节点函数体内 raise），当**同一次节点执行内发生第 2 次
+        及以后的 interrupt** 时（coding 凭证 gate 串行索要多项 / agent 多次调
+        request_user_input），该 checkpoint 上会同时存在 ``__resume__`` 与
+        ``__interrupt__`` 两类 pending write；LangGraph 的 get_state 走
+        apply_pending_writes=True（langgraph/pregel/main.py:1308），把带 writes 的
+        task 从 next 中剔除（main.py:1118-1124 / :1138）→ ``snapshot.next`` 变成空元组，
+        而中断信息仍完整挂在 tasks[*].interrupts 上。
+
+        适用范围：仅对 ``get_state(config)``（不带 checkpoint_id 的**最新**快照）成立。
+        ``get_state_history`` 走 apply_pending_writes=False（main.py:1352），会回放
+        **已被消费**的 interrupt——本方法及其同族读方法一律不得改读 history。
+
+        图已跑到 END 时 snapshot.tasks 为空元组（tasks_w_writes 只遍历 next_tasks，
+        main.py:1129-1134），故 _has_interrupt 必为 False，不存在"已完成被误判为等待输入"。
         """
         config = _make_config(thread_id)
         snapshot = self._main_graph.get_state(config)
-        return bool(snapshot and snapshot.next and self._has_interrupt(snapshot))
+        return bool(snapshot and self._has_interrupt(snapshot))
 
     def is_finished(self, thread_id: str) -> bool:
         """判定 graph 是否已运行至 END（S5-08 完成判定兜底，架构 sprint5 §7.8）。
 
         判定形态（与 is_interrupted 同一读路径范式，纯只读、不改 state）：snapshot
-        存在 **且** snapshot.next 为空元组。运行中 / interrupt 暂停时 next 非空 →
-        False。"存在"须校验 snapshot.values 非空——LangGraph 对从未启动的 thread_id
+        存在 ∧ values 非空 ∧ ``snapshot.next`` 为空元组 ∧ **无挂起 interrupt**。
+
+        [BUG-E2E2-03] 第三个合取项不可省：同一次节点执行内的第 2 次 interrupt 暂停时
+        ``next`` 也是空元组（LangGraph 把 __resume__ 计入 task.writes，
+        langgraph/pregel/main.py:1118-1138），只看 next 会把"暂停等输入"误判为"已结束"。
+        加上 not _has_interrupt 后，与 is_interrupted **语义正交**恢复成立
+        （tests/test_sprint5_s5_08_routing.py:437-448 的既有契约）。
+
+        "存在"须校验 snapshot.values 非空——LangGraph 对从未启动的 thread_id
         返回 values={} 的空快照（next 也是空元组），不能误判为已完成。
         """
         config = _make_config(thread_id)
         snapshot = self._main_graph.get_state(config)
         if not snapshot or not getattr(snapshot, "values", None):
             return False
-        return not snapshot.next
+        return not snapshot.next and not self._has_interrupt(snapshot)
 
     @staticmethod
     def _has_interrupt(snapshot) -> bool:
@@ -429,12 +459,13 @@ class GraphController:
         在 interrupt 暂停时尚未写入 snapshot.values，只存在于 interrupt payload dict 中
         （C1 e2e 实证），故 plan_review 页须经本方法取审核数据，而非 poll_state（S2-07 / D5）。
 
-        判定与 is_interrupted 一致：snapshot.next 非空且某 task 含 interrupts；命中即返回
+        判定与 is_interrupted 一致：某 task 含 interrupts（**不看 snapshot.next**，
+        BUG-E2E2-03：同节点第 2 次 interrupt 时 next 为空元组）；命中即返回
         interrupts[0].value（planning 节点 interrupt(payload) 注入的 dict）。
         """
         config = _make_config(thread_id)
         snapshot = self._main_graph.get_state(config)
-        if not (snapshot and snapshot.next):
+        if not snapshot:
             return None
         for task in (getattr(snapshot, "tasks", None) or ()):
             interrupts = getattr(task, "interrupts", None) or ()
@@ -455,10 +486,14 @@ class GraphController:
         安全纪律：token 只含 payload 哈希，敏感 question 原文不外泄（CP-3.1-2）。
         防御（R-S6-A1）：``interrupt.id`` 取不到（getattr 失败 / 为 None）时退化为**纯指纹**，
         判定仍可用（同 payload 仍同 token）。
+
+        判定口径（BUG-E2E2-03）：与 is_interrupted 同源，**不以 snapshot.next 为前置**——
+        否则同节点第 2 次 interrupt 时 token 退化为 None，S6-01 换代判定与 resume_with
+        第二道防线（app.py:327-335）会把用户的正常提交误判为"迟到提交"并拒绝。
         """
         config = _make_config(thread_id)
         snapshot = self._main_graph.get_state(config)
-        if not (snapshot and snapshot.next):
+        if not snapshot:
             return None
         for task in (getattr(snapshot, "tasks", None) or ()):
             interrupts = getattr(task, "interrupts", None) or ()
@@ -499,6 +534,11 @@ class GraphController:
         **纯只读无副作用**（不碰登记表、不碰 checkpoint），仅供 UI 阶段标签只读消费。
         注意：interrupt 暂停时 next 也非空，active_node 会等于 interrupt 节点——消费方靠
         case 分发顺序（interrupt 分支先于在途标签）区分（架构 §6.2）。
+
+        [BUG-E2E2-03] 另一边界：同一次节点执行内的**第 2 次** interrupt 暂停时
+        get_state().next 为空元组 → active_node 为 None。消费方必须保持"interrupt 分支
+        先于在途标签分支"的 case 分发顺序（execution_monitor.py:971 先于 :1025），
+        否则该状态会掉进 case⑦ 假轮询。本方法不做补偿（不引入 history 第二读栈）。
         """
         config = _make_config(thread_id)
         snapshot = self._main_graph.get_state(config)

@@ -710,3 +710,116 @@ def test_extra_env_reassembled_per_node_execution(secrets_workspace, tmp_path, m
     merged = load_all_secrets()
     assert merged["env:T22_PROBE_VAR"] == _FAKE_VALUE_A
     assert merged["env:T22_PROBE_VAR_2"] == _FAKE_VALUE_B
+
+
+# ===========================================================================
+# [BUG-E2E2-03] 同一次节点执行内的第 2 次 interrupt：真图快照形态 + controller 判定
+#
+# 为什么落在本文件：CP-2.2-3 的 _build_gate_graph 已经**真实制造出**该形态——
+# resume 掉 A 之后、暂停在 B 的那一刻，图正处于 ``next=() ∧ tasks[0].interrupts 非空``
+# （LangGraph 把 __resume__ 计入 task.writes，langgraph/pregel/main.py:1118-1138）。
+# 它只是从来没查过 snapshot。本组用例是全套里**唯一能防"LangGraph 升级后形态变化"**
+# 的真图锚：全离线、零配额、确定性。
+# ===========================================================================
+
+
+@pytest.fixture()
+def e2e2_second_interrupt(tmp_path, monkeypatch):
+    """真图跑到"同一次节点执行内的第 2 次 interrupt"，产出 (graph_app, cfg, thread_id, snapshot)。
+
+    与 CP-2.2-3 同样的隔离与两步 invoke：首次暂停在 A，resume A 后重跑 missing 重算、
+    暂停在 B（此时 checkpoint 上同时存在 __resume__ 与 __interrupt__ 两类 pending write）。
+    """
+    from langgraph.types import Command
+
+    ws = tmp_path / "workspace-e2e2"
+    ws.mkdir()
+    monkeypatch.setattr(config, "WORKSPACE_DIR", ws)
+    secrets_store._SESSION_SECRETS.clear()
+    secrets_store._SENSITIVE_VALUES.clear()
+
+    stub = _ReactStub()
+    monkeypatch.setattr(coding_module, "_coding_react", stub)
+    graph_app = _build_gate_graph(stub)
+    thread_id = "t22-e2e2-second-interrupt"
+    cfg = {"configurable": {"thread_id": thread_id}}
+
+    paused1 = graph_app.invoke(_two_missing_state(), cfg)
+    assert paused1.get("__interrupt__"), "前置：首次执行必须暂停在第一项 A"
+    paused2 = graph_app.invoke(
+        Command(resume={"value": _FAKE_VALUE_A, "remember": False}), cfg,
+    )
+    intr2 = paused2.get("__interrupt__")
+    assert intr2 and intr2[0].value["purpose_key"] == _PK_B, (
+        "前置：resume A 后必须暂停在第二项 B"
+    )
+    assert stub.seen == [], "前置：gate 未收齐前 ReAct 不得启动"
+
+    return graph_app, cfg, thread_id, graph_app.get_state(cfg)
+
+
+def _e2e2_controller(graph_app):
+    """真实 GraphController（绕过 __init__），_main_graph 直接指向上面的真图。"""
+    import threading
+
+    from app import GraphController
+
+    c = GraphController.__new__(GraphController)
+    c._lock = threading.Lock()
+    c._workers = {}
+    c._worker_errors = {}
+    c._main_checkpointer = object()
+    c._main_graph = graph_app
+    return c
+
+
+def test_e2e2_second_serial_interrupt_snapshot_shape_and_controller_judgement(
+    e2e2_second_interrupt,
+):
+    """[BUG-E2E2-03] 真图快照形态锁定 + is_interrupted 判定（面板弹出的总闸）。"""
+    from app import GraphController
+
+    graph_app, _cfg, thread_id, snap = e2e2_second_interrupt
+
+    # (1) 锁住 LangGraph 的真实形态——本组唯一能防"LangGraph 升级后形态变化"的断言。
+    assert snap.next == (), "第 2 次串行 interrupt 暂停时 get_state().next 应为空元组"
+    assert GraphController._has_interrupt(snap) is True, "中断确实挂在 tasks[].interrupts"
+    assert snap.tasks[0].interrupts[0].value["purpose_key"] == _PK_B
+
+    # (2) 真快照喂判定：不得因 next 为空而漏判。
+    controller = _e2e2_controller(graph_app)
+    assert controller.is_interrupted(thread_id) is True, (
+        "真图第 2 次串行 interrupt 必须被判为中断态（否则凭证输入面板不弹，功能性死锁）"
+    )
+
+
+def test_e2e2_second_serial_interrupt_is_finished_false(e2e2_second_interrupt):
+    """[BUG-E2E2-03] 同形态下 is_finished 必为 False（暂停等输入 ≠ 已到 END）。"""
+    graph_app, _cfg, thread_id, _snap = e2e2_second_interrupt
+    controller = _e2e2_controller(graph_app)
+    assert controller.is_finished(thread_id) is False
+
+
+def test_e2e2_second_serial_interrupt_payload_available(e2e2_second_interrupt):
+    """[BUG-E2E2-03] payload 必须取得到——否则 interrupt_kind 退化 None，UI 跳回审核页空转。"""
+    graph_app, _cfg, thread_id, _snap = e2e2_second_interrupt
+    controller = _e2e2_controller(graph_app)
+    payload = controller.get_interrupt_payload(thread_id)
+    assert payload is not None
+    assert payload["purpose_key"] == _PK_B
+    assert payload["allow_degrade"] is True
+
+
+def test_e2e2_second_serial_interrupt_token_available(e2e2_second_interrupt):
+    """[BUG-E2E2-03] token 必须取得到——否则 resume_with 第二道防线把正常提交误判「迟到提交」。"""
+    graph_app, _cfg, thread_id, _snap = e2e2_second_interrupt
+    controller = _e2e2_controller(graph_app)
+    assert controller.get_interrupt_token(thread_id) is not None
+
+
+def test_e2e2_second_serial_interrupt_derive_status_awaiting(e2e2_second_interrupt):
+    """[BUG-E2E2-03] 任务列表状态推导必须给 awaiting，而非 no_report「失败·未产报告」。"""
+    from app import TASK_STATUS_AWAITING, derive_task_status
+
+    _graph_app, _cfg, _thread_id, snap = e2e2_second_interrupt
+    assert derive_task_status(snap, False) == TASK_STATUS_AWAITING
