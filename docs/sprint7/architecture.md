@@ -1,9 +1,9 @@
-# Sprint 7 核心架构设计文档：修复循环失控治理族（S7-01~03）
+# Sprint 7 核心架构设计文档：修复循环失控治理族（S7-01~03）+ 修复循环记忆增强（S7-05）
 
-**文档版本**：v1.1（v1.0 = Q-S7-1~6 六项裁决 + S7-01~03 三需求方案；**v1.1 增补 §13 = S7-05 修复循环记忆增强档 B 方案**，Maria 决策后新增）
-**日期**：2026-07-19
+**文档版本**：v1.2（v1.0 = Q-S7-1~6 六项裁决 + S7-01~03 三需求方案；v1.1 增补 §13 = S7-05 修复循环记忆增强档 B 方案；**v1.2 增补 §14 = S7-06 只读环境探测的安全底座，仅裁 Q-S7-7/Q-S7-8 两项**，Maria 2026-07-28 授权）
+**日期**：2026-07-19（v1.0）／2026-07-20（v1.1 §13）
 **作者**：架构师代理
-**对应 PRD**：`docs/sprint7/prd.md` v0.3（Maria 拍板，2026-07-18；开放问题 Q-S7-1~6 全部在本文裁决）
+**对应 PRD**：`docs/sprint7/prd.md` v0.3 §2.1~2.3（Maria 拍板 2026-07-18，Q-S7-1~6 全部在本文 §1~§6 裁决）+ v0.4 §2.5（S7-05，本文 §13）。+ v0.5 §2.6（S7-06「资源探索能实际探测本机环境」，本文 §14）。**S7-06 的 Q-S7-7（只读强制形态与防绕过）/ Q-S7-8（cwd 落点与工厂复用形态）两项已在本文 §14 裁决；Q-S7-9~12 四项仍待裁**（后续批次单独授权增补），**A-S7-9（不引入人在回路确认）待 Maria 复核**。
 **体例参照**：`docs/sprint6/architecture.md` v1.0
 **回归现场样本（只读勿清理）**：`checkpoints.db` thread `task-99eef17bccf2`（预算耗尽静默降级 + import 反复失败 + 烧 92 超 60 三缺陷同现场）
 
@@ -591,4 +591,179 @@ payload["fix_history_digest"] = _digest_fix_loop_history(state, code_output_dir)
 
 ---
 
+## 14. S7-06 资源探索只读环境探测（安全底座：Q-S7-7 / Q-S7-8）
+
+**对应 PRD**：`docs/sprint7/prd.md` v0.5 §2.6（Maria 真人 e2e 复验两次提出）
+**日期**：2026-07-28
+**本节范围（严格）**：**只裁 Q-S7-7（只读强制形态与防绕过）+ Q-S7-8（cwd 落点与工厂复用形态）两项**。Q-S7-9（超时与输出规模）/ Q-S7-10（结论下游落点）/ Q-S7-11（R-PC4 冻结令）/ Q-S7-12（探测节制）**本节不裁**，凡依赖处一律标注"待 Q-S7-N 裁决"。A-S7-9（不引入人在回路确认）**Maria 尚未复核**，本节按其现状设计。
+**前置事实（源码级已核实）**：`run_command_tool.py` 的护栏**只约束"在哪跑"、不约束"跑什么"**——`_require_within_workspace` 校验的是 cwd，命令本身零机制限制，docstring 里"禁止用于完整训练/下载大数据集"只是给模型看的文字劝阻。故"把现有工具直接绑上去"不等于需求达成，缺的正是命令侧边界。
+
+> **本节架构特征（先说结论）**：只读 = **整条命令精确匹配的扁平允许清单**（一个 `frozenset[tuple[str,...]]` + 一条 `if`，无分级 / 无分类 / 无多档权限），判定在任何 `Popen` 之前；载体 = **新建薄封装 `core/tools/env_probe_tool.py`**，100% 复用 `_run_subprocess` 四护栏 + `_require_within_workspace` + `mask_value`，**`run_command_tool.py` 一字不动** —— coding 零影响从"靠默认参数没传"升级为"文件未被修改"的结构性保证。cwd = `state["workspace_dir"]`，闭包绑定、非工具入参。**config.py 本次零改动、state 契约零改动、执行通道零重造。**
+
+### 14.1 Q-S7-7 裁决：整条命令精确匹配，而非命令名
+
+**裁决**：判定对象是 `shlex.split(command)` 得到的 **argv 元组整体**；命中清单放行，未命中返回结构化拒绝且不启动任何进程。
+
+**为什么命令名粒度必然不安全（三条硬实证，均为"看起来只读"的命令名）**：
+
+| 命令 | argv[0] | 实际行为 | 触碰的禁止项 |
+|---|---|---|---|
+| `nvidia-smi -r` / `-pm 1` / `-pl 100` | `nvidia-smi` | 重置 GPU / 改持久化模式 / 改功耗上限 | 禁止项 1（改变机器状态） |
+| `pip list --outdated` | `pip` | 查询 PyPI index | 禁止项 2（联网拉取） |
+| `git clone <url>` | `git` | 下载仓库 | 禁止项 2 |
+
+补救只能靠参数黑名单，而黑名单 **fail-open**（漏一个即整套失效、且不可穷举），与 PRD 红线「必须由机制强制」冲突。
+
+**备选方案对比**：
+
+| | A：argv[0] 命令名白名单 | B：(命令名, 子命令) 二元白名单 | **C：整条 argv 精确匹配（选定）** |
+|---|---|---|---|
+| 判定规则数 | 1 | 2（含子命令位提取） | **1** |
+| 名单内危险子命令 / 危险开关 | **漏 / 漏** | 封 / **漏** | **封 / 封** |
+| 是否需黑名单兜底 | 必需 | 大概率需要 | **不需要** |
+| 代码量 | ~5 行 | ~25 行（选项混排边界坑多） | **~5 行** |
+| 参数灵活性 | 高 | 中 | 低（有等价替代，见下） |
+
+**关键权衡**：C 是唯一无需黑名单兜底的方案；C 的代码量反而最小（B 才最复杂）；灵活性损失有等价替代——`pip show <包>` 由 `pip list` 一次覆盖，`df -h <路径>` 由 cwd 锚定后的 `df -h .` 覆盖（问的恰是产物落地盘）。fail-closed 的代价是一次重试，fail-open 的代价是一次不可逆的机器改动。
+
+**允许清单初版（15 条，产品可调常量，增删走单点、机制不动）**：
+
+```python
+_PROBE_COMMANDS = (
+    "nvidia-smi", "nvidia-smi -L", "nvcc --version",          # GPU / 驱动 / CUDA
+    "lscpu", "free -h", "uname -srm",                          # CPU / 内存 / 架构
+    "df -h .",                                                 # 磁盘（cwd 即产物落地盘）
+    "python3 --version", "python --version",
+    "pip --version", "pip list",                               # Python 环境
+    "git --version", "gcc --version", "make --version", "cmake --version",
+)
+_ALLOWED_ARGV = frozenset(tuple(shlex.split(c)) for c in _PROBE_COMMANDS)
+```
+
+覆盖 PRD §2.6「允许探测」四类全部。刻意排除 `uname -a`（带主机名等无关信息）、`conda list` / `pip list --format=json`（输出体量，**待 Q-S7-9**）、一切解释器执行形态。
+
+**拒绝返回形态**：沿 `run_command_tool.py` 的 `_error_json` 范式（结构化 JSON、`exit_code: -1`、不抛异常）；**仅"不在清单"这一拒因**额外带 `allowed_commands`（取自同一常量，单一真相源），供 agent 当轮自纠。该返回是**给 agent 看的**；给用户看的探测文案另受 AC-S7-19 约束（`resource_scout.py` 已在 `tests/test_e2e2_message_guard.py::_GUARDED_MODULES` 内）。
+
+### 14.2 防绕过分析（对抗性自查）
+
+| 攻击手法 | 是否被封 | 封堵点 |
+|---|---|---|
+| `python -c` / `python3 -c` / `python -m pip install` | 封 | argv 元组不等（清单内 python 仅 `--version`） |
+| `sh -c` / `bash -c` / `env` / `xargs` / `nohup` / `timeout` / `nice` / `setsid` | 封 | argv[0] 不出现在任何清单条目 |
+| 管道 / 重定向 / `&&` / `;` / `$(...)` / 反引号 | 封（双保险） | 无 shell（`_run_subprocess` 的 popen_kwargs 无 shell 键）+ argv 不匹配 |
+| 绝对路径 `/bin/sh` / 相对路径 `./nvidia-smi` | 封 | 精确匹配要求 argv[0] 与清单裸名逐字符相等，带 `/` 即不等 |
+| `git clone` / `git -c protocol.ext.allow=always` / `-o ProxyCommand` | 封 | 清单只含 `git --version`；ssh/curl/wget 不在清单 |
+| `pip install` / `pip download` / **`pip list --outdated`** | 封 | 精确匹配（后者是命令名粒度会漏的实证） |
+| `conda install` / `apt-get` / `yum` / `brew` | 封 | argv[0] 不在清单 |
+| **`nvidia-smi -r` / `-pm` / `-pl`** | 封 | 精确匹配（命令名粒度会漏的第二个实证） |
+| `cat ~/.ssh/id_rsa` / `ls ~` / `find /` / `history` / `printenv` | 封（双保险） | 不在清单；且子进程环境经 `_build_sandbox_env` 白名单继承，凭证类变量本就不透传 |
+| 长耗时重负载（训练 / 基准） | 封 | 不在清单 + 超时杀子树兜底 |
+| cwd 越界 | 封 | cwd 闭包绑定非入参；再叠 `_require_within_workspace` |
+| 大小写 / 多空白 / NBSP 混淆 | 封（fail-closed） | 不等即拒 |
+| 软链接伪装 / PATH 劫持 | **部分封** | 需写权限，资源探索工具集无写能力、`ln` 不在清单；残余见 R-S7-17 |
+| **清单漂移**（后人加带自由参数条目） | **未封（流程风险）** | 清单即信任根；靠 AC-S7-21 守门 + 人工评审 |
+| **stdin 继承**（`_run_subprocess` 未设 `stdin=DEVNULL`） | **未封（当前无实害）** | 清单 15 条均不读 stdin；封堵需改共享执行路径，见 R-S7-18 |
+
+**未采纳的可选加固**：对软链接 / PATH 劫持可加 `shutil.which(argv[0])` 后断言不落在 `WORKSPACE_DIR` 下（约 3 行）。**不做** —— 它只封"PATH 含 `.` 且恶意二进制恰在 workspace 根"这一窄链（克隆落点是 `workspace/repos/<name>/`，够不着），封不住真正的残余（宿主 PATH 被污染 ≡ 宿主已陷，超出威胁模型）；加之属安全剧场，与最小抽象红线冲突。
+
+### 14.3 Q-S7-8 裁决：cwd = workspace_dir；另起薄封装，run_command_tool.py 零改动
+
+**cwd**：`state["workspace_dir"]`（资源探索时已就绪），回退 `config.WORKSPACE_DIR`（由 `ensure_directories()` 建目录）。**闭包绑定、不作为工具入参**；再叠 `_require_within_workspace`（对 `resolved == workspace` 放行，故 workspace 根自身合法）。`code_output_dir` 此刻为 `None`，不可用（PRD §2.6 已核实）。目录不存在的极端情形由 `_run_subprocess` 的 `OSError` 兜底转 `exit_code=-1`，不炸子图。
+
+**形态备选对比**：
+
+| | 1：复用工厂加 `allowed_commands` 参数 | 2：抽公共内核两边薄包 | **3：另起薄封装（选定）** |
+|---|---|---|---|
+| 改动 coding 共享文件 | 改 | 改（重构） | **不改** |
+| coding 零影响靠什么 | 靠"没传新参数"（默认 = 不限制，**fail-open 默认值**） | 靠重构无回归 | **靠文件未被修改** |
+| 工具描述冲突 | **无解**（一个 `@tool` 只有一份 docstring，而它是 schema；coding 那份明写"如 `python -c` / `py_compile`"，探测侧照抄等于诱导模型用必被拒的命令） | 可解 | **可解** |
+| 凭证口子 | 签名带 `extra_env`，须记得显式不传 | 同左 | **签名无此口** |
+| PRD §7 建议的该文件单收口窗口 | 需要 | 需要 | **可摘除** |
+
+**关键权衡（正面回答"同一工具两个相反边界怎么共存"）**：不共存，拆开。两个用途在命令边界、通用解释器、cwd、凭证注入、工具描述**五个维度上全部相反或不同**，共用一个 `@tool` 壳的收益只剩"少建一个文件"。真正值得复用的是执行护栏，薄封装 100% 复用（`_run_subprocess` 四护栏 + `_require_within_workspace` + `mask_value`），**不重造执行通道** —— A-S7-8 的实质诉求全部满足，被换掉的只是"复用同一个 `@tool` 壳"这一实现选择，而 A-S7-8 原文已写明该推翻路径（"若架构师论证改共享工具对 coding 风险不可控，可改为独立薄封装，产品契约不变"）。产品契约一条未动。**"最小抽象" ≠ "最少文件"**：一条判定规则 + 一个常量 + 一个工厂，小于"带模式开关、两套语义、一份自相矛盾 docstring 的共享工具"。
+
+**实现草图（架构级，非交付代码）**：
+
+```python
+# core/tools/env_probe_tool.py（新增）
+_PROBE_COMMANDS: Tuple[str, ...] = (...)                                   # 人读清单 = 唯一真相源
+_ALLOWED_ARGV = frozenset(tuple(shlex.split(c)) for c in _PROBE_COMMANDS)  # 预解析，模块级一次
+
+def make_probe_environment_tool(base_dir: str):
+    @tool
+    def probe_environment(command: str) -> str:
+        """（docstring 内嵌清单；全静态、零论文级/任务级动态值 → R-PC4 安全）"""
+        try:
+            argv = shlex.split(command)
+        except ValueError as exc:
+            return _reject(f"命令解析失败: {exc}")
+        if tuple(argv) not in _ALLOWED_ARGV:        # ← 唯一判定，在任何 Popen 之前
+            return _reject_with_list()
+        try:
+            _require_within_workspace(base_dir, label="环境探测工作目录")
+        except Exception as exc:
+            return _reject(f"工作目录越界: {exc}")
+        rr = _run_subprocess(argv, cwd=base_dir,
+                             timeout=config.RUN_COMMAND_TIMEOUT,                # 待 Q-S7-9
+                             output_max_bytes=config.SANDBOX_OUTPUT_MAX_BYTES,  # 待 Q-S7-9
+                             extra_env=None)                                    # 不注凭证
+        return json.dumps({...mask_value(rr.stdout)...}, ensure_ascii=False,
+                          sort_keys=True, default=str)
+```
+
+**清单常量放工具模块内而非 `config.py`** —— 它是该工具的语义边界，必须与 docstring 同步；分处两文件更易漂移。
+
+### 14.4 落点清单（供 dev-plan）
+
+| 项 | 文件:落点 | 类型 | 说明 |
+|---|---|---|---|
+| `_PROBE_COMMANDS` / `_ALLOWED_ARGV` / `make_probe_environment_tool(base_dir)` | `core/tools/env_probe_tool.py` | **新文件（纯新增，约 90 行）** | 清单常量放本模块（与 docstring 同源防漂移），不放 `config.py` |
+| 工具装配 5→6 | `core/nodes/resource_scout.py` 的 `get_tools` | 加 1 行 | `make_probe_environment_tool(base_dir=state.get("workspace_dir") or str(config.WORKSPACE_DIR))` |
+| SystemMessage 工具说明 | `resource_scout.py` 的 `_RESOURCE_SCOUT_SYSTEM_PROMPT_BODY`（冻结区） | prompt 改 | **待 Q-S7-11 冻结令裁决**，本节不裁；仅确认工具侧 docstring 与清单均为静态常量、跨论文字节一致，不引入论文级动态值 |
+| `core/tools/run_command_tool.py` | — | **零改动** | coding 零影响结构性保证；PRD §7 曾建议为该文件设单收口窗口，本裁决下**可摘除**，降低并行冲突面 |
+| `config.py` | — | **零改动** | 超时 / 输出上限沿用 `RUN_COMMAND_TIMEOUT=120` 与 `SANDBOX_OUTPUT_MAX_BYTES=1MiB` —— **是否收窄待 Q-S7-9** |
+| 既有 5→6 断言 | `tests/test_sprint2_b2.py`、`tests/test_sprint6_b1_prompt_guards.py` | 断言同步 | 沿"只换不弱化"纪律；两处文案均写死"5 个 / 由 6 降为 5"，须同步改为 6 |
+| 探测结论落点 | `resource_info` / 规划上下文 | — | **待 Q-S7-10 裁决**，本节不裁 |
+| state 契约 | — | **零改动** | 不新增字段、不动 interrupt payload |
+
+### 14.5 AC 建议
+
+PRD 既有 **AC-S7-15**（工具集 5→6 + cwd 锚定 / 越界被拒）与 **AC-S7-16**（只读保证，须副作用探针 + 验红）已覆盖本节主体，测试点细化：
+
+- **AC-S7-16 的必拒集**（建议逐条覆盖）：`python -c "..."`、`sh -c "..."`、`env`、`xargs`、`pip install x`、`pip list --outdated`、`git clone <url>`、`nvidia-smi -r`、`/bin/sh`、`./nvidia-smi`、`cat ~/.ssh/id_rsa`、`df -h /home`（含自由参数）。
+- **副作用探针形态**：以指向探针文件的 `rm` / 重定向写入类命令构造，执行后断言探针文件原样存在；并断言判定发生在 `Popen` 之前（可 monkeypatch `_run_subprocess` 断言未被调用 —— 这比只断返回码更强）。
+- **必过集**：清单 15 条中不依赖本机可选组件的若干条（如 `python3 --version` / `df -h .` / `uname -srm`）断言 `exit_code==0` 且有输出。
+
+**建议新增两条守门 AC（PRD 现止于 AC-S7-20，编号待 PM 回填）**：
+
+| 编号 | 归属 | 验收标准 | 可测方式 |
+|---|---|---|---|
+| **AC-S7-21**（建议） | S7-06 | **清单形态守门（防漂移，绕过分析已列为唯一未封的流程风险）**：`_PROBE_COMMANDS` 每一项经 `shlex` 解析后 argv 元组完全确定（不含 `{}` / `<>` / `$` 等占位符形态）；清单内不存在通用解释器执行形态（无条目 argv 含 `-c`；无条目 argv[0] ∈ {sh,bash,zsh,env,xargs,nohup,timeout,nice,...}）；docstring 内清单文本与常量一致 | 对常量做形态断言（遍历清单逐条校验）+ docstring 与常量一致性断言。任何往清单加自由参数条目的改动必须打红本条 |
+| **AC-S7-22**（建议） | S7-06 | **双用途边界互不削弱（本需求最易出事处，须对照断言）**：同一测试内，coding 装配出的 `run_command` 执行 `python -c "print(1)"` 与 `python -m py_compile <file>` **仍成功**；资源探索装配出的 `probe_environment` 执行同样两条命令**被结构化拒绝且未执行** | 一正一负对照用例（同文件相邻两条），把"边界相反且互不削弱"直接变成可测断言；比"断言 `run_command_tool.py` 未被 diff"更可执行 |
+
+### 14.6 风险登记
+
+| 编号 | 风险 | 缓解 | 回退 |
+|---|---|---|---|
+| R-S7-13 | 清单太紧，探不到某项关键事实（如需精确查单个包版本） | `pip list` 一次覆盖绝大多数场景；缺项走单点加清单条目 | 加条目，机制不动、无需重新论证安全性 |
+| R-S7-14 | 模型反复写出清单外命令、浪费轮次（S7-05 真跑实测 coder 遵守率仅 75%，不服从是常态） | 拒绝返回附 `allowed_commands` 供当轮自纠；prompt 侧措辞 **待 Q-S7-11**，控量 **待 Q-S7-12** | 清单直写进 SystemMessage（代价属 Q-S7-11 冻结令范畴） |
+| R-S7-15 | `pip list` 在依赖多的机器上输出数百行，吃 context / 拖 token | 现有 1MiB 字节截断兜底（不炸），但 token 成本仍在 | **待 Q-S7-9**（可换更紧凑形态或加探测专用输出上限） |
+| R-S7-16 | 清单漂移：后人加入带自由参数条目重新打开缺口 | AC-S7-21 形态守门（改清单必须过守门）+ 人工评审 | 清单是唯一信任根，评审责任在人，无机制可替 |
+| R-S7-17 | 宿主 PATH 被第三方污染，清单裸名解析到恶意二进制 | 资源探索工具集无写文件能力、`ln` / 改 env 全被拒；该风险等价于宿主已被攻陷 | 可选加固（`shutil.which` 后断言不在 workspace 下），本次评估为安全剧场故不做 |
+| R-S7-18 | `_run_subprocess` 未设 `stdin=DEVNULL`（已核实），若将来清单加入会读 stdin 的命令（如裸 `python`）会挂到超时才被杀 | 当前清单 15 条均不读 stdin，无实害；AC-S7-21 的"无解释器形态"守门顺带压住这一类 | 若确需封堵，改共享 `_run_subprocess` 会触碰 coding 执行路径，须单独设收口窗口 |
+
+### 14.7 本节未裁项（后续批次单独授权）
+
+| 编号 | 待裁内容 | 本节的临时立场 |
+|---|---|---|
+| Q-S7-9 | 超时与输出规模 | 暂沿用 `RUN_COMMAND_TIMEOUT=120` / `SANDBOX_OUTPUT_MAX_BYTES=1MiB`；R-S7-15（`pip list` 体量）与残余风险"清单内命令偶发挂起最坏 120s"一并归该项 |
+| Q-S7-10 | 探测结论的下游落点 | 本节只裁"怎么跑得安全"，不裁"探到的事实进哪个键"；AC-S7-18 的命门在该项 |
+| Q-S7-11 | R-PC4 冻结令（工具清单 5→6 改 `bind_tools` 前缀 + SystemMessage 工具说明措辞） | 本节只保证工具侧零动态值（docstring 与清单均为静态常量，跨论文字节一致，不破 AC-S7-20 的根本性质）；前缀变更是否放行、prompt 怎么写，归该项 |
+| Q-S7-12 | 探测节制（轮次与预算） | 本节的 fail-closed 设计会产生"写错即被拒、需重试"的轮次消耗（R-S7-14），控量归该项 |
+| A-S7-9 | 不引入人在回路确认 | **Maria 尚未复核**，本节按其现状设计（无 interrupt 新种类、无逐条确认） |
+
+
 *（v1.1 全文完：v1.0 六项裁决 + S7-01~03 方案，§13 增补 S7-05 记忆增强档 B（Maria 三点修订后：全保留无窗口 + coder 自述 fix_note 定位/逻辑 + 不加 execution 判定理由）。核心 = 复用 S7-02 落盘日志 + coder 顺带自述，零新管道/零新增 LLM/零 react_base 改动/子图隔离不破；state 加 4 键（2 传递+2 记录）旧 checkpoint 兼容；token 上界受 MAX_FIX_LOOP_COUNT=20 + _FIX_NOTE_MAX_CHARS=120 双封顶。待 Maria 拍板 Q2/Q4 后转 dev-plan → 开发；files_written 取值链路由 dev 实现时按 §13.7 落。）*
+
+
+*（v1.2 增补完：§14 = S7-06 只读环境探测安全底座——Q-S7-7 裁「整条命令精确匹配的扁平允许清单」（命令名粒度有 `nvidia-smi -r` / `pip list --outdated` / `git clone` 三条实证会漏，黑名单 fail-open 不满足「机制强制」红线）、Q-S7-8 裁「另起薄封装 `env_probe_tool.py`，`run_command_tool.py` 零改动」（coding 侧需要 `python -c`、探测侧必须禁它，一个 @tool 只有一份 docstring，边界相反无法共存故拆开）。含对抗性绕过分析 15 类 + 两条真残余风险（清单漂移 / stdin 未设 DEVNULL）+ 建议新增 AC-S7-21/22。Q-S7-9~12 四项未裁，A-S7-9 待 Maria 复核。）*

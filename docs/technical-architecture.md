@@ -1,9 +1,9 @@
 # 论文自动复现系统 -- 技术架构文档
 
 **产品名称**：Auto-Reproduction
-**版本**：v1.1
+**版本**：v1.2
 **日期**：2026-05-06
-**最后更新**：2026-07-05
+**最后更新**：2026-07-28
 **状态**：正式定稿（当前权威活文档，随代码演进持续更新）
 
 ---
@@ -179,12 +179,14 @@ class ReActState(TypedDict):
 |------|-----------|---------|---------|
 | paper_intake | 10 | 2-3 | get_paper_brief, get_paper_head, search_papers |
 | paper_analysis | 24 | 6-10 | get_paper_structure, read_section, get_full_paper, search_papers |
-| resource_scout | 20 | 4-7 | web_search, search_papers, get_paper_brief, search_pwc, git_clone_and_analyze, check_url_reachable |
+| resource_scout | 20 | 4-7 | web_search, search_papers, get_paper_brief, git_clone_and_analyze, check_url_reachable（共 5 工具；Sprint 6 MF-5 摘除 PwC 通道后已无 `search_pwc`） |
 | planning | 16 | 3-5 | read_section, get_paper_structure, web_search, check_url_reachable, git_clone_and_analyze |
 | coding | 24（REACT_MAX_ROUNDS_CODING） | 视修复轮次 | write_code_file, read_code_file, list_dir, read_section, web_search, run_command, request_user_input（共 7 工具） |
 | execution（内嵌子图） | 20（REACT_MAX_ROUNDS_EXECUTION，FLOOR） | 视执行步骤 | prepare_environment, run_in_sandbox, request_user_input |
 
 > 注：`reporting` 现为纯函数三形态报告（非 ReAct），不在此表；`execution` 行指其内嵌 ReAct 子图（`_run_execution_agent`），编排层收尾本身不调 LLM（仅指标解析档 3 LLM 抽取兜底除外），预算按子图实际轮次由编排层单点扣减。
+>
+> **S7-03（Sprint 7 已交付）单轮刹车**：execution 内嵌子图每回合拿到的轮次上限，在入口再收窄一道——`effective_max_rounds = max(1, min(_effective_max_rounds(plan), MAX_DEV_LOOP_LLM_CALLS - _dev_loop_llm_calls))`（`core/nodes/execution.py`）。即"本轮可烧轮次"要先扣掉跨回合已累计的子预算，防止单轮一口气烧穿 `MAX_DEV_LOOP_LLM_CALLS`（此前子图只看本轮 `round`、对跨回合累计无感）。喂给 agent 的 HumanMessage 里 `max_rounds` 仍是联动值——收窄是系统护栏、agent 无需感知，也避免动态前缀抖动。
 
 #### 3.2.2 coding ↔ execution 修复循环（当前代码实证）
 
@@ -212,7 +214,7 @@ class ReActState(TypedDict):
   - **更换仓库**：查看候选仓库列表，选择不同的仓库（或要求重新搜索），`planning` 节点基于更换后的仓库信息重新生成计划
   - **切换模式**：选择"只编码不执行"（code_only）时，coding 完成后不进入 execution 直接出报告（当前无独立 `coding_only` 节点）
 - **恢复执行**：用户确认后，通过 `graph.invoke(Command(resume=user_feedback))` 恢复图执行
-- **execution 失败中断（interrupt#2）**：当修复循环触顶（`fix_loop_count` 达 `MAX_FIX_LOOP_COUNT=20`）、错误不可自动修复或修复循环子预算耗尽时，`execution` 节点触发 `interrupt(interrupt_kind="dev_loop_failure")`，暂停图执行。Streamlit UI 展示失败详情（各轮错误摘要与修复尝试，来自 `fix_loop_history`），用户从以下三个选项中选择：
+- **execution 失败中断（interrupt#2）**：当修复循环触顶（`fix_loop_count` 达 `MAX_FIX_LOOP_COUNT=20`）、错误不可自动修复、修复循环子预算耗尽（`MAX_DEV_LOOP_LLM_CALLS=120`）或**总重试预算耗尽**（`retry_budget_remaining < DEV_LOOP_MIN_CALLS_PER_ROUND=4`，S7-01）时，`execution` 节点触发 `interrupt(interrupt_kind="dev_loop_failure")`，暂停图执行。Streamlit UI 展示失败详情（各轮错误摘要与修复尝试，来自 `fix_loop_history`），用户从以下三个选项中选择：
   - **A. 导出代码包 + 错误诊断报告**：将已生成代码和详细错误诊断打包交付，流程进入 reporting 节点
   - **B. 回退到计划审核**：利用 LangGraph checkpoint 回退到 planning 节点的 interrupt 点，用户修改计划后重新执行
   - **C. 终止任务**：terminate 直接路由到 END（不经 reporting、不生成终止报告，`core/graph.py` `_route_after_execution`）；checkpoint 与 workspace 产物（论文分析、计划、代码、日志）原样保留，可手动取用
@@ -231,8 +233,8 @@ class ReActState(TypedDict):
 
 **execution 后路由（`_route_after_execution`）**：
 - `_dev_loop_route == "await_dev_loop_interrupt"` → self-loop 回 `execution`（interrupt#2 的 commit 边界重入）。
-- `_dev_loop_route == "retry_coding"`（可自动修复 + `fix_loop_count < 10` + 子预算够）→ 回边送回 `coding`（`fix_loop_count` 自增）。
-- export_code（用户三选一）或 B 档成功 / 降级 → 进入 `reporting`；terminate（含 `cancelled_by_user`）→ 直接 END（checkpoint 与 workspace 产物保留，不经 reporting）；revise_plan → 经 checkpoint 回退到 planning interrupt#1。
+- `_dev_loop_route == "retry_coding"`（可自动修复 + `fix_loop_count < MAX_FIX_LOOP_COUNT(20)` + 子预算够 + **总预算够一回合**）→ 回边送回 `coding`（`fix_loop_count` 自增）。S7-01 起总预算门是这条回边的准入否决条件之一（不足一回合就不再回 coding，直接走 interrupt#2），不再单独提前静默降级。
+- export_code（用户三选一）或 B 档成功 / 降级 → 进入 `reporting`；terminate（含 `cancelled_by_user`）→ 直接 END（checkpoint 与 workspace 产物保留，不经 reporting）；revise_plan → 经 checkpoint 回退到 planning interrupt#1，同时 `fix_loop_count` 清零、`retry_budget_remaining` 全额重置为 `MAX_TOTAL_LLM_CALLS`（S7-01，见 §12.7）。
 
 #### code_only 模式交付标准
 
@@ -720,6 +722,35 @@ v2 版本将支持 Docker 容器作为远程执行沙箱，提供更强的隔离
 
 凭证以环境变量经 sandbox `extra_env` 注入执行子进程（`_run_subprocess` 的 `env = {**os.environ, **(extra_env or {})}`）。`run_in_venv` 与 `prepare_venv` 均带 `extra_env` 形参并透传给内部子进程（含 pip install，sp4 D1 落地）。git 认证失败经 `GIT_TERMINAL_PROMPT=0` 让子进程立即返回而非挂起等 stdin。敏感值**完全不进 GlobalState / checkpoint**，勾"记住"时写入独立 `.secrets`（0600 + gitignore，MVP 不加密）；全链路（生成代码 / 日志 / 报告）脱敏。`.secrets` 路径与凭证映射已于 sp4 A3 定案：文件名 `config.SECRETS_FILE_NAME=".secrets"`，实际路径 = `Path(workspace_dir) / SECRETS_FILE_NAME`（运行期 state 优先，回退 `config.WORKSPACE_DIR`）；`core/secrets_store.py` 提供 `lookup_secret` / `remember_secret` / `load_all_secrets` / `register_sensitive_value` / `iter_sensitive_values` / `mask_value` 六接口，另有 `build_credential_env` 完成 `purpose_key → env var` 映射（GIT_ASKPASS 脚本 + `GIT_TERMINAL_PROMPT=0` + HF token 等）。
 
+
+### 7.5 只读环境探测边界（S7-06）
+
+> **状态：设计已裁决 / 代码未交付**（2026-07-28）。本节是 S7-06 的设计契约先行落盘（裁决见 `docs/sprint7/architecture.md` §14，需求见 `docs/sprint7/prd.md` v0.5 §2.6），**其描述的 `core/tools/env_probe_tool.py` 当前尚不存在**。代码交付后删除本状态行并回填源码行号锚点。
+
+资源探索节点需要知道"这台机器是什么样"（有无 GPU / 显存 / CUDA 版本 / 已装依赖 / 磁盘余量），否则资源结论只能建立在对本机环境的假设上，代价要到下游才暴露。为此新增一个**只读探测**工具，它与 coding 的 `run_command` **不是同一个工具**。
+
+**机制底线：只读由允许清单强制，不由 prompt 约束。** 判定形态 = **整条命令精确匹配**（`shlex` 解析后的 argv 元组相等），而非命令名匹配，判定发生在任何子进程启动之前：
+
+- 命令名粒度不成立的实证 —— `nvidia-smi -r`（重置 GPU）、`pip list --outdated`（联网查 index）、`git clone`（下载）三者的 argv[0] 都落在"看起来只读"的命令名里；
+- 参数黑名单 fail-open（漏一个即失效、无法穷举），整条命令允许清单 fail-closed（写错即被拒，代价是一次重试）。
+
+**两个用途的边界对照（同一执行内核，相反的命令边界）**：
+
+| 维度 | coding `run_command`（sp4 起） | 资源探索 `probe_environment`（S7-06） |
+|------|------|------|
+| 目的 | 写完代码跑一下（smoke 自查） | 问机器"你是什么样"（只读探测） |
+| 命令边界 | 不限制命令，只限制 cwd | 只允许清单内的整条命令 |
+| 通用解释器 | **需要**（`python -c` / `py_compile`） | **禁止**（清单内无任何解释器执行形态） |
+| cwd | `code_output_dir` | `workspace_dir` |
+| 凭证注入 | 有（`build_credential_env`） | 无（工厂签名不开此口） |
+| 落点 | `core/tools/run_command_tool.py` | `core/tools/env_probe_tool.py`（新增） |
+
+两者**共用同一套执行护栏**、不新造执行通道：`sandbox/local_venv.py::_run_subprocess`（禁 `shell=True`、进程组隔离、超时杀子树、输出字节截断、`OSError` 兜底不逃逸）+ `_require_within_workspace` cwd 校验 + `core/secrets_store.py::mask_value` 脱敏。差异只在"允许跑什么"这一层。**S7-06 不修改 `run_command_tool.py`** —— coding 侧零影响是文件级结构性保证，而非依赖默认参数。
+
+**隐私边界**："只读"不等于"无害"。读取家目录内容 / 凭证文件 / shell 历史一律被清单排除（`cat` / `ls` / `find` / `env` / `printenv` / `history` 均不在清单内）；此外探测子进程的环境本就经 `_build_sandbox_env` 白名单继承，`LLM_API_KEY` / `DEEPXIV_TOKEN` 一类不在白名单，探测进程拿不到。
+
+**失败即降级不阻断**：命令被拒、超时、本机没有该命令、输出为空，一律走结构化返回（不抛异常），资源探索照常完成、不因此进降级名单；"这台机器没有 GPU"是一条有效探测结论，不是错误。
+
 ---
 
 ## 8. 中断恢复方案
@@ -1135,7 +1166,7 @@ def node_fn(state: GlobalState) -> dict:
 **终止/路由条件**（`execution` 节点 `_maybe_interrupt_or_return` + `_route_after_execution` 判断）：
 - 执行成功（B 档：exit 全 0 且 ≥1 指标）或降级 → 出 `reporting`。
 - 失败且错误属可自动修复类（`AUTO_FIXABLE` = syntax / import / dependency / path / runtime）、`fix_loop_count < MAX_FIX_LOOP_COUNT(20)` 且修复循环子预算未耗尽（`MAX_DEV_LOOP_LLM_CALLS(120)`、入口门 `DEV_LOOP_MIN_CALLS_PER_ROUND(4)`）→ 经 `retry_coding` 回边送回 coding（`fix_loop_count` 单点自增）。
-- 触顶 / 不可自动修复 / 子预算耗尽 → 触发 interrupt#2（`interrupt_kind="dev_loop_failure"`），等待用户三选一决策（§12.8）。
+- 触顶 / 不可自动修复 / 子预算耗尽 / **总重试预算不足一回合**（`retry_budget_remaining < DEV_LOOP_MIN_CALLS_PER_ROUND`，S7-01）→ 触发 interrupt#2（`interrupt_kind="dev_loop_failure"`），等待用户三选一决策（§12.8）。四类终态共用同一条 commit-边界-return + self-loop 重入的两段式路径（S-1 重跑幂等契约不破），面板文案经 `replace(feedback, summary/fix_hint=...)` 数据通道注入，不新增 interrupt 种类、不加第四态选项。
 
 coding 修复回合经 GlobalState 获取上下文：上一轮 `execution_result` + `[error_category=...]` 前缀 + `fix_loop_history`（各轮错误摘要与修复策略），由 `_build_coding_context` 注入修复反馈 HumanMessage。
 
@@ -1168,6 +1199,8 @@ LangGraph SqliteSaver 在每个节点完成后自动保存 checkpoint，错误�
 | 单任务总 LLM 调用 | 240 次（`MAX_TOTAL_LLM_CALLS`，可配置） | 全局保护，防止成本失控；与上一行修复循环子预算构成强约束 120 < 240 |
 
 预算对用户不透明、不可调。预算接近耗尽时系统给出 WARNING 级通知；最终报告中记录总修复尝试次数。
+
+> **S7-01（Sprint 7 已交付）预算耗尽的处置语义**：总预算耗尽**不再**静默降级出报告，而是与"触顶 / 不可修复 / 子预算耗尽"合流触发 interrupt#2，由用户在既有三态中选择（不新增"追加预算"第四态——那会把硬上限变成可协商）。用户选 `revise_plan` 时，除 `fix_loop_count` 清零外，`retry_budget_remaining` 全额重置为 `MAX_TOTAL_LLM_CALLS`（语义："换计划 = 重新开始"，与 `core/state.py` 初始化同口径）；而 `_dev_loop_llm_calls` **不重置**，`MAX_DEV_LOOP_LLM_CALLS` 子上限继续生效，故重置后仍不突破 240/120 硬顶。
 
 > **S2-12 对话调用与预算的关系（架构裁定 2026-06-11，方案 A）**：审核页"对话式改计划"（PRD §2.12）的 LLM 调用发生在 graph 之外的 Streamlit 主线程（planning interrupt 暂停期间），由 UI session 计数器（`_review_chat_calls`）独立计数并在 info-bar 展示「本轮对话已消耗 X 次调用」，**不回写** `retry_budget_remaining` 账本。这是经评估的设计选择，非待修缺口：回写需在主线程引入写路径（`update_state`），破坏 spike S-2 验证的"主线程只读 + worker 独写 + 每线程独立 SqliteSaver"线程安全模型，并在 interrupt 暂停态有 checkpoint 一致性 / 恢复点漂移风险；收益（精确化一个对用户本就不透明、不可调的内部字段）不抵风险。PRD §2.12「对话调用计入 `MAX_TOTAL_LLM_CALLS` 总预算」为**产品认知/软提示语义**——对话轮次与 revise 同质，**共用同一条 `PLANNING_SOFT_HINT_THRESHOLD`（N≥5）软提示线**（不用 `MAX_TOTAL_LLM_CALLS` 比例阈值：预算是 ReAct round 口径、对话是次数口径，量纲不同且长对话上下文早膨胀使比例线永不触发）。**演进口**：若未来需把对话成本纳入统一硬控上限，按 C 方案（resume 时由 planning 节点合并扣减、仍在 worker 线程写）演进，本期不做。
 
@@ -1253,8 +1286,8 @@ prepare_venv() 失败
 | SqliteSaver 初始化 | `core/checkpointer.py` | checkpoint 管理基础设施 |
 | LLM 客户端封装 | `core/llm_client.py` | OpenAI 兼容 API 调用封装，含指数退避重试、structured output、token 估算 |
 | deepxiv_tools 封装 | `core/tools/deepxiv_tools.py` | Reader 薄封装 + LangChain @tool 工厂函数 |
-| paper_intake 节点 | `core/nodes/paper_intake.py` | 论文输入与解析（ReAct agent，max_rounds=5） |
-| paper_analysis 节点 | `core/nodes/paper_analysis.py` | 深度论文分析（ReAct agent，max_rounds=12） |
+| paper_intake 节点 | `core/nodes/paper_intake.py` | 论文输入与解析（ReAct agent，max_rounds=10） |
+| paper_analysis 节点 | `core/nodes/paper_analysis.py` | 深度论文分析（ReAct agent，max_rounds=24） |
 | 配置管理 | `config.py` | 路径、默认值等配置 |
 | 依赖声明 | `requirements.txt` | 所有 Python 依赖 |
 
@@ -1318,4 +1351,6 @@ prepare_venv() 失败
 *2026-07-02 更新（重大校准）：使文档与 Sprint 3 已落地代码及 Sprint 4 已确认方向（路线丙）对齐。（1）删除全文对 `dev_loop` 子图 / `coding_agent`+`execution_agent` 共享对话历史 multi-agent / `coding_only` 节点的描述——这些从未落地，且路线甲已被 Sprint 4 明确否掉。（2）修正为当前真实形态：主图 7 个独立节点，coding（ReAct wrapper）↔ execution（手写确定性七步节点 + interrupt#2）经条件边（`_route_after_coding` / `_route_after_execution`）构成修复循环，上限 `MAX_FIX_LOOP_COUNT=10`（原文档误写 5 轮）+ 子预算 `MAX_DEV_LOOP_LLM_CALLS=60`。（3）interrupt 点纠正为两个：interrupt#1（planning 后，`kind="planning"`）、interrupt#2（execution 失败，`kind="dev_loop_failure"`）。（4）叠加 Sprint 4 路线丙方向：coding/execution 升级为两个松耦合真 agent（7 节点骨架不变、不上 supervisor、不共享 scratchpad），coding 补 run_command + request_user_input，execution 升级为手写编排 + 内嵌 ReAct 子图的 execution agent + sandbox 工具化；新增第三类 interrupt#3（`kind="user_input_request"`）通用交互能力；新增 `ErrorCategory.CREDENTIAL_REQUIRED`；凭证经 sandbox `extra_env` 注入、敏感值不进 state（§7.4）。Q-A1/Q-A2（execution ReAct 化编排安置与预算对账）、Q-B1（run_command venv/超时）、Q-E1（.secrets 路径）等具体方案留待 Sprint 4 架构文档细化，本全局文档只写到方向层。依据 docs/sprint4/prd.md。*
 *2026-07-05 更新（v1.1，文档一致性审查修复）：16 项对齐代码现状——（1）预算常量：MAX_TOTAL_LLM_CALLS 50→120（3 处，config.py 权威），§12.7 注明修复循环子预算强约束 60 < 120；（2）execution 节点形态：Sprint 4 阶段 E 已收官，全文由"手写确定性七步 + Sprint 4 方向"改为现在时——手写编排 + `_run_execution_agent` 内嵌 ReAct 子图（prepare_environment / run_in_sandbox + request_user_input），§3.2.1 表补 execution 行（REACT_MAX_ROUNDS_EXECUTION=10）；（3）§7.4 凭证注入 sp4 缺口已补齐：prepare_venv extra_env 形参（D1）、.secrets 路径与 secrets_store 六接口 + build_credential_env（A3）；（4）interrupt#3（user_input_request）与 coding 双工具（run_command + request_user_input）升级为与 #1/#2 并列的正式机制描述；（5）§5 模块结构树按磁盘实况重写（删除从未存在的 search_tools/shell_tools/file_tools/remote_docker/report_view/paper_card/progress_bar/error_display，补 secrets_store/pwc_tools/code_fs_tools/run_command_tool/interaction_tools/_repo_scoring/result_report），§2 架构图与 §13 表同步订正；（6）terminate 路由改为实况：terminate/cancelled_by_user 直接 END，不经 reporting、不生成终止报告（core/graph.py）；（7）FixLoopRecord.error_category 枚举对齐 execution.py ErrorCategory（无 oom/other，OOM 归 hardware）；（8）§4 GlobalState 补齐 6 字段（_planning_pending_repo_url/_planning_switch_failed/_dev_loop_route/_dev_loop_llm_calls/pending_user_input/collected_inputs），声明以 core/state.py 为唯一权威源；（9）CUDA OOM 行为改为 HARDWARE 分类触发 interrupt#2（"自动 batch_size 减半重试"从未实现）；（10）§9 异步方案改为"主线程只读轮询 + worker 线程 invoke/resume(Command)"，消除与 §12.7 裁定的 update_state 矛盾；（11）默认模型改 azure/openai/gpt-5.4（Claude 降为兼容选项，默认链路自动型缓存实测命中 spike S-3）；（12）max_tokens 默认 8192（2 处）；（13）resource_scout 工具补 search_pwc（6 工具）、planning 补 git_clone_and_analyze（5 工具）；（14）ReActState.status 枚举对齐 react_base.py（reasoning/tool_call/done/budget_exhausted）；（15）§8.1 checkpointer 示例改为手动 sqlite3.connect + WAL 形态（from_conn_string 已否决）；（16）版本头升 v1.1、增"最后更新"字段。*
 *2026-07-20 更新（Sprint 7 · S7-05 修复循环记忆增强，档 B）：coder 每个修复回合原本从 fresh messages 起步、看不到自己前几轮试过什么（现场 thread task-99eef17bccf2 实测 4 轮全栽在同一 import）——现补上"跨回合记忆"。（1）§4 `FixLoopRecord` 加两个丰富字段：`fix_note`（coder 在 `<result>` 顺带自述的"本轮问题定位 + 修复逻辑"，一两句 ≤_FIX_NOTE_MAX_CHARS=120，比 error_category 规则标签丰富、零新增 LLM 调用）、`files_touched`（coder 那轮改动的文件列表）；均旧 checkpoint `.get` 兜底。（2）§4 `GlobalState` 加两个 coding→execution 单点传递字段：`last_fix_note` / `last_files_written`（coding 侧 `_map_coding_result` 写、下一回合 execution `_append_fix_record` 取，时序天然对齐）。（3）§3.2.2 修复循环信息流补"跨回合记忆"机制：`_build_coding_context` 在修复回合注入单键 `fix_history_digest`，把 `fix_loop_history` 全部记录（不裁剪、无窗口，受 MAX_FIX_LOOP_COUNT=20 + _FIX_NOTE_MAX_CHARS=120 双封顶控量）渲染成多行字符串，每轮一行五元组 round/category/files_touched/fix_note/log_path，进 HumanMessage 动态尾部。（4）§3.2 / §3.2.2 / §12.6 多处"无共享对话历史"表述精确化（非推翻）：coding/execution 仍不共享完整对话历史 / 不共享子图 messages / 无 scratchpad（`ReActState.messages` 与 `GlobalState` 隔离），但 coder 经 `GlobalState` 结构化历史摘要（`fix_history_digest`，非对话原文）获得跨回合记忆——区分"不共享对话原文"与"有结构化历史记忆"两件事。全程不新造记忆管道、不新增 LLM 调用、不破子图隔离、不改 react_base，仅给 coder。依据 docs/sprint7/architecture.md v1.1 §13、prd.md §2.5。*
-*2026-07-18 更新（Sprint 7 批次 0~2 已上线欠账补齐）：（1）预算全部翻倍（config.py `4dc0a75` 权威）——`MAX_TOTAL_LLM_CALLS` 120→240、`MAX_FIX_LOOP_COUNT` 10→20、`MAX_DEV_LOOP_LLM_CALLS` 60→120、`DEV_LOOP_MIN_CALLS_PER_ROUND` 2→4，各节点 ReAct 轮次同步翻倍（paper_intake 5→10 / paper_analysis 12→24 / resource_scout 10→20 / planning 8→16 / coding 12→24 / execution 10→20），全文正文/表格/注释/风险登记同步；修复循环子预算强约束更新为 120 < 240。（2）S7-02 信息流（coder 看得到真报错）：§3.2.2 coder 修复反馈由旧机制"`_build_coding_context` 读上一轮 execution_result 与错误分类、注入修复反馈 HumanMessage"改为 S7-02 后真实形态——execution 每轮把完整报错日志按"错误优先编排"落盘 `<code_output_dir>/exec_logs/round_{n}.log`（`_persist_round_log`），coder 修复反馈改传日志文件路径 `log_file_path`（由 `code_output_dir` + `fix_round` 确定性推导），`stderr_tail` 从 `logs[-2000:]` 截断产物退化为固定指引串，coder 用现有 `read_code_file` 工具自读完整真报错定位；通信契约段同步。S7-02 只作用于 coding 反馈链路（coder 有 read_code_file），execution 侧 stderr_tail 维持不动。零 state / 零 ExecutionResult 字段新增。依据 docs/sprint7/prd.md §2.3、docs/sprint7/architecture.md §5。*
+*2026-07-21 更新（Sprint 7 批次 0~2 已上线欠账补齐）：（1）预算全部翻倍（config.py `4dc0a75` 权威）——`MAX_TOTAL_LLM_CALLS` 120→240、`MAX_FIX_LOOP_COUNT` 10→20、`MAX_DEV_LOOP_LLM_CALLS` 60→120、`DEV_LOOP_MIN_CALLS_PER_ROUND` 2→4，各节点 ReAct 轮次同步翻倍（paper_intake 5→10 / paper_analysis 12→24 / resource_scout 10→20 / planning 8→16 / coding 12→24 / execution 10→20），全文正文/表格/注释/风险登记同步；修复循环子预算强约束更新为 120 < 240。（2）S7-02 信息流（coder 看得到真报错）：§3.2.2 coder 修复反馈由旧机制"`_build_coding_context` 读上一轮 execution_result 与错误分类、注入修复反馈 HumanMessage"改为 S7-02 后真实形态——execution 每轮把完整报错日志按"错误优先编排"落盘 `<code_output_dir>/exec_logs/round_{n}.log`（`_persist_round_log`），coder 修复反馈改传日志文件路径 `log_file_path`（由 `code_output_dir` + `fix_round` 确定性推导），`stderr_tail` 从 `logs[-2000:]` 截断产物退化为固定指引串，coder 用现有 `read_code_file` 工具自读完整真报错定位；通信契约段同步。S7-02 只作用于 coding 反馈链路（coder 有 read_code_file），execution 侧 stderr_tail 维持不动。零 state / 零 ExecutionResult 字段新增。依据 docs/sprint7/prd.md §2.3、docs/sprint7/architecture.md §5。*
+
+*2026-07-28 更新（v1.2，Sprint 7 交付后回填 · 欠账修正）：本次**不含 S7-06**——`docs/sprint7/prd.md` v0.5 §2.6「资源探索能实际探测本机环境」尚为草案、Q-S7-7~12 六项待架构裁决、代码零行，按本文档「代码交付后回填」惯例不预写。修正 7 项：（1）§3.2.1 resource_scout 工具列表删 `search_pwc`——Sprint 6 MF-5 已删除 `core/tools/pwc_tools.py`，现工具集恰 5 个（`core/nodes/resource_scout.py` 工具装配处），此前与 §3.1 / §12.5 / §12.9 / §13 的「PwC 通道已移除」表述自相矛盾。（2）§3.4 `_route_after_execution` 的 `fix_loop_count < 10` 订正为 `< MAX_FIX_LOOP_COUNT(20)`（`config.py:32`）——2026-07-21 翻倍回填的漏网（该处写的是裸数字而非常量名，旧值 grep 未命中）。（3）§13 阶段 1 表 paper_intake `max_rounds=5`→10、paper_analysis `max_rounds=12`→24（`config.py:58` / `:59`），同为翻倍回填漏网。（4）补 S7-01（`4dc0a75` 已交付）进正表：**总**重试预算耗尽不再静默降级出报告，与「触顶 / 不可修复 / 子预算耗尽」合流走 interrupt#2 三选一——预算门下沉为修复回边的准入否决条件、新增预算耗尽 reason 分支与面板文案常量（`core/nodes/execution.py`）；§3.3 / §3.4 / §12.6 三处触发条件清单同步补齐。（5）补 S7-01 的 `revise_plan` 预算语义进 §12.7：重置 `retry_budget_remaining = MAX_TOTAL_LLM_CALLS`，但 `_dev_loop_llm_calls` 不重置，240/120 硬顶不破。（6）补 S7-03（同批交付）进 §3.2.1：单回合喂给 execution 内嵌子图的轮次上限入口收窄为 `max(1, min(联动值, MAX_DEV_LOOP_LLM_CALLS - _dev_loop_llm_calls))`，防单轮烧穿子预算。（7）更新日志原「2026-07-18」条日期订正为 2026-07-21——该条描述的批次 0~2 落于 `4dc0a75` / `b5f3e63`（均 2026-07-19），文档改动实际随 `8d37fe9`（2026-07-22）落盘，执行日以 `docs/TODO.md` 记载的 2026-07-20→21 为准；旧日期早于其所述事件且破坏日志时序单调。*
