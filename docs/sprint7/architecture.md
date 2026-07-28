@@ -1,9 +1,9 @@
-# Sprint 7 核心架构设计文档：修复循环失控治理族（S7-01~03）+ 修复循环记忆增强（S7-05）
+# Sprint 7 核心架构设计文档：修复循环失控治理族（S7-01~03）+ 修复循环记忆增强（S7-05）+ 资源探索只读环境探测（S7-06）
 
-**文档版本**：v1.2（v1.0 = Q-S7-1~6 六项裁决 + S7-01~03 三需求方案；v1.1 增补 §13 = S7-05 修复循环记忆增强档 B 方案；**v1.2 增补 §14 = S7-06 只读环境探测的安全底座，仅裁 Q-S7-7/Q-S7-8 两项**，Maria 2026-07-28 授权）
-**日期**：2026-07-19（v1.0）／2026-07-20（v1.1 §13）
-**作者**：架构师代理
-**对应 PRD**：`docs/sprint7/prd.md` v0.3 §2.1~2.3（Maria 拍板 2026-07-18，Q-S7-1~6 全部在本文 §1~§6 裁决）+ v0.4 §2.5（S7-05，本文 §13）。+ v0.5 §2.6（S7-06「资源探索能实际探测本机环境」，本文 §14）。**S7-06 的 Q-S7-7（只读强制形态与防绕过）/ Q-S7-8（cwd 落点与工厂复用形态）两项已在本文 §14 裁决；Q-S7-9~12 四项仍待裁**（后续批次单独授权增补），**A-S7-9（不引入人在回路确认）待 Maria 复核**。
+**文档版本**：v1.3（v1.0 = Q-S7-1~6 六项裁决 + S7-01~03 三需求方案；v1.1 增补 §13 = S7-05 修复循环记忆增强档 B 方案；v1.2 增补 §14 = S7-06 只读环境探测的安全底座，仅裁 Q-S7-7/Q-S7-8 两项；**v1.3 增补 §15/§16/§17 = S7-06 剩余四项裁决 Q-S7-9~12 全部收口 + 主控跨节合并裁定**，Maria 2026-07-28 授权）
+**日期**：2026-07-19（v1.0）／2026-07-20（v1.1 §13）／2026-07-28（v1.2 §14、v1.3 §15~§17）
+**作者**：架构师代理（§15 与 §16 由两位架构师并行独立裁决，§17 为主控跨节收口）
+**对应 PRD**：`docs/sprint7/prd.md` v0.3 §2.1~2.3（Maria 拍板 2026-07-18，Q-S7-1~6 全部在本文 §1~§6 裁决）+ v0.4 §2.5（S7-05，本文 §13）。+ v0.5 §2.6（S7-06「资源探索能实际探测本机环境」，本文 §14~§17）。**S7-06 的 Q-S7-7~12 六项已全部裁决**：Q-S7-7 / Q-S7-8 见 §14（安全底座，2026-07-28 上午）；**Q-S7-10 见 §15（探测结论下游落点，AC-S7-18 命门）；Q-S7-9 / Q-S7-11 / Q-S7-12 见 §16（超时与输出规模 / 冻结令 / 探测节制）；§17 = 主控对 §15 与 §16 在「探测输出上限」上的冲突收口（含实测证据，推翻 §16.1 裁决 1）**。**A-S7-9（不引入人在回路确认）已由 Maria 于 2026-07-28 复核确认维持**，推翻路径关闭，由"可单点推翻的产品判断"转为已确认前提。
 **体例参照**：`docs/sprint6/architecture.md` v1.0
 **回归现场样本（只读勿清理）**：`checkpoints.db` thread `task-99eef17bccf2`（预算耗尽静默降级 + import 反复失败 + 烧 92 超 60 三缺陷同现场）
 
@@ -598,7 +598,9 @@ payload["fix_history_digest"] = _digest_fix_loop_history(state, code_output_dir)
 **本节范围（严格）**：**只裁 Q-S7-7（只读强制形态与防绕过）+ Q-S7-8（cwd 落点与工厂复用形态）两项**。Q-S7-9（超时与输出规模）/ Q-S7-10（结论下游落点）/ Q-S7-11（R-PC4 冻结令）/ Q-S7-12（探测节制）**本节不裁**，凡依赖处一律标注"待 Q-S7-N 裁决"。A-S7-9（不引入人在回路确认）**Maria 尚未复核**，本节按其现状设计。
 **前置事实（源码级已核实）**：`run_command_tool.py` 的护栏**只约束"在哪跑"、不约束"跑什么"**——`_require_within_workspace` 校验的是 cwd，命令本身零机制限制，docstring 里"禁止用于完整训练/下载大数据集"只是给模型看的文字劝阻。故"把现有工具直接绑上去"不等于需求达成，缺的正是命令侧边界。
 
-> **本节架构特征（先说结论）**：只读 = **整条命令精确匹配的扁平允许清单**（一个 `frozenset[tuple[str,...]]` + 一条 `if`，无分级 / 无分类 / 无多档权限），判定在任何 `Popen` 之前；载体 = **新建薄封装 `core/tools/env_probe_tool.py`**，100% 复用 `_run_subprocess` 四护栏 + `_require_within_workspace` + `mask_value`，**`run_command_tool.py` 一字不动** —— coding 零影响从"靠默认参数没传"升级为"文件未被修改"的结构性保证。cwd = `state["workspace_dir"]`，闭包绑定、非工具入参。**config.py 本次零改动、state 契约零改动、执行通道零重造。**
+> **本节架构特征（先说结论）**：只读 = **整条命令精确匹配的扁平允许清单**（一个 `frozenset[tuple[str,...]]` + 一条 `if`，无分级 / 无分类 / 无多档权限），判定在任何 `Popen` 之前；载体 = **新建薄封装 `core/tools/env_probe_tool.py`**，100% 复用 `_run_subprocess` 四护栏 + `_require_within_workspace` + `mask_value`，**`run_command_tool.py` 一字不动** —— coding 零影响从"靠默认参数没传"升级为"文件未被修改"的结构性保证。cwd = `state["workspace_dir"]`，闭包绑定、非工具入参。**config.py 本次零改动、执行通道零重造；state 契约在 §14 自身范围内零改动。**
+>
+> **⚠ 2026-07-28 订正（v1.3）**：上句原文为「state 契约零改动」，**属越界**——它在 Q-S7-10（探测结论落点）尚未裁决时，就替该项锁死了结论范围（同节 §14.4 落点表却把该项标为"待 Q-S7-10 裁决"，自相矛盾）。**S7-06 整体的 state 契约增量以 §15.7 为准：`GlobalState` +1 键 `local_env_facts: str`。**
 
 ### 14.1 Q-S7-7 裁决：整条命令精确匹配，而非命令名
 
@@ -723,8 +725,8 @@ def make_probe_environment_tool(base_dir: str):
 | `core/tools/run_command_tool.py` | — | **零改动** | coding 零影响结构性保证；PRD §7 曾建议为该文件设单收口窗口，本裁决下**可摘除**，降低并行冲突面 |
 | `config.py` | — | **零改动** | 超时 / 输出上限沿用 `RUN_COMMAND_TIMEOUT=120` 与 `SANDBOX_OUTPUT_MAX_BYTES=1MiB` —— **是否收窄待 Q-S7-9** |
 | 既有 5→6 断言 | `tests/test_sprint2_b2.py`、`tests/test_sprint6_b1_prompt_guards.py` | 断言同步 | 沿"只换不弱化"纪律；两处文案均写死"5 个 / 由 6 降为 5"，须同步改为 6 |
-| 探测结论落点 | `resource_info` / 规划上下文 | — | **待 Q-S7-10 裁决**，本节不裁 |
-| state 契约 | — | **零改动** | 不新增字段、不动 interrupt payload |
+| 探测结论落点 | `resource_info` / 规划上下文 | — | ~~待 Q-S7-10 裁决~~ → **已于 2026-07-28 裁决，见 §15**：落 `GlobalState.local_env_facts` 单键，**不进 `resource_info`** |
+| state 契约 | — | **§14 自身零改动；S7-06 整体 +1 键** | §14 三项裁决本身不新增字段、不动 interrupt payload；**探测结论落点由 §15（Q-S7-10）裁出 `GlobalState.local_env_facts: str`**，见 §15.7 |
 
 ### 14.5 AC 建议
 
@@ -756,14 +758,532 @@ PRD 既有 **AC-S7-15**（工具集 5→6 + cwd 锚定 / 越界被拒）与 **AC
 
 | 编号 | 待裁内容 | 本节的临时立场 |
 |---|---|---|
-| Q-S7-9 | 超时与输出规模 | 暂沿用 `RUN_COMMAND_TIMEOUT=120` / `SANDBOX_OUTPUT_MAX_BYTES=1MiB`；R-S7-15（`pip list` 体量）与残余风险"清单内命令偶发挂起最坏 120s"一并归该项 |
-| Q-S7-10 | 探测结论的下游落点 | 本节只裁"怎么跑得安全"，不裁"探到的事实进哪个键"；AC-S7-18 的命门在该项 |
-| Q-S7-11 | R-PC4 冻结令（工具清单 5→6 改 `bind_tools` 前缀 + SystemMessage 工具说明措辞） | 本节只保证工具侧零动态值（docstring 与清单均为静态常量，跨论文字节一致，不破 AC-S7-20 的根本性质）；前缀变更是否放行、prompt 怎么写，归该项 |
-| Q-S7-12 | 探测节制（轮次与预算） | 本节的 fail-closed 设计会产生"写错即被拒、需重试"的轮次消耗（R-S7-14），控量归该项 |
-| A-S7-9 | 不引入人在回路确认 | **Maria 尚未复核**，本节按其现状设计（无 interrupt 新种类、无逐条确认） |
+| Q-S7-9 | 超时与输出规模 | ~~暂沿用 `RUN_COMMAND_TIMEOUT=120` / `SANDBOX_OUTPUT_MAX_BYTES=1MiB`~~ → **已裁，见 §16.1 + §17**：超时收窄为 `_PROBE_TIMEOUT_SECONDS=30`（工具模块内）；**输出上限经 §17 主控裁定为工具返回端新增 `_PROBE_OUTPUT_MAX_BYTES=2500`**（§16.1 原判"沿用、零新常量"已被实测推翻） |
+| Q-S7-10 | 探测结论的下游落点 | **已裁，见 §15**：落 `GlobalState.local_env_facts: str`，确定性从工具历史提取（零 LLM 依赖），经 `_format_planning_context` 第 6 形参单键增补进规划上下文 |
+| Q-S7-11 | R-PC4 冻结令（工具清单 5→6 改 `bind_tools` 前缀 + SystemMessage 工具说明措辞） | **已裁，见 §16.2：放行「破一次」**。连带面经核实**小于**本节预估：三条 Prompt Cache 基线脚本无一跑 resource_scout ⇒ **零基线作废、零真跑复采、零 deepxiv 配额** |
+| Q-S7-12 | 探测节制（轮次与预算） | **已裁，见 §16.3**：只做 prompt 措辞、不加机制计数器（无"措辞不够"的实证）；探测作**链外补充步**，三步降级链 1/2/3 字节不动 |
+| A-S7-9 | 不引入人在回路确认 | ~~Maria 尚未复核~~ → **2026-07-28 Maria 复核确认维持**（不弹窗、不新增中断种类）。推翻路径关闭，由"可单点推翻的产品判断"转为**已确认前提** |
+
+> **2026-07-28（v1.3）状态更新**：本表所列 Q-S7-9~12 四项 + A-S7-9 **已全部收口**，S7-06 设计侧无待裁项。上表保留原文并加删除线，是**有意的历史留痕**（体例同 §14.4），不是残留。
 
 
 *（v1.1 全文完：v1.0 六项裁决 + S7-01~03 方案，§13 增补 S7-05 记忆增强档 B（Maria 三点修订后：全保留无窗口 + coder 自述 fix_note 定位/逻辑 + 不加 execution 判定理由）。核心 = 复用 S7-02 落盘日志 + coder 顺带自述，零新管道/零新增 LLM/零 react_base 改动/子图隔离不破；state 加 4 键（2 传递+2 记录）旧 checkpoint 兼容；token 上界受 MAX_FIX_LOOP_COUNT=20 + _FIX_NOTE_MAX_CHARS=120 双封顶。待 Maria 拍板 Q2/Q4 后转 dev-plan → 开发；files_written 取值链路由 dev 实现时按 §13.7 落。）*
 
 
-*（v1.2 增补完：§14 = S7-06 只读环境探测安全底座——Q-S7-7 裁「整条命令精确匹配的扁平允许清单」（命令名粒度有 `nvidia-smi -r` / `pip list --outdated` / `git clone` 三条实证会漏，黑名单 fail-open 不满足「机制强制」红线）、Q-S7-8 裁「另起薄封装 `env_probe_tool.py`，`run_command_tool.py` 零改动」（coding 侧需要 `python -c`、探测侧必须禁它，一个 @tool 只有一份 docstring，边界相反无法共存故拆开）。含对抗性绕过分析 15 类 + 两条真残余风险（清单漂移 / stdin 未设 DEVNULL）+ 建议新增 AC-S7-21/22。Q-S7-9~12 四项未裁，A-S7-9 待 Maria 复核。）*
+*（v1.2 增补完：§14 = S7-06 只读环境探测安全底座——Q-S7-7 裁「整条命令精确匹配的扁平允许清单」（命令名粒度有 `nvidia-smi -r` / `pip list --outdated` / `git clone` 三条实证会漏，黑名单 fail-open 不满足「机制强制」红线）、Q-S7-8 裁「另起薄封装 `env_probe_tool.py`，`run_command_tool.py` 零改动」（coding 侧需要 `python -c`、探测侧必须禁它，一个 @tool 只有一份 docstring，边界相反无法共存故拆开）。含对抗性绕过分析 15 类 + 两条真残余风险（清单漂移 / stdin 未设 DEVNULL）+ 建议新增 AC-S7-21/22。Q-S7-9~12 四项未裁，A-S7-9 待 Maria 复核。**【v1.3 更新：该句已过时——四项均已于同日裁决，见 §15~§17；A-S7-9 已由 Maria 复核确认维持。】**）*
+
+---
+
+## 15. S7-06 探测结论的下游落点（Q-S7-10 裁决）
+
+**对应 PRD**：`docs/sprint7/prd.md` v0.5 §2.6 契约 5 / §5 A-S7-13 / §6 Q-S7-10；命门 AC 为 **AC-S7-18（防白探，须逐环验红）**
+**日期**：2026-07-28（v1.3）
+**本节范围（严格）**：只裁 **Q-S7-10（探测结论的下游落点）**。Q-S7-9 / Q-S7-11 / Q-S7-12 见 §16。**本节 R-S7-19 与 §16.1 的输出上限裁决存在冲突，已由 §17 收口——阅读 §15.10 前请先读 §17。**
+**承诺边界（2026-07-28 Maria 新裁，直接框定本节）**：S7-06 只负责"硬件事实真正到达规划可见上下文"，**不负责规划怎么用**——全局 PRD §6.2 的"据硬件约束自动调参"已转 backlog，本节不设任何"必须据此调 batch size"的硬约束。
+
+> **本节架构特征（先说结论）**：落点 = **`GlobalState` 顶层单键 `local_env_facts: str`**（预渲染多行字符串，缺省 `""`）。产出 = **确定性从 ReAct 工具历史提取**（沿 BUG-S1-03 `_backfill_repos_from_tools` 范式），**零 LLM 依赖、零 `<result>` 字段、零 schema 改动**。送达 = `_format_planning_context` 新增第 6 形参（尾部带默认值），非空才写单键。**`ResourceInfo` 零改动、`RESOURCE_SCOUT_SCHEMA` 零改动、冻结区 SystemMessage 的【输出格式】段零改动、interrupt payload 零改动。** 唯一契约增量 = `GlobalState` +1 键（沿 S7-05 `last_fix_note` 先例，旧 checkpoint `.get` 兜底）。
+
+### 15.1 前置核实（源码级，含对既有文档的三处订正）
+
+| # | 事实 | 位置 | 对裁决的作用 |
+|---|---|---|---|
+| 1 | `_format_planning_context` 签名在 **302-308**、字段选取体在 **314-354**；确认**不读 `analysis_notes`** | `core/nodes/planning.py:302-354` | PRD 结论方向成立；**行号 302-307 订正为 302-354** |
+| 2 | 该函数实际还取 **`resource_strategy`**（:340 无条件写入）与 **`pending_repo_url`**（:351-352） | 同上 | **订正 PRD §2.6 契约 5 / §6 Q-S7-10 的枚举**；同时坐实：`resource_info` 的字段**必须被该函数显式白名单**才能到规划，没有自动搭车 |
+| 3 | `RESOURCE_SCOUT_SCHEMA["properties"]`（去 `search_log`）**集合恒等于** `ResourceInfo.__annotations__` | `tests/test_sprint2_b2.py:141-147` | **决定性**：往 `ResourceInfo` 加字段 ⇒ 必须加 LLM 输出 schema ⇒ 事实变成 LLM 产物（S7-05 真跑遵守率 75%） |
+| 4 | `resource_info` 在 planning 侧有 3 处按显式键整体重建：`_merge_user_repos_from_tools`(:455/:565)、`_switch_selected_repo`(:778)，结果写回 state(:674/:930) | `core/nodes/planning.py` | **决定性**：进 `ResourceInfo` 会在 revise / switch_repo / S2-13 合并路径上静默丢失探测结论 |
+| 5 | `GlobalState.__annotations__` **无任何精确集合 / 计数断言**，现存断言全是 `field in ann` 形态 | `tests/test_sprint3_a2.py:47`、`test_sprint4_a2.py:48`、`test_sprint5_t12_state.py:57/142`、`test_sprint7_s705_memory.py:109`；`test_sprint1_smoke.py:205-237` 只断个别默认值 | 加 GlobalState 键**零既有断言被打红** |
+| 6 | `_map_resource_scout_result` 已是 3 参签名、拿得到 `react_messages`；`_parse_tool_content` 有"剥离截断后缀再试"路径 | `core/nodes/resource_scout.py:427-431`、`:290-318`（守门 `test_sprint2_b2.py:154-156`） | 确定性提取**零新增管道**，直接复用现成范式。**⚠ 见下方主控订正** |
+| 7 | planning 的冻结前缀**只有 SystemMessage**：`_build_planning_system_prompt` 直接 `return _PLANNING_SYSTEM_PROMPT_BODY`、忽略 context；`initial_messages=[SystemMessage(...)]` 后才追加 HumanMessage | `core/nodes/planning.py:285-291`；`core/react_base.py:850-862` | `_format_planning_context` 的**全部**产出落在动态区，加键**不污染冻结前缀**（详见 §15.4） |
+| 8 | `run_command` 返回 JSON 恰 5 键 `{exit_code, stdout_tail, stderr_tail, timed_out, truncated}`——**不回显命令**；`_run_subprocess` 对"命令不存在"返回 `exit_code=-1` + `stderr="subprocess start failed: ..."` | `core/tools/run_command_tool.py:121-132`；`sandbox/local_venv.py:391-405` | 触发 §15.3 对 §14.3 草图的一处必要增补（返回须回显命令），并决定 §15.5 的失败呈现规则 |
+| 9 | `architecture.md` §14 / §14.4 已写死"state 契约零改动"，同表却把落点标为"待 Q-S7-10" | 本文 §14 开头、§14.4 落点表；`docs/TODO.md` | **订正**：§14 越界覆盖了未裁项。本裁决为 `GlobalState` +1 键，两处表述**已于 v1.3 同批订正** |
+
+> **⚠ 主控核实订正（2026-07-28，对上表 #6）**：架构师原文表述为"`_parse_tool_content` **已能容忍** `... [truncated at` 后缀"，**过于乐观**。主控实测：该函数（`resource_scout.py:309-317`）确实会剥掉截断后缀再 `json.loads`，**但剥完剩下的是缺闭合括号的残缺 JSON，照样解析失败、返回 `None`**。它容忍的是**后缀那行字**，不是残缺 JSON 本体——项目里能修残缺 JSON 的 `_repair_truncated_json_prefix`（sp1 BUG-S1-02 加在 `react_base.py`）**并未被 `_parse_tool_content` 复用**。实测数据与由此产生的处置见 **§17**。
+
+> **⚠ 主控核实订正（2026-07-28，行号）**：架构师原文将 `_map_resource_scout_result` 的第三个 return 点记为 `:539`，**实测为 `:549`**（`grep -n "return update"`）。下文 §15.3(b) 与 §15.7 已按实测值订正。
+
+### 15.2 裁决：`GlobalState.local_env_facts`，确定性产出，规划侧单键增补
+
+**存在哪**：`core/state.py::GlobalState` 新增
+
+```python
+# === Sprint 7 S7-06 新增（只读环境探测结论落点，架构 v1.3 §15）===
+# resource_scout 单点写（_map_resource_scout_result 从 ReAct 工具历史确定性提取，
+# 非 LLM <result> 字段）；planning 单点读（_format_planning_context）。单值、
+# last-write-wins 正确，**绝不加 reducer**。旧 checkpoint 无此键由消费侧
+# ``.get("local_env_facts", "")`` 兜底，不 KeyError。
+# 值 = 预渲染多行字符串（本机实测环境事实），空串表示"未知"。
+local_env_facts: str
+```
+
+`create_initial_state` 追加 `local_env_facts=""`（沿 S7-05 `last_fix_note=""` 先例）。
+
+**为什么不进 `ResourceInfo`**（正面回答 PRD 给的二选一）：`ResourceInfo` 在本仓库不是一个自由的数据袋，它被两条硬约束绑死——(a) 与 `RESOURCE_SCOUT_SCHEMA` 集合恒等（§15.1 #3），加字段等于把机器事实降格为 LLM 产物；(b) planning 侧 3 处按显式键重建（§15.1 #4），加字段等于在 revise/switch_repo 路径上埋一个静默数据丢失。两条都不是"多改几行"的代价，是**把 S7-06 的立意反过来**（只读靠机制→改成靠 75% 遵守率；防白探→改成 revise 后重新变白探）。而 A-S7-13 的实质诉求是"最小单键、不新建结构"，`GlobalState` +1 个 `str` 键**完全满足**：无新 TypedDict、无嵌套、无枚举、无环境画像结构（PRD §2.6 非目标 3 守住）。
+
+**怎么产出（零 LLM 依赖，本裁决的另一半）**：不要求 agent 在 `<result>` 里写任何新字段。`_map_resource_scout_result` 拿到的 `react_messages` 里已经有全部 `probe_environment` 的 ToolMessage，直接确定性提取即可——这与本仓库既有的 `_backfill_repos_from_tools`（"LLM 漏写就从工具历史捞"）是同一条治理线。收益：AC-S7-18 变成**确定性可测**，不受 R-S7-14（模型不服从）影响；且 SystemMessage 的【输出格式】段（`resource_scout.py:108-121`，冻结区）**不必为本条改动**——Q-S7-11 的冻结令范围因此**不被 Q-S7-10 扩大**（仍只含工具说明段，见 §16.2）。
+
+### 15.3 最小 diff 草图（接口级，非交付代码）
+
+**(a) `core/nodes/planning.py`——共 4 行**
+
+```python
+def _format_planning_context(
+    paper_meta, paper_analysis, resource_info, user_feedback,
+    pending_repo_url: Optional[str] = None,
+    local_env_facts: Optional[str] = None,      # ← 新增第 6 形参，尾部 + 默认值，既有 5 参调用零破坏
+) -> Dict[str, Any]:
+    ...
+    # （紧接现有 pending_repo_url 分支之后，:352 之下）
+    # S7-06：资源探索阶段实测的本机环境事实（来源 = 只读探测工具历史，非论文推断）。
+    # 为空时不写——"未知"在规划上下文里就是"这个键不存在"，不造哨兵值（§15.5）。
+    if local_env_facts:
+        payload["local_env_facts"] = _coerce_str(local_env_facts)
+    return payload
+```
+
+```python
+# :711-717 build_context lambda 追加第 6 实参
+build_context=lambda state: _format_planning_context(
+    state.get("paper_meta") or {},
+    state.get("paper_analysis") or {},
+    state.get("resource_info") or {},
+    state.get("_planning_user_feedback"),
+    state.get("_planning_pending_repo_url"),
+    state.get("local_env_facts"),            # ← 新增
+),
+```
+
+**(b) `core/nodes/resource_scout.py`——1 常量 + 1 纯函数 + 3 处返回接线**
+
+```python
+_PROBE_OUTPUT_MAX_CHARS: int = 400     # 单条探测输出渲染上限（沿 coding.py:78 _FIX_NOTE_MAX_CHARS 范式）
+
+def _digest_env_probe(react_messages: Optional[Any]) -> str:
+    """从 ReAct 工具历史确定性提取本机环境事实，渲染为单个多行字符串。
+
+    沿 _backfill_repos_from_tools（BUG-S1-03）范式：不依赖 LLM 服从度，直接扫
+    name == PROBE_TOOL_NAME 的 ToolMessage，用 _parse_tool_content 解析。
+    渲染规则见 §15.5。空 / 全不可解析 / 任意异常 → 返回 ""。
+    """
+```
+
+`_map_resource_scout_result` 顶部算一次 `facts = _digest_env_probe(react_messages)`，并在**全部 3 个 return 点**（**:459 空结果降级 / :479 agent 报错降级 / :549 正常路径**——第三点原稿记 :539，主控实测订正为 :549）非空时写入 `local_env_facts`。
+**三个 return 点都要写**：agent 的 `<result>` 崩了不代表机器没被探到，探到的事实照样对规划有用——这正是 BUG-S1-03 范式的原意。实现上建议一个 3 行的收尾 helper `_with_env_facts(update, facts)`，避免三处复制。
+
+**(c) `core/tools/env_probe_tool.py`——对 §14.3 草图的一处必要增补（不改变 Q-S7-8 裁决实质）**
+
+§14.3 的返回草图沿用了 `run_command` 的 5 键结构，而该结构**不回显命令**（§15.1 #8）。下游 digest 就无法给每段输出标出"这是哪条命令问出来的"，一堆无主的表格对规划毫无价值。故 `probe_environment` 的返回 JSON **须增一个 `command` 键**，取值 **`" ".join(argv)`（规范化回显，而非原始入参串）**：
+
+```python
+return json.dumps(
+    {
+        "command": " ".join(argv),      # ← 增补：规范化回显，digest 的唯一命令来源
+        "exit_code": rr.exit_code,
+        "stdout_tail": mask_value(rr.stdout),
+        "stderr_tail": mask_value(rr.stderr),
+        "timed_out": rr.timed_out,
+        "truncated": rr.output_truncated,
+    },
+    ensure_ascii=False, sort_keys=True, default=str,
+)
+```
+
+**为什么取规范化回显而不是原始 `command` 入参**：`shlex.split` 会折叠多余空白，模型写 `df  -h  .` 与 `df -h .` 得到同一个 argv 元组、同样命中清单，但原样回显会让 digest 字节抖动。用 `" ".join(argv)` 后，digest **对模型的书写变体免疫**，字节幂等（§15.4 的硬要求）。清单条目本身无引号，`" ".join` 与清单文本逐字符相等。
+本增补不触碰 `run_command_tool.py`、不改执行通道、不改清单机制——Q-S7-8 的裁决实质（薄封装 / `run_command_tool.py` 零改动 / 100% 复用护栏）全部保持。
+
+同时 `env_probe_tool.py` 导出 `PROBE_TOOL_NAME: str = "probe_environment"`，`resource_scout.py` 直接 import 使用（工具装配本就要 import 该模块，零额外 import），**杜绝"工具改名 → digest 悄悄失效 → 白探回潮"这一类静默漂移**。
+
+### 15.4 数据形态：预渲染字符串，且落在动态尾部——Prompt Cache 已核实无污染
+
+**形态 = `str`（预渲染多行），不是 dict**。四条理由：
+1. **避开 sort_keys 结构问题**：整个 curated context 是一个 `json.dumps(sort_keys=True)` 块（`react_base.py:854-859`），sort_keys 只排**顶层键名**，字符串值内部顺序完全自控——与 S7-05 `fix_history_digest` 同款（§13.3）。
+2. **dict 会长出结构**：一旦是 `{"gpu": ..., "cuda": ..., "disk": ...}`，下一步必然是"再加一个字段"，直通 PRD §2.6 **非目标 3（不做环境画像持久化）**。
+3. **结构化需要按命令写解析器**：把 `nvidia-smi` 表格、`lscpu`、`df -h` 解析成字段 = 一套 per-command parser 动物园，正是本项目反过度工程红线要避的那类分类体系。
+4. **单键 = 单个可测断言点**，AC-S7-18 的验红面最干净。
+
+**Prompt Cache 核实（回答"是动态尾部还是会污染冻结前缀"）——结论：不污染，且顾虑本身在 planning 侧不成立**：
+- planning 的冻结前缀**只有第一条 SystemMessage**：`_build_planning_system_prompt` 忽略 context、直接返回 `_PLANNING_SYSTEM_PROMPT_BODY`（`planning.py:285-291`），`react_base.py:850` 以它单独构成 `initial_messages[0]`。
+- `_format_planning_context` 的**全部**产出进第二条 HumanMessage（`react_base.py:851-862`），而该消息**本就携带 `arxiv_id` / `title` / `method_summary` 等论文级动态值**（`_KEEP_META_KEYS`/`_KEEP_ANALYSIS_KEYS`，`planning.py:295-299`）——它整条**本来就是动态区**，跨论文根本不参与共享前缀。新增一个排序键把字节插在 `hyperparams` 与 `method_summary` 之间，**冻结前缀一个字节不变**。
+- §13.3 那条"sort_keys 插中间打乱前缀字节"的顾虑，针对的是 coding 侧**同一任务跨修复回合**复用 HumanMessage 前缀的场景；planning 的 `build_context` 在每次子图调用中**只执行一次**（`react_base.py:824`），子图内多轮之间 HumanMessage 不重建，故不存在该问题。
+- **唯一残余**：同一篇论文重跑时，HumanMessage 字节因本次代码改动而与历史不同 → 一次性 miss。属"破一次"，与 §16.2 的一次性前缀变更同性质、且量级更小（在动态区）。
+- **配套硬纪律（写进实现约束）**：`local_env_facts` 的值必须在 `_map_resource_scout_result` 落 state 时**一次性冻结**，之后所有消费方只读；**planning 不得触发任何探测**（A-S7-11 已定工具只给资源探索）。渲染中**禁止任何非确定性成分**——不写时间戳、不写耗时、不写 uuid。否则 checkpoint 重放 / revise 重入会字节抖动，"破一次"退化成"破每次"。
+
+**渲染样例**（字节确定：命令按首次出现顺序、同命令去重保留最后一次结果、每段输出截断到 `_PROBE_OUTPUT_MAX_CHARS`）：
+
+```
+本机环境实测（资源探索阶段真机探测所得，非论文推断）：
+$ nvidia-smi -L
+GPU 0: NVIDIA A100-SXM4-80GB (UUID: GPU-xxxx)
+$ nvcc --version
+该命令在本机不可用
+$ df -h .
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda1       1.8T  1.2T  520G  70% /data
+```
+
+**体量上界**：允许清单 15 条 × `_PROBE_OUTPUT_MAX_CHARS=400` ≈ 6KB 绝对上界（结构性封顶，因为清单外的命令根本跑不了），典型 3~6 条约 1.5KB。与 S7-05 的 `MAX_FIX_LOOP_COUNT × _FIX_NOTE_MAX_CHARS` 双封顶同款结构。
+
+### 15.5 失败与缺席：不区分、不造状态机
+
+| 情形 | `local_env_facts` 表现 | 规划上下文表现 |
+|---|---|---|
+| 根本没探（agent 没调该工具） | `""` | **键不存在** |
+| 探了但全被拒 / 全不可解析 | `""` | **键不存在** |
+| 探了、某条命令本机没有（如无 `nvidia-smi`） | 该条渲染为 `该命令在本机不可用` | **有键**，规划看到"本机没有 NVIDIA GPU"这条**有效结论** |
+| 探了、某条命令跑了但报错（如有 nvidia-smi 无驱动） | 该条渲染其 stderr（截断） | 同上，是机器在说话，属事实 |
+| 渲染过程抛任何异常 | `""`（try/except 兜底） | 键不存在，**不阻断节点** |
+
+**明确裁决：不区分"探了但没结果"与"根本没探"。** 对规划节点而言两者的决策后果**完全相同**——环境未知、按论文/通用假设规划。要区分就得引入第三种状态值 + 消费侧对该值的解释分支，那正是 PRD 提醒的状态机，收益为零。**过程留痕走既有 `search_log` → `analysis_notes` 通道（PRD 明说二者不互斥）**，这恰好把分工钉死：**机器通道只放事实，人通道放过程**（探了几条、哪条被拒、为什么换招）。
+
+**呈现"未知"的形态 = 键不存在**，不造 `"unknown"` / `"N/A"` 哨兵值。沿本函数既有范式（`if user_feedback:` :346、`if pending_repo_url:` :351 都是"为空时不写，保持上下文整洁"）。
+
+**单条渲染规则**（2 分支 + 1 归一，防术语泄漏）：
+```
+out = stdout_tail.strip() or stderr_tail.strip()
+若 out 为空 或 out 以 "subprocess start failed" 开头 → out = "该命令在本机不可用"
+渲染 out[:_PROBE_OUTPUT_MAX_CHARS]
+```
+第二条把 `_run_subprocess` 的内部英文兜底串（`sandbox/local_venv.py:400`）挡在规划上下文之外——因为规划 LLM 写出的 `plan_summary` 是**用户可见**的，任何进它上下文的英文内部串都有被原样引用的风险（沿 AC-S7-19 的精神）。
+
+**降级不阻断（AC-S7-17 零冲突）**：本裁决**不触碰 `resource_info`**，故"mock 探测恒失败 → `resource_info` 与基线一致 / `degraded_nodes` 不含该节点 / `resource_strategy` 不被改写"三条断言与本裁决**互不影响**。
+
+### 15.6 AC-S7-18 逐环验红测试设计（防假解法的机制保证）
+
+**四条断言构成闭链，任一环断裂都有对应断言立刻变红**：
+
+| 环 | 断言 | 若落点退化回 `analysis_notes` 会怎样 |
+|---|---|---|
+| **① 产出环** | 构造 `react_messages=[ToolMessage(name="probe_environment", content=<真实返回 JSON，含 "A100">)]` 驱动 `_map_resource_scout_result`，断言返回 update 含 `local_env_facts` 且值含 `"A100"` 与 `"nvidia-smi -L"` | **红**（只写 `analysis_notes` 的实现根本不产出该键） |
+| **② 送达环（命门）** | 把 ① 的 update 合进 state，调 `_format_planning_context(...)`，断言返回 payload **含 `local_env_facts` 键**且值含 `"A100"` | **红**（`_format_planning_context` 不读 `analysis_notes`，:314-354 已核实） |
+| **③ 反证环（负向守门）** | 构造 `analysis_notes` 含 `"A100"` 但 `local_env_facts=""` 的 state，断言 planning payload **不含**该事实、且不含 `local_env_facts` 键 | 把"备注通道到不了规划"这一事实**钉成常驻断言**——它使得任何"改回备注通道"的实现必然同时打红 ② 与 ③，无法靠调 ② 的断言绕过 |
+| **④ 端到端环（防接线漏）** | monkeypatch `react_base.create_react_subgraph` 捕获 `initial["messages"][1].content`，`json.loads` 后断言 `local_env_facts` 在其中且含 `"A100"`；并断言 `initial["messages"][0]`（SystemMessage）字节与不带该键时**完全一致** | 防"`_format_planning_context` 改对了、但 `build_context` lambda 忘了传第 6 参"的假绿——这一环验的是**模型真的收到了**。手法有现成先例：`tests/test_sprint5_t25_budget_link.py:404` 已同款读 `initial["messages"][1].content` |
+
+**验红操作（写进测试报告，逐环各断一次）**：
+- 注掉 `build_context` lambda 的第 6 实参 → **②④ 必红**、①③ 仍绿（定位到"送达环断"）。
+- 注掉 `_map_resource_scout_result` 里的 `local_env_facts` 写入 → **①②④ 必红**（定位到"产出环断"）。
+- 把 `_digest_env_probe` 的产出改写进 `analysis_notes`（即复刻假解法）→ **①②④ 必红、③ 绿**——这正是"假解法必须过不了"的直接演示，**建议在测试报告里显式做这一次，作为 AC-S7-18 的交付证据**。
+
+**补充守门（可并入 AC-S7-18 或 AC-S7-21）**：
+- **字节幂等**：同一 state 两次 `_digest_env_probe` 字节相同；digest 不含 `duration` / 时间戳 / uuid 子串。
+- **工具名单一真相源**：`make_probe_environment_tool(base_dir=...).name == PROBE_TOOL_NAME`，且 `resource_scout` 侧的扫描用的就是这个常量（防工具改名导致白探静默回潮）。
+- **术语不泄漏**：digest 不含 `probe_environment` / `resource_scout` / `from_scratch` / `use_repo` / `hybrid` 任一串。
+- **三 return 点全覆盖**：`result=None` 与 `result={"error": ...}` 两条降级路径下，只要工具历史有成功探测，`local_env_facts` 仍被写入（防"agent 崩了顺带把机器事实也丢了"）。
+
+### 15.7 落点清单（供 dev-plan）
+
+| 项 | 文件:落点 | 类型 | 说明 |
+|---|---|---|---|
+| `local_env_facts: str` | `core/state.py` `GlobalState`（接 `last_files_written` 之后） | **state +1 键** | **订正 §14.4 的"state 契约零改动"**；旧 checkpoint `.get` 兜底 |
+| `local_env_facts=""` | `core/state.py` `create_initial_state` | 默认值 | 沿 S7-05 先例 |
+| `_PROBE_OUTPUT_MAX_CHARS = 400` | `core/nodes/resource_scout.py` 模块级 | 新常量 | 单条输出**渲染**上限（≠ §17 的工具**返回端**字节上限，两者并存不冲突）；沿 `coding.py:78` 范式 |
+| `_digest_env_probe(react_messages)` | `core/nodes/resource_scout.py` 新纯函数 | 新 helper | 复用 `_parse_tool_content`（:290）；异常兜底返 `""` |
+| 3 个 return 点写 `local_env_facts` | `core/nodes/resource_scout.py` `_map_resource_scout_result`（**:459 / :479 / :549**） | 逻辑 | 建议一个 `_with_env_facts(update, facts)` 收尾 helper。**:549 为主控实测订正值（原稿 :539）** |
+| `command` 键 + `PROBE_TOOL_NAME` 导出 | `core/tools/env_probe_tool.py`（本就纯新增） | **§14.3 草图增补** | 规范化回显 `" ".join(argv)`；不改 Q-S7-8 裁决实质 |
+| 第 6 形参 + 单键增补 | `core/nodes/planning.py` `_format_planning_context`（:302-354） | +1 参 +2 行 | 尾部带默认值，既有 5 参调用零破坏 |
+| lambda 第 6 实参 | `core/nodes/planning.py`（:711-717） | +1 行 | **④ 端到端环守的就是这一行** |
+| `ResourceInfo` / `RESOURCE_SCOUT_SCHEMA` | — | **零改动** | 避开 `test_sprint2_b2.py:141-147` 恒等耦合与 planning 3 处重建蒸发 |
+| `_RESOURCE_SCOUT_SYSTEM_PROMPT_BODY` 的【输出格式】段 | — | **零改动** | 本条零 LLM 依赖；Q-S7-11 冻结令范围**不因 Q-S7-10 扩大** |
+| `run_command_tool.py` / `config.py` / interrupt payload | — | **零改动** | 与 §14 保持一致 |
+
+### 15.8 文件边界与冲突面
+
+- **新进 S7-06 触碰面**：`core/state.py`（此前标零改动，**已订正**）、`core/nodes/planning.py`（PRD §7 已预留"可能触碰，待 Q-S7-10"，**现确认触碰**）。
+- **`core/nodes/resource_scout.py` 必须设单收口窗口**：S7-06 批内有三处改动落在该文件——工具装配 5→6（§14.4）、SystemMessage 工具说明与探测节制段落（冻结区，§16.2/§16.3）、本节的 digest helper + 3 处 return 接线。**且与 TODO「其余 16 处同族术语泄漏」余项文件重叠**。**结论：整个 S7-06 批次对 `resource_scout.py` 走一个主控收口窗口，16 处泄漏清理不得同期开工。**
+- **`core/nodes/planning.py` 无并行冲突**：S7-01/02/03/05 均已交付且落在 `execution.py` / `coding.py` / `config.py`；本轮不碰这三个文件，**与 §8 的 `execution.py` 单收口窗口零交集**。
+- **`core/tools/env_probe_tool.py`** 仍是纯新增、无共享冲突面。
+
+### 15.9 连带断言影响（"只换不弱化"纪律同款核查）
+
+| 断言 | 位置 | 本裁决影响 |
+|---|---|---|
+| `GlobalState` 字段断言（全为 `in ann` 形态，无精确集合/计数） | `test_sprint3_a2.py:47`、`test_sprint4_a2.py:48`、`test_sprint5_t12_state.py:57/142/249`、`test_sprint7_s705_memory.py:109` | **零影响**（加键不打红） |
+| `create_initial_state` 默认值断言（只断个别字段） | `test_sprint1_smoke.py:205-237` | **零影响** |
+| `FixLoopRecord` 精确 7 字段冻结 | `test_sprint3_a2.py:146-169` | **零影响**（不碰该结构） |
+| `RESOURCE_SCOUT_SCHEMA ≡ ResourceInfo.__annotations__` | `test_sprint2_b2.py:141-147` | **零影响**——**因为选了 GlobalState 单键方案**；若选"进 `resource_info`"则必打红并被迫扩 LLM 输出契约 |
+| `RepoInfo` 严格字段 | `test_sprint2_b2.py:428-435`、`:1067`、`:1079` | **零影响** |
+| `_map_resource_scout_result` 3 参签名 | `test_sprint2_b2.py:154-156` | **零影响**（签名不变） |
+| 工具集 5→6 断言 | `test_sprint2_b2.py:444-467` | 由 §14.4 的工具装配项承担，与本节无关。**注：`test_sprint6_b1_prompt_guards.py:271` 经核实不是断言，见 §16.6** |
+| planning context 相关用例（无精确键集断言） | `test_sprint5_t15_planning_prompt.py:47-57` 等 | **零影响**（新增键为可选、空时不写） |
+
+**结论：本裁决的既有断言连带面为零**，新增用例数与增量精确闭合（基线 2044 绿）。
+
+### 15.10 风险登记
+
+| 编号 | 风险 | 缓解 | 回退 |
+|---|---|---|---|
+| **R-S7-19** | **探测输出撑爆 `TOOL_RESULT_MAX_LENGTH=8000` 后，ToolMessage 不再是合法 JSON，`_parse_tool_content` 返回 `None` ⇒ 该条事实在 digest 里静默缺失** | **已由 §17 主控裁定根治**：在工具**返回端**加 `_PROBE_OUTPUT_MAX_BYTES=2500`，令包装后 JSON 恒 < 8000、永不触发截断。原稿写的"交接给 Q-S7-9"已闭环 | 见 §17.4 |
+| R-S7-20 | 规划 LLM 拿到本机事实却不用（PRD 已明说"调不调参交给规划 LLM 自主判断"） | 本条**不设硬约束**，符合 2026-07-28 Maria 新裁的承诺边界；AC-S7-18 只验"送达"，不验"消费方式" | N/A（超出 S7-06 范围，属 backlog 的自动调参项） |
+| R-S7-21 | `probe_environment` 工具改名 / 返回结构改动导致 digest 静默失效（白探回潮） | `PROBE_TOOL_NAME` 单一真相源 + §15.6 补充守门断言；AC-S7-18 ④ 端到端环也会红 | 无机制可替单一真相源，评审责任在人 |
+| R-S7-22 | digest 体量在极端情形（跑满 15 条清单）挤占规划 context | 结构性封顶 ≈6KB（清单条数 × 400 字符），典型 1.5KB；控量另见 §16.3（探测节制） | 调小 `_PROBE_OUTPUT_MAX_CHARS`（单常量） |
+| R-S7-23 | 探测事实与论文 `hardware_requirements` 冲突时规划无所适从（论文要 8×A100、本机 1 卡） | 两者作为并列事实同时进 payload（`hardware_requirements` 已在 `_KEEP_ANALYSIS_KEYS`，:297），digest 段首明写"本机实测…非论文推断"，语义不打架 | N/A（这正是本需求要制造的对照） |
+| R-S7-24（**既有、非本条引入，仅留档**） | `_format_planning_context:340` 把 `resource_strategy` 的**内部枚举值**（`from_scratch`/`use_repo`/`hybrid`）送进规划 LLM 上下文；`plan_summary` 是用户可见自由文本且无 humanize 兜底（`ui/pages/plan_review.py:285/337`） → 存在 LLM 原样引用枚举的泄漏面 | **本裁决不扩围处理**，仅登记；本节新增内容全为通俗中文 + 字面 shell 命令，不新增英文枚举 | 归入 TODO「其余 16 处同族术语泄漏」余项一并处置 |
+
+### 15.11 需同步回填的文档欠账（v1.3 已处置状态）
+
+1. ✅ 本文 §14 开头与 §14.4："state 契约零改动" **已订正**为"§14 自身零改动；S7-06 整体 +1 键，见 §15.7"。
+2. ✅ `docs/TODO.md`："`config.py` 与 `state.py` 本次零改动" **已订正**。
+3. ⬜ `prd.md` §2.6 契约 5 / §6 Q-S7-10：行号 `planning.py:302-307` → `302-354`；枚举补上 `resource_strategy` 与 `pending_repo_url`。
+4. ⬜ `prd.md` §5 A-S7-13：补"**已裁：落 `GlobalState.local_env_facts` 单键**"。
+5. ⬜ `docs/technical-architecture.md` §7.5：末尾补"探测结论落点 = `GlobalState.local_env_facts` → planning 上下文单键"，保留"代码未交付"状态行。
+6. ⬜ `prd.md` §7 S7-06 文件边界：`core/nodes/planning.py` 从"可能触碰"改为**确认触碰**，`core/state.py` **新增触碰**。
+
+---
+
+## 16. S7-06 超时与输出规模 / 冻结令 / 探测节制（Q-S7-9 / Q-S7-11 / Q-S7-12 裁决）
+
+**对应 PRD**：`docs/sprint7/prd.md` v0.5 §6 Q-S7-9 / Q-S7-11 / Q-S7-12；§5 A-S7-12
+**日期**：2026-07-28（v1.3）
+**本节范围（严格）**：只裁 Q-S7-9 / Q-S7-11 / Q-S7-12 三项。Q-S7-10（探测结论下游落点）见 §15。
+**编号说明**：本节由第二位架构师并行独立产出，原稿自编为 §15、风险自编为 R-S7-19~23；因与 §15 撞号，主控统一重排为 **§16 / R-S7-25~29**，内容未改。
+
+> **本节结论先行**：Q-S7-9 = 超时收窄为工具模块内单常量 `_PROBE_TIMEOUT_SECONDS=30`（`config.py` 仍零改动，与 §14.3 清单常量落点一致）；**输出规模原判"沿用、零新常量"已被 §17 主控实测推翻，以 §17 为准**。Q-S7-11 = 冻结令**放行**，且连带面经核实为**零基线作废 / 零真跑复采 / 零 deepxiv 配额**。Q-S7-12 = **prompt 措辞**（不加计数器）+ 探测作**链外补充步**（三步降级链 1/2/3 字节不动）。全节 **state 契约零改动、`config.py` 零改动、`run_command_tool.py` 零改动**，与 §14 已裁两项完全兼容。
+
+### 16.1 Q-S7-9 裁决：超时收窄（一个常量）+ 输出规模（转 §17）
+
+**核实的真实当前值（PRD §6 所引数值均仍准确，但漏了决定性的第三个常量）**
+
+| 常量 | 真实值 | 定义位置 | 对探测是否**实际生效** |
+|---|---|---|---|
+| `RUN_COMMAND_TIMEOUT` | 120 | `config.py:132` | 生效（`env_probe_tool` 若沿用即为其超时） |
+| `SANDBOX_OUTPUT_MAX_BYTES` | 1_048_576 | `config.py:107` | 生效但**永不成为约束**（1MiB 远大于下一行的 8000） |
+| **`TOOL_RESULT_MAX_LENGTH`** | **8000** | **`config.py:63`** | **这才是真正的封顶**——`react_base.py:599` 对工具返回串统一施加 `_truncate_tool_result`（`react_base.py:63-74`） |
+
+> **⚠ 本小节的"裁决 1"已被推翻，见 §17。** 原裁决为"**输出规模沿用 `SANDBOX_OUTPUT_MAX_BYTES=1MiB`，不新增任何输出常量**"，论据是"任何 < 1MiB 的探测专用上限都排在 8000 字符截断之后才可能触发，永远轮不到它生效（新常量必然是死代码）"。**该论据只在新上限 > 8000 时成立**；主控实测证明设一个 **< 8000** 的返回端上限会**抢在** `_truncate_tool_result` 之前生效，恰恰是根治手段。完整实测数据与新裁决见 §17。
+
+**本小节仍然成立、且被 §17 采纳的部分**——两级截断方向相反（新增 **R-S7-25**）：
+`_truncate_output` 保留**尾部**（`sandbox/local_venv.py:343-355`，"错误栈在末尾"），
+`_truncate_tool_result` 保留**头部**（`react_base.py:70-74`）。
+`pip list` 输出按字母序，8000 字符约装 200 行；在依赖多的宿主机上，
+**`torch` / `torchvision` / `transformers` 这批字母序靠后的包会被静默切掉**——而它们恰是复现最需要知道的那几个。
+
+**最小处置（不动机制、不加参数，只改清单一条）**：把清单内 `pip list` 替换为 `pip list --format=freeze`。同为字母序、同样不联网，但每行由约 40 字符降到约 15~20 字符，同样字符预算下可容纳条目约翻倍。本调整属 §14.1 已明示的"产品可调常量，增删走单点、机制不动"，清单仍为 15 条，形态守门（AC-S7-21）不受影响。**该处置与 §17 的返回端上限叠加使用，二者互补不冲突。**
+
+**裁决 2（成立，未被推翻）：超时不沿用 120s，改为 `env_probe_tool.py` 内的模块级常量 `_PROBE_TIMEOUT_SECONDS: int = 30`。**
+
+沿用的坏处是确定的、收窄的代价是零：
+
+1. **120s 是为另一个用途标定的**：`config.py:132` 与 `run_command_tool.py:13-14` 的注释都写明它是"coding run_command 短超时（机制上防跑重活）"——标的是"跑一段脚本"；探测清单 15 条全是 `--version` / `lscpu` / `df -h .` 这类秒级查询，两者不是同一量级的活。
+2. **§14.7 已把"清单内命令偶发挂起最坏 120s"登记为 Q-S7-9 的待处置项**，本节必须给出处置而不是原样接收。挂起是本需求头号命令 `nvidia-smi` 的已知失效形态（驱动/GPU 处于坏状态时可长时间不返回）——**此为外部工程经验，非本仓库可核实事实，如实标注**。
+3. **最坏情形收窄 4 倍**：单次挂起从 120s 降到 30s；在模型反复重试的病态路径下，节点上界从 20×120s≈40min 降到 20×30s≈10min。护栏行为不变（`_run_subprocess` 超时杀进程组 `local_venv.py:410-414`，返回 `timed_out=True` 结构化结果，不抛异常）。
+4. **30 而非更小**：清单里最慢的合法命令是 `pip list`（冷 FS 上可到秒级十位数）。假超时比慢成功更坏——它会白白吃掉一轮**且拿不到事实**，故留 3~6 倍余量。
+
+**为什么放工具模块内而不是 `config.py`（与 §14.3 保持一致而非打破）**：超时值在这里是**清单语义的直接推论**（"清单里全是秒级命令"），与清单常量同属该工具的语义边界，分处两文件必然漂移——这正是 §14.3 把 `_PROBE_COMMANDS` 放工具模块内的原文理由。附带收益：`config.py` 零改动 ⇒ 不触碰 `tests/test_sprint3_a_boundary.py` / `tests/test_sprint2_a4.py` 一类 config 常量清单断言，回归面为零。
+
+**备选方案对比**
+
+| | A：全沿用（120s / 1MiB） | **B：超时单常量 30s（选定）** | C：两侧都新造探测专用常量 |
+|---|---|---|---|
+| `config.py` 改动 | 无 | **无** | 有（连带常量清单断言） |
+| 单次挂起最坏等待 | 120s | **30s** | 30s |
+| 输出侧处置 | 沿用 | 见 §17（返回端上限） | 见 §17 |
+
+### 16.2 Q-S7-11 裁决：冻结令**放行**（一次性前缀版本变更）
+
+#### ① 机制核实：属实，但须精确表述
+
+- **属实的部分**：`react_base.py:520-529` 的 `_bind_llm` 无条件 `llm.bind_tools(list(tools))`，工具定义（名称 + 描述 + args schema）随**每一次** LLM 请求发出；本项目自身的纪律文档已把工具定义算作可缓存前缀的一部分（`docs/technical-architecture.md:923`："system prompt、工具定义、固定 few-shot 放在 message 序列前部"），且 `run_command_tool.py:28-29` 已立下同款成文纪律："工具 docstring 是工具 schema 的一部分，作为稳定前缀参与 Prompt Cache——docstring 内零论文级 / 任务级动态变量"。**工具清单 5→6 改变请求的静态部分，这一点确定成立，且与写不写 SystemMessage 无关。**
+- **不可在磁盘核实的部分（如实标注）**：服务端把 tools 渲染在 messages **之前**还是之后，属 provider / 网关内部行为，仓库内无证据。**但该不确定性不影响裁决**：若 tools 在前 → 整条前缀一次性重建；若 tools 在后 → 仅工具段重建、SystemMessage 段照常命中。两种情形都是**一次性**，都不产生持续成本。取保守（前者）估价即可。
+- **另需记入的既有事实**：`docs/technical-architecture.md:931` 记 OpenAI 自动型缓存门槛为**前缀 ≥ 1024 tokens**、命中约 5 折。resource_scout 前缀（`resource_scout.py:79-121` + 共享评分段 + 5 份工具 schema）**估算**已越过门槛（未实测，见 ④）。
+
+#### ② 零动态值的文案草案与其防线
+
+**（a）工具描述——单一真相源写法（同时满足 AC-S7-21 的"描述文本与清单常量一致"）**
+
+`langchain_core` 已装版本的 `tool()` 支持 `description=` 且优先级高于 docstring（`.venv/lib/python3.11/site-packages/langchain_core/tools/convert.py:76-88`、:113-120），故描述可由清单常量**渲染**而来，杜绝"清单改了、描述没改"的两份真相：
+
+```python
+_PROBE_TOOL_DESCRIPTION = _PROBE_TOOL_DESCRIPTION_TEMPLATE.format(
+    commands="\n".join(f"  - {c}" for c in _PROBE_COMMANDS)
+)
+
+@tool(description=_PROBE_TOOL_DESCRIPTION)   # description 优先于 docstring，成为送进模型的 schema
+def probe_environment(command: str) -> str:
+    ...
+```
+
+描述正文草案（**全静态**）：
+
+> 在本机运行一条【只读环境探测】命令，用来问清这台机器的真实情况：有没有 GPU、显存与驱动 / CUDA 版本、CPU 与内存、磁盘可用空间、Python 与常用工具链版本、已安装的包。
+>
+> 只接受下列固定命令中的一条，且必须逐字一致（多一个参数、少一个参数、换一种写法都会被拒绝）：
+> （此处由 `_PROBE_COMMANDS` 逐条渲染）
+>
+> 拒绝的都是同一类原因：本工具只能"查"，不能"改"，也不能"下载"，更不能借解释器执行任意代码。安装 / 卸载 / 删除 / 改配置、任何联网拉取、`python -c` 这类任意代码执行，一律不会被执行。命令在固定的工作目录下运行，工作目录不可指定。
+>
+> Args:
+>     command: 上面清单中的一条命令原文。
+> Returns:
+>     JSON 字符串 {command, exit_code, stdout_tail, stderr_tail, timed_out, truncated}；被拒绝时返回 {error, exit_code:-1, allowed_commands}，可据此改写后重试。
+
+**"破成每次"的唯一现实路径，以及封堵办法**：工厂签名是 `make_probe_environment_tool(base_dir)`，而 `base_dir` 取 `state["workspace_dir"]`（`core/state.py:232`，可由 `create_initial_state` 覆写）——**任务级动态值**。开发最自然的一个动作就是在描述里写"工作目录为 {base_dir}"，那一刻前缀就变成"每个任务一个样"，功能全对、账单持续渗漏、无人察觉。**因此上文措辞刻意写"工作目录不可指定"而不给出路径**，与 `run_command_tool.py:76` 的既有写法（"工作目录固定为代码输出目录"，同样不插值）同款。守门形态见 §16.5 AC-S7-24。
+
+**（b）SystemMessage 段落草案（`_RESOURCE_SCOUT_SYSTEM_PROMPT_BODY` 内，全静态）**
+
+改动**恰两处**，均在 `resource_scout.py` 自己的字符串字面量内：
+
+*处 1 —— 可用工具清单追加一行（现 `:81-86` 之后）*：
+
+> - probe_environment(command)：在本机跑一条【只读】环境探测命令（只接受固定清单内的整条命令，如 nvidia-smi / nvcc --version / pip list --format=freeze），用来问清这台机器有没有 GPU、CUDA 版本、已装依赖、磁盘余量；只能查，不能装、不能删、不能下载。
+
+*处 2 —— 新增独立段落，插在三步链之后、拼接 `REPO_QUALITY_SCORING_SECTION` 之前（现 `:94` 空行处）*：段落正文见 §16.3②。
+
+**红线（写进 dev-plan）**：新增文案**一个字都不许写进 `core/nodes/_repo_scoring.py`**。`REPO_QUALITY_SCORING_SECTION` 由 planning 与 resource_scout **共享同一对象**（`planning.py:36/210`、`resource_scout.py:22/95`，`tests/test_sprint2_s2_13.py:148-149` 断言 `is` 同一）——改它等于**同时**改掉 planning 的冻结前缀，把"改一个节点"扩大成"改两个节点"。
+
+#### ③ 连带核查：只影响 resource_scout 一个节点，且**零基线作废**
+
+- **其它带工具的 ReAct 节点全部不受影响**：各节点 `get_tools` 相互独立、无共享工具列表——`paper_intake.py:411`、`paper_analysis.py:517`、`planning.py:719-725`、`coding.py:864`、`execution.py:1362`。本次新增的是**纯新增文件**，不改任何被复用的工具模块 ⇒ 其余五个节点的 tool schema 与 system prompt 一字不动。
+- **三条 Prompt Cache 基线脚本无一跑 resource_scout**（逐个核实）：`scripts/spike_prompt_cache_baseline.py` 只 import 并连跑 `paper_intake` + `paper_analysis`×3（:60-61、:236）；`scripts/spike_coding_prompt_cache.py`、`scripts/spike_execution_prompt_cache.py` 分别针对 coding / execution。全 `scripts/` 目录内 "resource_scout" 仅出现在 `run_paper.py:13` 的一句注释里。
+  ⇒ **sp6 T-S6-5-3 记录的三条 R_baseline（coding 0.9623 / execution 0.8762 / analysis 0.9243，见 `docs/sprint6/test-reports/2026-07-16_t53-real-run-window.md:11-13`）全部继续有效，本次变更不作废任何基线、不需要真跑复采窗口、不消耗 deepxiv 配额。**
+  这是本次与 sp6 P-S6-2（同样改 scout 工具 schema）处置不同的关键：sp6 那次复采是为 coding/execution/analysis 三维**重建自身基线**并与 planning 变更合批，并非为 scout 而采。
+- **建议不为 scout 新建缓存基线维度**：没有旧基线可比对，新建一条只为看一眼命中率，属为观测而观测，与最小抽象冲突。
+
+#### ④ "破一次"的量化代价
+
+- **受影响请求族**：仅 resource_scout 节点的 LLM 调用（每任务 ≤ ~20 次，`config.py:66` → `resource_scout.py:579` → `react_base.py:621-629`）。
+- **净增成本 = 一次缓存创建**。单任务内约 20 次调用共享同一前缀，第 1 次创建、其余复用；跨任务前缀字节一致（AC-S7-20 守门）。自动型缓存本就按闲置期自然过期重建（`docs/technical-architecture.md:916/931`），**前缀版本切换只是提前触发了一次本来也会发生的重建**，不产生任何持续成本。
+- **绝对量级未实测**：resource_scout 从未被任何基线脚本采过，仓库内无该节点的命中率数据。如实标注为估算，不编造数字。
+- **"破成每次"的代价则完全不同**（故必须靠 AC-S7-24 守门封死）：前缀每任务一版 ⇒ 每任务全部 ~20 次调用中的第 1 次必 miss、且缓存永远无法跨任务复用；功能全对、无任何报错，只有账单在渗漏——这正是 PRD §2.6 判定为 bug 的那一档。
+
+**裁决：放行一次性前缀版本变更。** 条件有三，缺一不可：
+(1) 工具描述由 `_PROBE_COMMANDS` 渲染，零插值任务级 / 论文级值；
+(2) SystemMessage 新增文案只落在 `resource_scout.py` 自有字面量内，不碰 `_repo_scoring.py`；
+(3) AC-S7-20 增加下方"双工厂字节比对"测试点（这条是"破成每次"的**唯一**可执行防线）。
+
+### 16.3 Q-S7-12 裁决：prompt 措辞（不加计数器）+ 探测作链外补充步
+
+#### ① 先纠正一处 PRD 与代码脱节的约束表述
+
+**`MAX_NODE_LLM_CALLS` 在运行期不约束任何东西。** 全仓核实：该常量仅出现在 `config.py:30`（定义）、若干测试的值断言（`tests/test_sprint3_a1.py:138`、`test_sprint2_a4.py:122`、`test_sprint5_t11_config.py:57`）与 sp1 架构文档的设计稿（`docs/sprint1/architecture.md:2079`）——**`core/` 下零消费点**（主控 `grep -rn "MAX_NODE_LLM_CALLS" core/ config.py` 复验：仅 `config.py:30` 一处命中）。故 PRD §6 Q-S7-12 把它与 `REACT_MAX_ROUNDS_RESOURCE_SCOUT` 并列为"节点预算"，属失真表述。
+
+**真实的两道约束是**：
+1. **节点轮次硬顶**：`REACT_MAX_ROUNDS_RESOURCE_SCOUT=20`（`config.py:66`）→ `resource_scout.py:579` → `react_base.py:621-629` `budget_check_node`。`round` 仅在 `reasoning_node` 自增（`react_base.py:544`），故 **1 轮 ≈ 1 次 LLM 调用 ≈ 1 条探测命令**。
+2. **全局预算（跨节点，本条才是真痛点）**：`retry_budget_remaining` 初值 = `MAX_TOTAL_LLM_CALLS`=240（`core/state.py:363`），**每个 ReAct 节点按实际轮数从同一个池子里扣**（`react_base.py:901-906`）。而修复循环的入口判定读的正是这个池子（`core/nodes/execution.py:2161`，S7-01 已把它下沉为修复分支准入条件）。
+   ⇒ **资源探索每多探一条命令，就直接从下游修复循环的预算里扣一格。** 这条因果链是"探测须节制"最硬的理由，比"吃掉本节点轮次"强得多，此前未被记录。
+
+#### ② 裁决：只做 prompt 措辞，**不加机制计数器**
+
+**为什么不加（按纪律，只认实证）**：手上唯一相关实证是 S7-05 真跑 coder 约定遵守率 75%（3/4），但那是**输出格式约定**的不遵守，与"探几条"不同构；本项目**没有**任何"探测无节制"的观测数据（功能尚未交付）。凭这条数据推断计数器必要，属凭感觉。更关键的是**失控代价已被确定性封顶**：轮次硬顶 20 是机制（`react_base.py:621-629`），探测再放飞也不可能突破；最坏情形是 force_finish 兜底出结论。⇒ 现阶段加计数器是为一个尚未观测到的问题预造机制，与最小抽象红线冲突。
+
+**但最坏情形不是无害的，须写进风险**：若探测吃满 20 轮，scout 来不及克隆仓库 → `_map_resource_scout_result` 判定无可用仓库 → 改写 `resource_strategy="from_scratch"` 并把节点计入 `degraded_nodes`（`resource_scout.py:503-510`）。这与 AC-S7-17 的**精神**冲突（探测不得导致从零实现降级），故须有明确的升级触发条件（见 R-S7-27 与 AC-S7-25）。
+
+**措辞草案（即 §16.2(b) 处 2 的段落正文，全静态、零动态值、通俗中文）**：
+
+> 【环境探测（可选补充步，不属于上面的优先级链）】
+> - 上面三步是主线；探测只是给结论补事实，不改变三步的顺序与判定，任何探测结果都不构成"找不到仓库"。
+> - 只在探测结果会改变你的判断时才探。典型场景：候选仓库要求某个 CUDA 或框架版本、或者需要判断权重与数据能不能在本机落地。
+> - 全程最多探 3~5 条，尽量集中在一轮里一次性给出。轮次要留给仓库检索与克隆——轮次耗尽会导致你来不及给出仓库结论。
+> - 命令必须与清单逐字一致。被拒绝时不要反复猜写法，看返回里的清单换一条，或者直接放弃探测。
+> - 探不到、命令在这台机器上不存在、没有 GPU，都是有效结论；照常继续，不要因此改成从零实现。
+
+**"最多 3~5 条"的定量依据**：主线检索本身需约 4~8 轮（`check_url_reachable` → `git_clone_and_analyze` → 可能的 `web_search` → 收尾 `<result>`）；20 轮预算下留给探测 3~5 轮仍有安全余量，且叠加 fail-closed 写错重试（R-S7-14）后仍不逼近硬顶。
+
+#### ③ 探测放降级链**外**（链内会破坏 §2.6 契约 4）
+
+**先核实降级链的真实实现位置**：三步链**没有任何代码状态机**——它是 `_RESOURCE_SCOUT_SYSTEM_PROMPT_BODY` 里的编号文本（`resource_scout.py:88-93`），配一段模块 docstring 的同款表述（`:4-5`），以及**事后**归一化兜底（`_map_resource_scout_result`，`:435-510`）。因此"链内 vs 链外"完全是**文案位置问题**。
+
+**裁决：链外补充步。** 把探测写成编号第 4 步或插进 1/2/3 之间，都会改动那三行的编号与语义，直接违反 PRD §2.6 契约 4 / 非目标 5，且会牵动既有断言（`tests/test_sprint2_b2.py:474-484` 断言链关键词齐全）。链外段落紧接三步块之后，既保证 1/2/3 字节不动，又让"补充而非主线"的定位一读即明。
+
+### 16.4 落点清单（供 dev-plan，接续 §14.4 与 §15.7）
+
+| 项 | 文件:落点 | 类型 | 说明 |
+|---|---|---|---|
+| `_PROBE_TIMEOUT_SECONDS: int = 30` | `core/tools/env_probe_tool.py` | 新增常量 | 与清单常量同模块（§14.3 同款理由）；`_run_subprocess(timeout=...)` 传它，**不再传** `config.RUN_COMMAND_TIMEOUT` |
+| `_PROBE_OUTPUT_MAX_BYTES: int = 2500` | `core/tools/env_probe_tool.py` | 新增常量 | **由 §17 裁定**（本节原判"沿用、零新常量"已被推翻）；传给 `_run_subprocess(output_max_bytes=...)` |
+| `pip list` → `pip list --format=freeze` | `core/tools/env_probe_tool.py` 的 `_PROBE_COMMANDS` | 清单单点调整 | 清单仍 15 条；与 §17 的返回端上限**叠加**使用（R-S7-25） |
+| `_PROBE_TOOL_DESCRIPTION` + `@tool(description=...)` | `core/tools/env_probe_tool.py` | 新增 | 由 `_PROBE_COMMANDS` 渲染；**禁止**把 `base_dir` 插进描述 |
+| 可用工具清单 +1 行 | `resource_scout.py:81-86` 段末 | prompt 改（冻结区，**本节放行**） | 文案见 §16.2(b) 处 1 |
+| 【环境探测（可选补充步…）】段落 | `resource_scout.py:94`（三步链之后、`:95` 拼接点之前） | prompt 改（冻结区，**本节放行**） | 文案见 §16.3② |
+| `core/nodes/_repo_scoring.py` | — | **零改动（红线）** | 与 planning 共享同一对象，改它 = 同时改两个节点的冻结前缀，并打红 `tests/test_sprint2_s2_13.py:148-149` |
+| `config.py` | — | **零改动** | 超时与输出上限均落工具模块 |
+| 既有 5→6 断言 | `tests/test_sprint2_b2.py:444-467` | 断言同步（**唯一真守门**） | 函数名 `..._five_tools`、docstring `:445`、`sorted` 名称列表 `:463-467` 三处一并改；沿"只换不弱化" |
+| `tests/test_sprint6_b1_prompt_guards.py:267-273` | 同文件 | **仅文档字符串同步** | **勘误**：该处**不是**断言（见 §16.6） |
+
+### 16.5 AC 建议（接续 AC-S7-22）
+
+| 编号 | 归属 | 验收标准 | 可测方式 |
+|---|---|---|---|
+| **AC-S7-23**（建议） | S7-06 / Q-S7-9 | 探测超时为独立常量且量级正确：`_PROBE_TIMEOUT_SECONDS == 30`、类型 `int`，且 `_PROBE_TIMEOUT_SECONDS < RUN_COMMAND_TIMEOUT < SANDBOX_EXEC_TIMEOUT`（30 < 120 < 1800）；`config.py` 未新增任何探测相关常量；探测工具**实际把该值**传给底层执行（非只定义不用） | 常量值/类型断言 + 不等式断言 + monkeypatch 底层执行函数捕获 `timeout` 实参断言等于该常量 + `assert not hasattr(config, "PROBE_*")` 类负向断言 |
+| **AC-S7-24**（建议，**"破成每次"的唯一防线**） | S7-06 / Q-S7-11 | **工具 schema 零任务级动态值**：用两个**不同** `base_dir` 各造一次探测工具，二者的 `name` / `description` / `args_schema` **字节级一致**；且 `description` 中不出现 `str(config.WORKSPACE_DIR)`、不出现未渲染的 `{` / `}`；`description` 由 `_PROBE_COMMANDS` 渲染（每条清单命令原文均出现在 `description` 中） | 双工厂比对断言 + 子串负向断言 + 清单↔描述逐条一致断言（可与 AC-S7-21 合并落在同一文件） |
+| **AC-S7-20 测试点细化** | S7-06 | 既有"跨论文 SystemMessage 主体字节一致"口径不变；**补一条负向**：新增的两处 prompt 文案中不含论文级字段名对应的插值痕迹（无 `{`/`}`、不含 `arxiv`、不含绝对路径） | 在既有 CP-B2-10 用例旁增断言，零新文件 |
+| **AC-S7-25**（建议，Q-S7-12 的可证伪出口） | S7-06 | **探测节制可观测**：真机验证跑一次资源探索，从子图 messages 统计 `probe_environment` 的 ToolMessage 条数 ≤ 5，且 `resource_scout` 未因轮次耗尽走 force_finish、未进 `degraded_nodes` | 真机一次跑（工具层不耗 deepxiv 配额；端到端部分合并进既有授权窗口）；统计口径 = `final_state["messages"]` 中 `name == "probe_environment"` 的 ToolMessage 计数。**本条超标即为"prompt 措辞不够"的实证**，届时再加机制计数器（单点、约 4 行闭包计数） |
+
+### 16.6 本节挖出的三处文档失真（建议随 v1.3 一并回填 PRD）
+
+**1（较严重，会导致守门落空）** — PRD §2.6 与本文 §14.4 均称"`tests/test_sprint6_b1_prompt_guards.py:271` 锁资源探索工具集恰 5 个"。**核实为不成立**：`:271` 是 `TestCP154AffectedAssertionsFix` 的**类 docstring** 文字（"工具集由 6 个降为 5 个"），该类的实际断言只查 pwc 相关（`:275-317`）。**新增第 6 个工具不会打红该文件。** 真正会打红的**只有一处**：`tests/test_sprint2_b2.py:444-467`。若开发照文档只改 `:271` 的文字，会误以为"两处守门都在"，实际只剩一处。
+> **主控复验（2026-07-28）**：Read `test_sprint6_b1_prompt_guards.py:263-302` 确认——`:267` 为 `class TestCP154AffectedAssertionsFix:`，`:268-273` 为类 docstring，两个测试方法（`:275` / `:293`）分别只断 `"pwc_tools" not in import_text` 与 `"search_pwc" not in body`。**勘误成立。**
+
+**2** — PRD §6 Q-S7-12 把 `MAX_NODE_LLM_CALLS=20` 列为探测要避免吃掉的"节点预算"。该常量在 `core/` 下**零消费点**。真实约束见 §16.3①。
+> **主控复验（2026-07-28）**：`grep -rn "MAX_NODE_LLM_CALLS" core/ config.py` 仅命中 `config.py:30` 定义行。**勘误成立。**
+
+**3（顺手发现，不在本次范围）** — `config.py:139` 注释仍写"FLOOR = `REACT_MAX_ROUNDS_EXECUTION`（值 10 不变…）"，而 `:131` 实际值已在 S7 翻倍批改为 20。属注释与代码脱节，建议随下次触碰 `config.py` 时顺手改（本次 S7-06 不碰该文件，故不塞进本批）。
+
+**已复核确认仍准确的**：`resource_scout.py:571-577`（工具集 5）、`planning.py:719-725`、`react_base.py:520-528`（`bind_tools`）、`RUN_COMMAND_TIMEOUT=120`（`config.py:132`）、`SANDBOX_OUTPUT_MAX_BYTES=1MiB`（`config.py:107`）、`REACT_MAX_ROUNDS_RESOURCE_SCOUT=20`（`config.py:66`）、`state.py:232` workspace_dir。
+
+### 16.7 风险登记（接续 §15.10；编号经主控重排，原稿 R-S7-19~23 → R-S7-25~29）
+
+| 编号 | 风险 | 缓解 | 回退 |
+|---|---|---|---|
+| **R-S7-25** | **两级截断方向相反**：`_run_subprocess` 保尾（`local_venv.py:353`）、`_truncate_tool_result` 保头（`react_base.py:73-74`）。依赖多的宿主机上 `pip list` 被头部截断，**字母序靠后的 torch / transformers 被静默丢弃** | 清单内换用 `pip list --format=freeze`（每行更短，同预算容量约翻倍）+ **§17 的返回端字节上限**（二者叠加）；返回体带 `truncated` 标志，agent 可感知 | 若目标机 pip 不支持 freeze 形态 → 单点加回 `pip list`（机制不动） |
+| R-S7-26 | 描述插值失守：开发在工具描述里写 `工作目录为 {base_dir}` 或类似任务级值 → 前缀"破成每次"，**功能全对、账单持续渗漏、零告警** | 措辞草案刻意不给路径（沿 `run_command_tool.py:76` 既有写法）；AC-S7-24 双工厂字节比对断言 | 无机制可替代该断言；断言缺失即防线失守 |
+| R-S7-27 | 探测吃满 20 轮 → scout 来不及克隆 → `resource_scout.py:503-510` 改写 `from_scratch` + 进 `degraded_nodes`，与 AC-S7-17 精神冲突 | prompt 明写"最多 3~5 条 + 轮次要留给检索"；轮次硬顶 20 是确定性兜底，不会无限烧 | AC-S7-25 观测超标 → 加闭包计数器（约 4 行：`nonlocal` 计数 + 一条 if，返回结构化"探测次数已用尽"）。工厂每次节点调用重建（`react_base.py:826`），计数天然按次任务重置 |
+| R-S7-28 | 探测轮次从**全局** `retry_budget_remaining`（240）扣（`react_base.py:901-906`），与下游修复循环共用同一池子（`execution.py:2161`）——探测挥霍会缩小修复循环余量 | 3~5 条上界下净增 ≤ 5/240 ≈ 2%，可忽略；预算已在 §2.1 翻倍 | 若 AC-S7-25 观测到显著挥霍，同 R-S7-27 处置 |
+| R-S7-29 | `nvidia-smi` 挂起（驱动/GPU 处于坏状态）——**外部工程经验，仓库内无证据，如实标注** | 超时收窄至 30s + 杀进程组（`local_venv.py:410-414`）+ 结构化 `timed_out` 返回不炸子图 | 若真机观测到 30s 仍被误杀，单点上调该常量 |
+
+---
+
+## 17. 主控跨节合并裁定：探测输出上限（收口 §15 R-S7-19 与 §16.1 的冲突）
+
+**日期**：2026-07-28（v1.3）
+**性质**：§15 与 §16 由两位架构师**并行独立**产出，各自只看自己那半边问题。主控合并时发现二者在"探测输出要不要设上限"上**结论相反**，且**两边的论据各有一处不成立**。本节以实测为准收口，**推翻 §16.1 的裁决 1**。
+**为什么必须收口而不能各留各的**：这不是文风分歧——两条路子一条会让 S7-06 做成"探到了但静默丢失"，另一条能根治。留着不裁，开发会照 §16.1 实现，缺陷直接进代码。
+
+### 17.1 冲突陈述
+
+| | §15（Q-S7-10，落点） | §16.1（Q-S7-9，输出规模） |
+|---|---|---|
+| 立场 | 登记 **R-S7-19**：若不收窄输出，长输出经截断后 JSON 不可解析，该条事实在 digest 里**静默缺失**；明确"交接给 Q-S7-9 处置" | **裁决 1：输出沿用 1MiB、零新常量**。论据："任何 < 1MiB 的探测专用上限都排在 8000 字符截断之后才触发，**永远轮不到它生效**（新常量必然是死代码）" |
+| 各自的漏洞 | 称 `_parse_tool_content` "**已能容忍**截断后缀" —— **过于乐观**（见 17.2） | "永远轮不到生效"**只在新上限 > 8000 时成立** —— 设一个 **< 8000** 的上限恰恰是**抢在**它之前生效（见 17.2 对照组） |
+
+### 17.2 实测证据（主控亲跑，非推断）
+
+用 `.venv/bin/python` 走真实代码路径：构造一条 600 行的 `pip list --format=freeze` 输出，按 §15.3(c) 的 6 键结构包成 JSON，依次过 `react_base._truncate_tool_result` 与 `resource_scout._parse_tool_content`。
+
+| 组别 | 工具返回端处理 | JSON 长度 | 经 8000 截断后 | `_parse_tool_content` 结果 |
+|---|---|---|---|---|
+| **实验组** | 无上限（= §16.1 裁决 1） | **16111 字符** | 截到 8000，尾部为 `...==1.2.299\n... [truncated at 8000 chars]` | **`None` ← 整条静默丢失** |
+| **对照组** | 返回端先压到 2500 字节 | **2737 字符** | **未触发截断** | **解析成功**，6 键齐全 |
+
+**两条论据的裁定**：
+- §15 的"已能容忍截断后缀"**不成立**。`_parse_tool_content`（`resource_scout.py:309-317`）确实会 `text.rfind("... [truncated at")` 剥掉后缀再 `json.loads`，**但剥完剩下的是缺闭合括号的残缺 JSON，`json.loads` 照样抛错、返回 `None`**。它容忍的是**后缀那行字**，不是残缺 JSON 本体。项目里唯一能修残缺 JSON 的 `_repair_truncated_json_prefix`（sp1 BUG-S1-02 为同类问题所加，在 `react_base.py`）**并未被 `_parse_tool_content` 复用**。
+- §16.1 的"新常量必然是死代码"**不成立**。它把"上限"默认理解成"更大的上限"，因而推出"排在 8000 之后"；但本场景需要的恰是**更小**的上限，它会**先于** 8000 生效，使截断根本不发生。
+
+**失效形态的严重性**：不是"丢一部分输出"，是**整条探测结果消失**，且全程无异常、无日志、无红。这正是 S7-06 立项要防的"白探"，只不过是更难查的静默版——AC-S7-18 的四环断言全用短输出构造，**也不会打红**。
+
+### 17.3 裁定
+
+**在 `core/tools/env_probe_tool.py` 增加返回端输出上限常量 `_PROBE_OUTPUT_MAX_BYTES: int = 2500`，传给 `_run_subprocess(output_max_bytes=...)`，不再传 `config.SANDBOX_OUTPUT_MAX_BYTES`。**
+
+- **它不是死代码**：2500 < 8000，必然先于 `_truncate_tool_result` 生效，令包装后 JSON 恒 < 8000 ⇒ `_parse_tool_content` **永不失败** ⇒ digest 永不静默丢失。
+- **取值依据**：`output_max_bytes` 对 stdout / stderr **各自**生效，最坏两路满载 = 5000 字节；叠加 JSON 转义（换行 `\n`→`\\n`，`pip list --format=freeze` 换行占比约 1/16，膨胀 ≈6%）与其余 4 键开销（实测 ≈237 字符），最坏约 5.6k 字符，距 8000 仍有约 30% 余量。
+- **与既有裁决的关系**：`config.py` 仍**零改动**（常量落工具模块，与 §14.3 清单常量、§16.1 超时常量同址，三者同属该工具的语义边界）；§16.1 的 `pip list --format=freeze` 调整**保留**——它管"同样预算装下更多条目"，本裁定管"预算本身不许溢出"，二者**互补**：前者提高信息密度，后者保证不丢整条。
+- **与 §15 的关系**：`_PROBE_OUTPUT_MAX_CHARS=400`（§15.7）是 **digest 渲染端**的单条上限，本常量是**工具返回端**的字节上限，**两者并存、职责不同**，不合并（合并会让"给模型看的"和"给规划看的"两个上限互相绑架）。
+
+### 17.4 落点与守门
+
+| 项 | 文件:落点 | 类型 | 说明 |
+|---|---|---|---|
+| `_PROBE_OUTPUT_MAX_BYTES: int = 2500` | `core/tools/env_probe_tool.py` 模块级 | 新增常量 | 传 `_run_subprocess(output_max_bytes=...)`；**不传** `config.SANDBOX_OUTPUT_MAX_BYTES` |
+| **AC-S7-26（建议新增，本裁定的唯一守门）** | 测试 | 验收标准 | **探测工具返回的 JSON 字符串长度恒 < `TOOL_RESULT_MAX_LENGTH`**：mock 底层执行返回一个撑满 `_PROBE_OUTPUT_MAX_BYTES` 的 stdout **且** 同样撑满的 stderr（最坏两路满载），断言 `len(tool_return) < config.TOOL_RESULT_MAX_LENGTH`；再把该返回串依次过 `_truncate_tool_result` 与 `_parse_tool_content`，断言**解析成功且 6 键齐全**（即 17.2 对照组的固化） |
+
+**为什么这条守门不可省**：它是唯一能在"有人把 `_PROBE_OUTPUT_MAX_BYTES` 调大到 8000 以上"或"给返回结构再加一个大字段"时立刻打红的断言。没有它，本裁定退化为一句注释，而失效形态是**静默**的——没有任何其它测试会发现。
+
+### 17.5 方法论留痕（为什么并行独立裁决仍需主控收口）
+
+两位架构师**各自的核实都没有偷懒**：§15 读了 `_parse_tool_content` 的源码并正确指出它有"剥截断后缀"的分支；§16 读了 `_truncate_tool_result` 与 `_truncate_output` 并正确指出两级截断方向相反。**问题出在结合部**——
+- §15 看到"有剥后缀的分支"就判定"能容忍"，**没有真跑一次**验证剥完之后还能不能解析；
+- §16 在推理"新常量是不是死代码"时，**只考虑了上限变大的情形**，因为它那半边问题的语境是"要不要为探测放宽/新造参数体系"。
+
+**教训（写进后续流程）**：并行独立裁决能防止互相污染、拿到两个真正独立的视角，但**跨边界的失效形态天然落在两人的盲区交集里**。主控合并时不能只做"编号重排 + 拼接"，必须**主动找两份产出互相引用的那几个点**（本例即 §15 的"交接给 Q-S7-9"这句话），并对结合部**实跑验证**而非读码推断。本次若只做拼接，缺陷会原样进 dev-plan。
+
+---
+
+*（v1.3 增补完：§15 = Q-S7-10 探测结论下游落点——落 `GlobalState.local_env_facts` 单键、确定性从工具历史提取（零 LLM 依赖）、经 `_format_planning_context` 第 6 形参送达规划；不进 `resource_info`，因其与 `RESOURCE_SCOUT_SCHEMA` 集合恒等（加字段=降格为 75% 遵守率的 LLM 产物）且在 planning 侧有 3 处整体重建（revise/switch_repo 会静默丢失）。§16 = Q-S7-9 超时收窄 `_PROBE_TIMEOUT_SECONDS=30` + Q-S7-11 冻结令放行「破一次」（连带面经核实为零基线作废/零复采/零配额）+ Q-S7-12 只做 prompt 措辞不加计数器、探测作链外补充步。§17 = 主控实测收口两节冲突，**推翻 §16.1 裁决 1**，加返回端 `_PROBE_OUTPUT_MAX_BYTES=2500` 根治"长输出致整条探测结果静默丢失"。三节合计：state +1 键、`config.py` 零改动、`run_command_tool.py` 零改动、`_repo_scoring.py` 零改动（红线）；建议新增 AC-S7-23~26。**S7-06 设计侧六问全部收口，可转 dev-plan**——开发批次待 Maria 确认批次边界后启动。）*
