@@ -958,7 +958,7 @@ out = stdout_tail.strip() or stderr_tail.strip()
 | **④ 端到端环（防接线漏）** | monkeypatch `react_base.create_react_subgraph` 捕获 `initial["messages"][1].content`，`json.loads` 后断言 `local_env_facts` 在其中且含 `"A100"`；并断言 `initial["messages"][0]`（SystemMessage）字节与不带该键时**完全一致** | 防"`_format_planning_context` 改对了、但 `build_context` lambda 忘了传第 6 参"的假绿——这一环验的是**模型真的收到了**。手法有现成先例：`tests/test_sprint5_t25_budget_link.py:404` 已同款读 `initial["messages"][1].content` |
 
 **验红操作（写进测试报告，逐环各断一次）**：
-- 注掉 `build_context` lambda 的第 6 实参 → **②④ 必红**、①③ 仍绿（定位到"送达环断"）。
+- 注掉 `build_context` lambda 的第 6 实参 → **④ 必红**、①②③ 仍绿（定位到"接线漏"）。**2026-07-29 实测订正**（原文写"②④必红"有误）：② 送达环按本表定义是**直接调 `_format_planning_context(...)` 并自传第 6 实参**，绕过 lambda，逻辑上不可能红；本表 ④ 行"防 `build_context` lambda 忘了传第 6 参"才是这一形态的守门环。**防线未受损**，且四环的分层定位价值正依赖 ②④ 不重叠。详见 dev-plan §31 P-10。
 - 注掉 `_map_resource_scout_result` 里的 `local_env_facts` 写入 → **①②④ 必红**（定位到"产出环断"）。
 - 把 `_digest_env_probe` 的产出改写进 `analysis_notes`（即复刻假解法）→ **①②④ 必红、③ 绿**——这正是"假解法必须过不了"的直接演示，**建议在测试报告里显式做这一次，作为 AC-S7-18 的交付证据**。
 

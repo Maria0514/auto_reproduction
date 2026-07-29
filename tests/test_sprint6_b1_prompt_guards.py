@@ -268,7 +268,9 @@ class TestCP154AffectedAssertionsFix:
     """受影响既有 prompt 类断言适配：pwc 摘除牵动的断言修复确认（只换不弱化）。
 
     确认 test_sprint2_b2.py 中受 MF-5 影响的断言已正确适配：
-      - 工具集由 6 个降为 5 个（无 search_pwc）
+      - 工具集由 6 个降为 5 个（无 search_pwc）；Sprint 7 S7-06 加入
+        probe_environment 后重新为 6 个（工具集条数的唯一真守门在
+        test_sprint2_b2.py，本类四个用例均只断 pwc 相关，不断条数）
       - system prompt 无 search_pwc 描述
     """
 

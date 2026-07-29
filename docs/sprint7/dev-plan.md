@@ -1106,10 +1106,10 @@ graph TD
 5. **`resource_scout.py` 无 `import config`**（§31 P-2）：现为 `from config import REACT_MAX_ROUNDS_RESOURCE_SCOUT`（:20）。架构 §14.4 装配示例写的 `str(config.WORKSPACE_DIR)` 需**补 import**（改为 `from config import REACT_MAX_ROUNDS_RESOURCE_SCOUT, WORKSPACE_DIR`）。轻微出入，不改设计。
 
 **自测检查点**：
-- [ ] CP-4.1-1 5→6 真守门核实落档：`test_sprint2_b2.py:444-467` 为**唯一**会被打红的断言（三处一并改）；`test_sprint6_b1_prompt_guards.py:267-273` 确认为类 docstring、非断言（仅文字同步）
-- [ ] CP-4.1-2 **message guard 扫描面核实落档**（决定 AC-S7-19 实施路径）：确认只覆盖 `make_node_error` message 实参、S7-06 零新增该调用 ⇒ **AC-S7-19 走"新增独立断言"而非"仅模块名在册"**
-- [ ] CP-4.1-3 护栏签名核实：`_run_subprocess` / `_require_within_workspace` / `mask_value` 签名与架构 §14.3 草图一致，可直接复用、零适配
-- [ ] CP-4.1-4 `resource_scout.py` import 面核实：无 `import config`，装配 fallback 须补 `WORKSPACE_DIR` import（P-2 落档，不改设计）
+- [x] CP-4.1-1 5→6 真守门核实落档：`test_sprint2_b2.py:444-467` 为**唯一**会被打红的断言（三处一并改）；`test_sprint6_b1_prompt_guards.py:267-273` 确认为类 docstring、非断言（仅文字同步）〔2026-07-28 复核，证据见 §31.1 项 1；订正见 P-6〕
+- [x] CP-4.1-2 **message guard 扫描面核实落档**（决定 AC-S7-19 实施路径）：确认只覆盖 `make_node_error` message 实参、S7-06 零新增该调用 ⇒ **AC-S7-19 走"新增独立断言"而非"仅模块名在册"**〔2026-07-28 复核，证据见 §31.1 项 3；行号订正见 P-5〕
+- [x] CP-4.1-3 护栏签名核实：`_run_subprocess` / `_require_within_workspace` / `mask_value` 签名与架构 §14.3 草图一致，可直接复用、零适配〔2026-07-28 复核，证据见 §31.1 项 4〕
+- [x] CP-4.1-4 `resource_scout.py` import 面核实：无 `import config`，装配 fallback 须补 `WORKSPACE_DIR` import（P-2 落档，不改设计）〔2026-07-28 复核，证据见 §31.1 项 5〕
 
 ### 任务 T-S7-4-2：安全底座——新建 `core/tools/env_probe_tool.py`（架构 §14.1/§14.3 + §16.1/§16.2(a) + §15.3(c) + §17.3）
 
@@ -1173,14 +1173,16 @@ graph TD
 7. **零改动确认**：`run_command_tool.py` 一字不动（AC-S7-22 正向侧的结构性保证）；`config.py` 一字不动。
 
 **自测检查点**：
-- [ ] CP-4.2-1 清单与预解析：`_PROBE_COMMANDS` 恰 15 条、含 `pip list --format=freeze`（**不含裸 `pip list`**）；`_ALLOWED_ARGV` 为 `frozenset[tuple[str,...]]`、与清单逐条 `shlex.split` 一致
-- [ ] CP-4.2-2 **AC-S7-21 清单形态守门（命门 3）**：遍历清单逐条断言——argv 元组完全确定（**不含 `{}` / `<>` / `$` 等占位符形态**）；**无条目 argv 含 `-c`**；**无条目 argv[0] ∈ {sh, bash, zsh, env, xargs, nohup, timeout, nice, setsid, …}**；`_PROBE_TOOL_DESCRIPTION` 内清单文本与常量**逐条一致**（单一真相源）
-- [ ] CP-4.2-3 **AC-S7-16 必拒集（命门 1，须副作用探针 + 未调用断言）**：`python -c "..."` / `sh -c "..."` / `env` / `xargs` / `pip install x` / `pip list --outdated` / `git clone <url>` / `nvidia-smi -r` / `/bin/sh` / `./nvidia-smi` / `cat ~/.ssh/id_rsa` / `df -h /home` 逐条断言**结构化拒绝**（`exit_code==-1`、不抛异常）；**monkeypatch `_run_subprocess` 断言未被调用**（判定发生在 `Popen` 之前，只断返回码不合格）；**副作用探针**——指向探针文件的 `rm` / 重定向写入类命令执行后**探针文件原样存在**
-- [ ] CP-4.2-4 必过集：清单中不依赖本机可选组件的若干条（`python3 --version` / `df -h .` / `uname -srm`）真跑断言 `exit_code==0` 且有输出（工具层零 deepxiv 配额）
-- [ ] CP-4.2-5 **AC-S7-23 超时独立且真的传下去**：`_PROBE_TIMEOUT_SECONDS == 30` 且 `isinstance(int)`；`30 < RUN_COMMAND_TIMEOUT(120) < SANDBOX_EXEC_TIMEOUT(1800)`；**monkeypatch 底层执行捕获 `timeout` 实参断言 `== _PROBE_TIMEOUT_SECONDS`**（"只定义不用"是本条最现实的失效形态：常量在、注释在、跑起来还是 120s 且无任何报错）；负向断言 `config` 模块**无** `PROBE_*` 常量
-- [ ] CP-4.2-6 **AC-S7-26 返回恒不触发 8000 截断（命门 4，静默失效唯一守门）**：mock 底层执行返回**撑满 `_PROBE_OUTPUT_MAX_BYTES` 的 stdout 且同样撑满的 stderr**（最坏两路满载），断言 `len(tool_return) < config.TOOL_RESULT_MAX_LENGTH`（8000）；再把该返回串**依次过 `react_base._truncate_tool_result` 与 `resource_scout._parse_tool_content`**，断言**解析成功且 6 键齐全**（§17.2 对照组的固化）
-- [ ] CP-4.2-7 **AC-S7-24 工具 schema 零任务级动态值（"破成每次"唯一防线）**：用两个**不同** `base_dir` 各造一次工具，二者 `name` / `description` / `args_schema` **字节级一致**；`description` 中**不出现任何工作目录路径串**（含 `str(config.WORKSPACE_DIR)`）、**不出现未渲染的 `{` / `}`**；`make_probe_environment_tool(...).name == PROBE_TOOL_NAME`
-- [ ] CP-4.2-8 序列化与拒绝形态：返回走 `json.dumps(ensure_ascii=False, sort_keys=True, default=str)`（**BUG-S1-02 规避自查：不用 `str(dict)` repr**）；6 键含 `command` 且值 `== " ".join(argv)`（多空白入参 `df  -h  .` 与 `df -h .` 返回**同一** `command` 值）；"不在清单"拒因带 `allowed_commands` 且取自同一常量；`run_command_tool.py` / `config.py` **git diff 为空**
+> **T-S7-4-2 自测状态（2026-07-28，全栈开发代理，第一程）**：CP-4.2-1~8 **全部真跑绿**（临时自测脚本 66 断言全绿，零 LLM / 零 deepxiv 配额）。**这里的 `[x]` 只代表"开发侧自测过"，不代表 AC 已验收**——AC-S7-16/21/24/26 四道命门的**验红**（CP-4.8-2/4/5）与正式 CP 测试落 `tests/` 仍属 T-S7-4-8，未做。CP-4.2-6 的构造口径受 P-8 约束（须用真实命令输出形态）。
+
+- [x] CP-4.2-1 清单与预解析：`_PROBE_COMMANDS` 恰 15 条、含 `pip list --format=freeze`（**不含裸 `pip list`**）；`_ALLOWED_ARGV` 为 `frozenset[tuple[str,...]]`、与清单逐条 `shlex.split` 一致
+- [x] CP-4.2-2 **AC-S7-21 清单形态守门（命门 3）**：遍历清单逐条断言——argv 元组完全确定（**不含 `{}` / `<>` / `$` 等占位符形态**）；**无条目 argv 含 `-c`**；**无条目 argv[0] ∈ {sh, bash, zsh, env, xargs, nohup, timeout, nice, setsid, …}**；`_PROBE_TOOL_DESCRIPTION` 内清单文本与常量**逐条一致**（单一真相源）
+- [x] CP-4.2-3 **AC-S7-16 必拒集（命门 1，须副作用探针 + 未调用断言）**：`python -c "..."` / `sh -c "..."` / `env` / `xargs` / `pip install x` / `pip list --outdated` / `git clone <url>` / `nvidia-smi -r` / `/bin/sh` / `./nvidia-smi` / `cat ~/.ssh/id_rsa` / `df -h /home` 逐条断言**结构化拒绝**（`exit_code==-1`、不抛异常）；**monkeypatch `_run_subprocess` 断言未被调用**（判定发生在 `Popen` 之前，只断返回码不合格）；**副作用探针**——指向探针文件的 `rm` / 重定向写入类命令执行后**探针文件原样存在**
+- [x] CP-4.2-4 必过集：清单中不依赖本机可选组件的若干条（`python3 --version` / `df -h .` / `uname -srm`）真跑断言 `exit_code==0` 且有输出（工具层零 deepxiv 配额）
+- [x] CP-4.2-5 **AC-S7-23 超时独立且真的传下去**：`_PROBE_TIMEOUT_SECONDS == 30` 且 `isinstance(int)`；`30 < RUN_COMMAND_TIMEOUT(120) < SANDBOX_EXEC_TIMEOUT(1800)`；**monkeypatch 底层执行捕获 `timeout` 实参断言 `== _PROBE_TIMEOUT_SECONDS`**（"只定义不用"是本条最现实的失效形态：常量在、注释在、跑起来还是 120s 且无任何报错）；负向断言 `config` 模块**无** `PROBE_*` 常量
+- [x] CP-4.2-6 **AC-S7-26 返回恒不触发 8000 截断（命门 4，静默失效唯一守门）**：mock 底层执行返回**撑满 `_PROBE_OUTPUT_MAX_BYTES` 的 stdout 且同样撑满的 stderr**（最坏两路满载），断言 `len(tool_return) < config.TOOL_RESULT_MAX_LENGTH`（8000）；再把该返回串**依次过 `react_base._truncate_tool_result` 与 `resource_scout._parse_tool_content`**，断言**解析成功且 6 键齐全**（§17.2 对照组的固化）
+- [x] CP-4.2-7 **AC-S7-24 工具 schema 零任务级动态值（"破成每次"唯一防线）**：用两个**不同** `base_dir` 各造一次工具，二者 `name` / `description` / `args_schema` **字节级一致**；`description` 中**不出现任何工作目录路径串**（含 `str(config.WORKSPACE_DIR)`）、**不出现未渲染的 `{` / `}`**；`make_probe_environment_tool(...).name == PROBE_TOOL_NAME`
+- [x] CP-4.2-8 序列化与拒绝形态：返回走 `json.dumps(ensure_ascii=False, sort_keys=True, default=str)`（**BUG-S1-02 规避自查：不用 `str(dict)` repr**）；6 键含 `command` 且值 `== " ".join(argv)`（多空白入参 `df  -h  .` 与 `df -h .` 返回**同一** `command` 值）；"不在清单"拒因带 `allowed_commands` 且取自同一常量；`run_command_tool.py` / `config.py` **git diff 为空**
 
 ### 任务 T-S7-4-3：state +1 键——`GlobalState.local_env_facts`（架构 §15.2/§15.7）
 
@@ -1205,9 +1207,9 @@ graph TD
 3. **零退化红线**：不改既有字段、不改字段顺序；`FixLoopRecord`（精确 7 字段冻结，`test_sprint3_a2.py:146-169`）**不碰**；`ResourceInfo` **不碰**。
 
 **自测检查点**：
-- [ ] CP-4.3-1 `GlobalState.__annotations__` 含 `local_env_facts: str`；`create_initial_state()` 返回含 `local_env_facts == ""`
-- [ ] CP-4.3-2 **旧 checkpoint 兼容**：构造无该键的旧 state dict，消费侧 `.get("local_env_facts", "")` 读不 KeyError；**绝不加 reducer**（单值 last-write-wins）
-- [ ] CP-4.3-3 既有 state 契约零退化：`GlobalState` / `ResourceInfo` / `FixLoopRecord` 既有字段与类型不变；`test_sprint3_a2.py` / `test_sprint4_a2.py` / `test_sprint5_t12_state.py` / `test_sprint7_s705_memory.py` / `test_sprint1_smoke.py` 相关套件零失败（架构 §15.9 已核实连带面为零）
+- [x] CP-4.3-1 `GlobalState.__annotations__` 含 `local_env_facts: str`；`create_initial_state()` 返回含 `local_env_facts == ""`
+- [x] CP-4.3-2 **旧 checkpoint 兼容**：构造无该键的旧 state dict，消费侧 `.get("local_env_facts", "")` 读不 KeyError；**绝不加 reducer**（单值 last-write-wins）
+- [x] CP-4.3-3 既有 state 契约零退化：`GlobalState` / `ResourceInfo` / `FixLoopRecord` 既有字段与类型不变；`test_sprint3_a2.py` / `test_sprint4_a2.py` / `test_sprint5_t12_state.py` / `test_sprint7_s705_memory.py` / `test_sprint1_smoke.py` 相关套件零失败（架构 §15.9 已核实连带面为零）
 
 ### 任务 T-S7-4-4：工具装配 5→6 + 冻结区两处 prompt 文案（架构 §14.4 + §16.2(b) + §16.3②③）
 
@@ -1239,12 +1241,12 @@ graph TD
 5. **R-PC4 面**：两处新增文案**全静态**（无 f-string 插值、无 `{`/`}`、无 `arxiv`、无绝对路径），跨论文字节一致（AC-S7-20）；工具清单 5→6 经 `bind_tools`(`react_base.py:528`) 改请求静态前缀属**放行的"破一次"**——**两处文案必须一次改完**，分两次改等于破两次。
 
 **自测检查点**：
-- [ ] CP-4.4-1 **AC-S7-15 正向**：`resource_scout` 装配出的工具集恰 6 个，名称集合 = 既有 5 个 + `probe_environment`；`max_rounds == 20` 不变（`REACT_MAX_ROUNDS_RESOURCE_SCOUT` 保持 20，AC-S7-20 面）
-- [ ] CP-4.4-2 **AC-S7-15 负向守门**：`planning` 装配出的工具集**不变**（仍为原 5 个、**不含** `probe_environment`）——PRD 非目标 1，Maria 已更正诉求对象
-- [ ] CP-4.4-3 **cwd 锚定 + 越界被拒**（AC-S7-15）：工具 `base_dir` 取 `state["workspace_dir"]`（缺省回退 `WORKSPACE_DIR`）；构造越界 cwd 断言拒绝且**未执行**（`_require_within_workspace` 抛错转结构化拒绝）
-- [ ] CP-4.4-4 **三步链字节不动**：`_RESOURCE_SCOUT_SYSTEM_PROMPT_BODY` 中三步链三行与改动前**逐字符相同**；`test_sprint2_b2.py:474-484` 链关键词断言零退化；探测段落位置在三步块之后、`REPO_QUALITY_SCORING_SECTION` 拼接之前
-- [ ] CP-4.4-5 **`_repo_scoring.py` 零改动**：`git diff` 为空；`test_sprint2_s2_13.py:148-149` 的 `is` 同一对象断言零退化
-- [ ] CP-4.4-6 **AC-S7-20 跨论文字节一致 + 负向无插值痕迹**：两篇不同论文下 `_build_resource_scout_system_prompt` 返回**字节相同**（CP-B2-10 口径不破）；新增两处文案**不含 `{`/`}`、不含 `arxiv`、不含绝对路径**
+- [x] CP-4.4-1 **AC-S7-15 正向**：`resource_scout` 装配出的工具集恰 6 个，名称集合 = 既有 5 个 + `probe_environment`；`max_rounds == 20` 不变（`REACT_MAX_ROUNDS_RESOURCE_SCOUT` 保持 20，AC-S7-20 面）
+- [x] CP-4.4-2 **AC-S7-15 负向守门**：`planning` 装配出的工具集**不变**（仍为原 5 个、**不含** `probe_environment`）——PRD 非目标 1，Maria 已更正诉求对象
+- [x] CP-4.4-3 **cwd 锚定 + 越界被拒**（AC-S7-15）：工具 `base_dir` 取 `state["workspace_dir"]`（缺省回退 `WORKSPACE_DIR`）；构造越界 cwd 断言拒绝且**未执行**（`_require_within_workspace` 抛错转结构化拒绝）
+- [x] CP-4.4-4 **三步链字节不动**：`_RESOURCE_SCOUT_SYSTEM_PROMPT_BODY` 中三步链三行与改动前**逐字符相同**；`test_sprint2_b2.py:474-484` 链关键词断言零退化；探测段落位置在三步块之后、`REPO_QUALITY_SCORING_SECTION` 拼接之前
+- [x] CP-4.4-5 **`_repo_scoring.py` 零改动**：`git diff` 为空；`test_sprint2_s2_13.py:148-149` 的 `is` 同一对象断言零退化
+- [x] CP-4.4-6 **AC-S7-20 跨论文字节一致 + 负向无插值痕迹**：两篇不同论文下 `_build_resource_scout_system_prompt` 返回**字节相同**（CP-B2-10 口径不破）；新增两处文案**不含 `{`/`}`、不含 `arxiv`、不含绝对路径**
 
 ### 任务 T-S7-4-5：`_digest_env_probe` 确定性提取 + 3 个 return 点接线（架构 §15.3(b)/§15.4/§15.5/§15.7）
 
@@ -1270,13 +1272,13 @@ graph TD
 5. **AC-S7-17 零冲突确认**：本任务**不触碰 `resource_info`**，故"mock 探测恒失败 → `resource_info` 与基线一致 / `degraded_nodes` 不含该节点 / `resource_strategy` 不被改写"三条断言与本改动互不影响；**不因探测失败新增任何 `make_node_error` 调用**。
 
 **自测检查点**：
-- [ ] CP-4.5-1 **AC-S7-18 ①产出环**：构造 `react_messages=[ToolMessage(name="probe_environment", content=<真实 6 键返回 JSON，含 "A100">)]` 驱动 `_map_resource_scout_result`，断言返回 update 含 `local_env_facts` 且值含 `"A100"` 与 `"nvidia-smi -L"`
-- [ ] CP-4.5-2 **三 return 点全覆盖**（防"agent 崩了顺带把机器事实也丢了"）：`result=None`（:459）与 `result={"error": ...}`（:479）两条降级路径下，只要工具历史有成功探测，`local_env_facts` **仍被写入**；正常路径（:549）同样写入
-- [ ] CP-4.5-3 **字节幂等**：同一 `react_messages` 两次 `_digest_env_probe` 字节相同；digest **不含 `duration` / 时间戳 / uuid 子串**
-- [ ] CP-4.5-4 **术语不泄漏**（AC-S7-19 面）：digest **不含 `probe_environment` / `resource_scout` / `from_scratch` / `use_repo` / `hybrid` 任一串**；命令不存在时渲染为 `该命令在本机不可用`（**不含 `subprocess start failed`**）
-- [ ] CP-4.5-5 **渲染规则与控量**：单条输出截断到 `_PROBE_OUTPUT_MAX_CHARS=400`；命令按首次出现顺序、同命令去重保留最后一次；跑满 15 条时 digest 体量 ≤ ≈6KB 结构性上界
-- [ ] CP-4.5-6 **失败兜底不阻断**：空 `react_messages` / 全不可解析 / 解析抛异常 → 返回 `""` 且 update **不含**该键；**解析失败但存在目标 ToolMessage 时打 WARNING**（不静默吞错）；工具名走 `PROBE_TOOL_NAME` 常量（`make_probe_environment_tool(...).name == PROBE_TOOL_NAME`，防改名致白探回潮）
-- [ ] CP-4.5-7 **AC-S7-17 零冲突**：mock 探测恒失败（含超时、命令不存在两形态）跑资源探索 → `resource_info` 与基线一致、`degraded_nodes` **不含** `resource_scout`、`resource_strategy` **不被改写**；"本机无 GPU" 被当作有效结论（照常写入 digest，非错误）
+- [x] CP-4.5-1 **AC-S7-18 ①产出环**：构造 `react_messages=[ToolMessage(name="probe_environment", content=<真实 6 键返回 JSON，含 "A100">)]` 驱动 `_map_resource_scout_result`，断言返回 update 含 `local_env_facts` 且值含 `"A100"` 与 `"nvidia-smi -L"`
+- [x] CP-4.5-2 **三 return 点全覆盖**（防"agent 崩了顺带把机器事实也丢了"）：`result=None`（:459）与 `result={"error": ...}`（:479）两条降级路径下，只要工具历史有成功探测，`local_env_facts` **仍被写入**；正常路径（:549）同样写入
+- [x] CP-4.5-3 **字节幂等**：同一 `react_messages` 两次 `_digest_env_probe` 字节相同；digest **不含 `duration` / 时间戳 / uuid 子串**
+- [x] CP-4.5-4 **术语不泄漏**（AC-S7-19 面）：digest **不含 `probe_environment` / `resource_scout` / `from_scratch` / `use_repo` / `hybrid` 任一串**；命令不存在时渲染为 `该命令在本机不可用`（**不含 `subprocess start failed`**）
+- [x] CP-4.5-5 **渲染规则与控量**：单条输出截断到 `_PROBE_OUTPUT_MAX_CHARS=400`；命令按首次出现顺序、同命令去重保留最后一次；跑满 15 条时 digest 体量 ≤ ≈6KB 结构性上界
+- [x] CP-4.5-6 **失败兜底不阻断**：空 `react_messages` / 全不可解析 / 解析抛异常 → 返回 `""` 且 update **不含**该键；**解析失败但存在目标 ToolMessage 时打 WARNING**（不静默吞错）；工具名走 `PROBE_TOOL_NAME` 常量（`make_probe_environment_tool(...).name == PROBE_TOOL_NAME`，防改名致白探回潮）
+- [x] CP-4.5-7 **AC-S7-17 零冲突**：mock 探测恒失败（含超时、命令不存在两形态）跑资源探索 → `resource_info` 与基线一致、`degraded_nodes` **不含** `resource_scout`、`resource_strategy` **不被改写**；"本机无 GPU" 被当作有效结论（照常写入 digest，非错误）
 
 ### 任务 T-S7-4-6：planning 送达——`_format_planning_context` 第 6 形参 + lambda 第 6 实参（架构 §15.3(a)/§15.7）
 
@@ -1304,10 +1306,10 @@ graph TD
 5. **planning 侧红线**：**planning 不得触发任何探测**（A-S7-11：工具只给资源探索；PRD 非目标 1 + AC-S7-15 负向守门）；`local_env_facts` 在 planning 侧**只读**。
 
 **自测检查点**：
-- [ ] CP-4.6-1 **AC-S7-18 ②送达环（命门）**：把 ① 的 update 合进 state，调 `_format_planning_context(...)`，断言返回 payload **含 `local_env_facts` 键**且值含 `"A100"`
-- [ ] CP-4.6-2 **AC-S7-18 ③反证环（负向守门）**：构造 `analysis_notes` 含 `"A100"` 但 `local_env_facts=""` 的 state → 断言 planning payload **不含**该事实、**不含** `local_env_facts` 键（把"备注通道到不了规划"钉成常驻断言，使任何"改回备注通道"的实现必然同时打红 ②③）
-- [ ] CP-4.6-3 **AC-S7-18 ④端到端环（防接线漏）**：monkeypatch `react_base.create_react_subgraph` 捕获 `initial["messages"][1].content`，`json.loads` 后断言 `local_env_facts` 在其中且含 `"A100"`；**并断言 `initial["messages"][0]`（SystemMessage）字节与不带该键时完全一致**（手法先例：`tests/test_sprint5_t25_budget_link.py:404`）
-- [ ] CP-4.6-4 既有调用零破坏 + 空值不写：既有 5 参调用（不传第 6 参）正常工作；`local_env_facts` 为 `None`/`""` 时 payload **不含**该键（不造哨兵值）；既有键（`user_feedback` / `pending_repo_url` / `resource_strategy` / `selected_repo`）值不变、`test_sprint5_t15_planning_prompt.py` 相关套件零失败
+- [x] CP-4.6-1 **AC-S7-18 ②送达环（命门）**：把 ① 的 update 合进 state，调 `_format_planning_context(...)`，断言返回 payload **含 `local_env_facts` 键**且值含 `"A100"`
+- [x] CP-4.6-2 **AC-S7-18 ③反证环（负向守门）**：构造 `analysis_notes` 含 `"A100"` 但 `local_env_facts=""` 的 state → 断言 planning payload **不含**该事实、**不含** `local_env_facts` 键（把"备注通道到不了规划"钉成常驻断言，使任何"改回备注通道"的实现必然同时打红 ②③）
+- [x] CP-4.6-3 **AC-S7-18 ④端到端环（防接线漏）**：monkeypatch `react_base.create_react_subgraph` 捕获 `initial["messages"][1].content`，`json.loads` 后断言 `local_env_facts` 在其中且含 `"A100"`；**并断言 `initial["messages"][0]`（SystemMessage）字节与不带该键时完全一致**（手法先例：`tests/test_sprint5_t25_budget_link.py:404`）
+- [x] CP-4.6-4 既有调用零破坏 + 空值不写：既有 5 参调用（不传第 6 参）正常工作；`local_env_facts` 为 `None`/`""` 时 payload **不含**该键（不造哨兵值）；既有键（`user_feedback` / `pending_repo_url` / `resource_strategy` / `selected_repo`）值不变、`test_sprint5_t15_planning_prompt.py` 相关套件零失败
 
 ### 任务 T-S7-4-7：既有 5→6 断言同步（只换不弱化，架构 §14.4/§16.4/§16.6）
 
@@ -1323,9 +1325,9 @@ graph TD
 3. **`max_rounds == 20` 断言保持**（`:468` 区间，`REACT_MAX_ROUNDS_RESOURCE_SCOUT` 不上调，A-S7-12）。
 
 **自测检查点**：
-- [ ] CP-4.7-1 `test_sprint2_b2.py:444-467` 三处改毕：函数名 / docstring / `sorted` 名称列表（含 `probe_environment`）；**精确集合断言形态未弱化**（仍为 `==` 而非子集/包含）；`max_rounds == 20` 与 `result_schema["title"] == "ResourceInfo"` 断言保持
-- [ ] CP-4.7-2 `test_sprint6_b1_prompt_guards.py:267-273` 类 docstring 文字同步；该文件两个用例断言**未被改动**（仍只断 pwc 相关）
-- [ ] CP-4.7-3 **断言同步面精确闭合**：`grep -rn` 全仓复查无遗漏的"5 个工具 / five_tools"类硬编码；改后相关文件套件全绿
+- [x] CP-4.7-1 `test_sprint2_b2.py:444-467` 三处改毕：函数名 / docstring / `sorted` 名称列表（含 `probe_environment`）；**精确集合断言形态未弱化**（仍为 `==` 而非子集/包含）；`max_rounds == 20` 与 `result_schema["title"] == "ResourceInfo"` 断言保持
+- [x] CP-4.7-2 `test_sprint6_b1_prompt_guards.py:267-273` 类 docstring 文字同步；该文件两个用例断言**未被改动**（仍只断 pwc 相关）
+- [x] CP-4.7-3 **断言同步面精确闭合**：`grep -rn` 全仓复查无遗漏的"5 个工具 / five_tools"类硬编码；改后相关文件套件全绿
 
 ### 任务 T-S7-4-8：CP 测试 AC-S7-15~26 全覆盖 + 四道命门逐环验红 + 全量回归（架构 §14.5/§15.6/§16.5/§17.4 + PRD §3）
 
@@ -1340,7 +1342,7 @@ graph TD
 2. **AC-S7-16 只读保证（命门 1，须验红）**：必拒集逐条（§14.5 建议 12 条）+ **副作用探针**（探针文件原样存在）+ **monkeypatch `_run_subprocess` 断言未被调用**（判定在 `Popen` 之前）+ 必过集对照。**验红：注掉 `if tuple(argv) not in _ALLOWED_ARGV: return _reject_with_list()` 这条强制拒绝 → 本条断言必须变红**。
 3. **AC-S7-17 探测失败不污染主链路**：见 CP-4.5-7（含超时 / 命令不存在两形态）。
 4. **AC-S7-18 防白探（命门 2，四环逐环验红）**：①产出环（CP-4.5-1）②送达环（CP-4.6-1）③反证环（CP-4.6-2）④端到端环（CP-4.6-3）。**逐环验红操作（写进测试报告，逐环各断一次）**：
-   - 注掉 `build_context` lambda 第 6 实参 → **②④ 必红、①③ 仍绿**（定位到"送达环断"）；
+   - 注掉 `build_context` lambda 第 6 实参 → **④ 必红、①②③ 仍绿**（定位到"接线漏"）。**2026-07-29 实测订正，见 §31 P-10**：原文写"②④必红"有误——② 按 CP-4.6-1 是**直接调 `_format_planning_context` 并自传第 6 实参**，绕过 lambda，逻辑上不可能红；与 §26 T-S7-4-6 第 3 条"④端到端环守的就是这一行"自相矛盾。**防线未受损**（为该形态设计的 ④ 确实红了），且四环的分层定位价值正依赖于 ②④ 不重叠；
    - 注掉 `_map_resource_scout_result` 的 `local_env_facts` 写入 → **①②④ 必红**（定位到"产出环断"）；
    - **把 `_digest_env_probe` 产出改写进 `analysis_notes`（复刻假解法）→ ①②④ 必红、③ 绿**——**这一次必须在测试报告里显式做，作为 AC-S7-18 的交付证据**（架构 §15.6 明确建议）。
 5. **AC-S7-19 用户可见文案（须新增独立断言，勿只靠模块名在册）**：见 §31 P-3——`tests/test_e2e2_message_guard.py` 只扫 `make_node_error` 实参，S7-06 零新增该调用。**须新增独立断言**：对 `_digest_env_probe` 产出 + `_reject` 拒绝文案跑同一份 `_BLACKLIST`（复用该文件的 `_hits` 口径，大小写不敏感 + 词边界匹配），并沿该守门"扫不到即报红"的保险设计（断言扫描对象非空，防范围指错扫到 0 条却 passed 的假绿）。
@@ -1354,15 +1356,23 @@ graph TD
 13. **全量非 e2e 回归**（`.venv/bin/pytest -q -m "not e2e"`）相对批次 3 收口基线（**2044 绿**）零退化零失败，新增用例数与增量精确闭合。
 
 **自测检查点**：
-- [ ] CP-4.8-1 AC-S7-15/17/20 断言全绿（工具集正负向 + cwd 锚定/越界 + 探测失败不污染 + 跨论文字节一致 + 负向无插值痕迹）
-- [ ] CP-4.8-2 **AC-S7-16 验红（命门 1）**：必拒集 12 条 + 副作用探针 + `_run_subprocess` 未被调用断言全绿；**注掉强制拒绝机制后本条断言必须变红**
-- [ ] CP-4.8-3 **AC-S7-18 四环逐环验红（命门 2）**：四环全通断言绿；三次验红操作（注掉 lambda 第 6 实参 → ②④红①③绿；注掉 map 写入 → ①②④红；**假解法复刻（改写进 `analysis_notes`）→ ①②④红、③绿**）逐条落测试报告
-- [ ] CP-4.8-4 **AC-S7-21 验红（命门 3）**：形态断言全绿；**往清单加"带自由参数条目"与"解释器形态条目"各一次 → 本条断言必须分别变红**
-- [ ] CP-4.8-5 **AC-S7-26 验红（命门 4）**：最坏两路满载构造 + 长度断言 + 双阶段解析（`_truncate_tool_result` → `_parse_tool_content`）6 键齐全全绿；**把 `_PROBE_OUTPUT_MAX_BYTES` 调到 8000 以上后本条断言必须变红**
-- [ ] CP-4.8-6 **AC-S7-22 一正一负对照**（同文件相邻两条）：coding 侧 `run_command` 跑 `python -c "print(1)"` / `python -m py_compile <file>` **仍成功**；探测侧同两条**被拒且底层未被调用**
-- [ ] CP-4.8-7 **AC-S7-19 新增独立断言**（勿只靠模块名在册）：`_digest_env_probe` 产出 + `_reject` 文案过 `_BLACKLIST` 零命中；扫描对象非空（沿"扫不到即报红"保险，防范围指错的假绿）
-- [ ] CP-4.8-8 AC-S7-23/24 全绿（超时值/类型/不等式/**实参捕获**/`config` 无 `PROBE_*`；双工厂字节一致/无路径串/无未渲染 `{}`/清单↔描述逐条一致）
-- [ ] CP-4.8-9 **全量非 e2e 回归零退化零失败**（相对批次 3 收口基线 2044 绿，账目精确闭合）+ **AC-S7-15~26 覆盖矩阵审计**（每条 AC 至少一个可测断言映射，映射落 handoff）
+- [x] CP-4.8-1 AC-S7-15/17/20 断言全绿（工具集正负向 + cwd 锚定/越界 + 探测失败不污染 + 跨论文字节一致 + 负向无插值痕迹）
+- [x] CP-4.8-2 **AC-S7-16 验红（命门 1）**：必拒集 12 条 + 副作用探针 + `_run_subprocess` 未被调用断言全绿；**注掉强制拒绝机制后本条断言必须变红**
+- [x] CP-4.8-3 **AC-S7-18 四环逐环验红（命门 2）**：四环全通断言绿；三次验红操作（注掉 lambda 第 6 实参 → ②④红①③绿；注掉 map 写入 → ①②④红；**假解法复刻（改写进 `analysis_notes`）→ ①②④红、③绿**）逐条落测试报告
+- [x] CP-4.8-4 **AC-S7-21 验红（命门 3）**：形态断言全绿；**往清单加"带自由参数条目"与"解释器形态条目"各一次 → 本条断言必须分别变红**
+- [x] CP-4.8-5 **AC-S7-26 验红（命门 4）**：最坏两路满载构造 + 长度断言 + 双阶段解析（`_truncate_tool_result` → `_parse_tool_content`）6 键齐全全绿；**把 `_PROBE_OUTPUT_MAX_BYTES` 调到 8000 以上后本条断言必须变红**
+- [x] CP-4.8-6 **AC-S7-22 一正一负对照**（同文件相邻两条）：coding 侧 `run_command` 跑 `python -c "print(1)"` / `python -m py_compile <file>` **仍成功**；探测侧同两条**被拒且底层未被调用**
+- [x] CP-4.8-7 **AC-S7-19 新增独立断言**（勿只靠模块名在册）：`_digest_env_probe` 产出 + `_reject` 文案过 `_BLACKLIST` 零命中；扫描对象非空（沿"扫不到即报红"保险，防范围指错的假绿）
+- [x] CP-4.8-8 AC-S7-23/24 全绿（超时值/类型/不等式/**实参捕获**/`config` 无 `PROBE_*`；双工厂字节一致/无路径串/无未渲染 `{}`/清单↔描述逐条一致）
+- [x] CP-4.8-9 **全量非 e2e 回归零退化零失败**（相对批次 3 收口基线 2044 绿，账目精确闭合）+ **AC-S7-15~26 覆盖矩阵审计**（每条 AC 至少一个可测断言映射，映射落 handoff）
+
+> **T-S7-4-8 交付实测（2026-07-29，@全栈开发代理，证据见 `docs/sprint7/test-reports/2026-07-29_s706-cp-verify-red.md`）**：
+> 新增 `tests/test_sprint7_s706_probe_tool.py`（18 用例）+ `tests/test_sprint7_s706_env_facts.py`（29 用例）= **47 用例全绿**。
+> **四道命门共 8 次验红全部按预期打红并已逐字节还原**：命门 1（注掉强制拒绝 → 4 红 / 必过集对照组仍绿，副作用探针快照由 `('FILE','ORIGINAL',420)` 变 `('FILE','UNREADABLE: PermissionError',0)`）；命门 2（三次：lambda 第 6 实参 → **仅 ④ 红**见下方口径订正 / 注掉 map 写入 → 6 红③绿 / **假解法复刻 → 6 红③绿，且先实证假解法"看起来是工作的"——`analysis_notes contains A100: True` 而 `local_env_facts` 键不存在**）；命门 3（两次：`df -h {path}` → AC-S7-21 + AC-S7-24 红 / `python -c print(1)` → AC-S7-21 + **AC-S7-16 + AC-S7-22 连带红**，实证"加一条清单 = 重开一类禁止项"，R-S7-16 活体证明）；命门 4（两次：常量调 9000 → 19504 字符 > 8000 红 / 改传 1MiB → 16213 字符红 + AC-S7-23 实参断言一并红）。
+> **全量非 e2e 回归两轮**：`2103 passed / 0 failed / 25 skipped / 46 deselected`，139.99s 与 137.42s。账目 = 2056 基线 + 47 新增 = **2103 精确闭合**；P-9 flaky（`test_plan_review_e2e.py::test_e2e_code_only`）两轮均绿。
+> **生产代码零改动**：`git diff` 与开工快照逐字节相同（md5 `c6ef7bd0fe2a9550cea6a7d958716a10`），`env_probe_tool.py` md5 `8587ea451ad803ac3d27a67f78233be8` 不变；`run_command_tool.py` / `config.py` / `_repo_scoring.py` 未出现在改动列表。
+> **AC-S7-26 构造严守 P-8**：填充料用 freeze 形态（换行密度 1/14，真机实测 1/18.1，病态阈值 1/2.7），**不用纯换行**；验红能力经两次验红确认未被该口径削弱。
+> ⚠ **口径订正候选（建议登记 P-10，本程未改设计）**：本 dev-plan L1345 与 architecture §15.6 L961 写「注掉 lambda 第 6 实参 → **②④必红**」，但 ② 按 CP-4.6-1 / §15.6 明文是**直接调 `_format_planning_context(...)`**，拿不到 lambda 层漏传，实测**只有 ④ 红**（1 failed / 28 passed）。与 L1304「④端到端环守的就是这一行」自洽，**防线未受损**，属文档口径笔误。请主控裁定。
 
 ### 任务 T-S7-4-9：真机验证 + AC-S7-25 观测（**含 Maria 授权点**，架构 §16.5 + PRD §3 测试盲区）
 
@@ -1384,10 +1394,16 @@ graph TD
 4. **handoff 交测试工程师**：AC-S7-15~26 覆盖矩阵 + 四道命门验红证据（含假解法复刻演示）+ 真机探测实测事实 + AC-S7-25 计数 + 已知限制（R-S7-16 清单漂移只剩人工评审 / R-S7-17 PATH 劫持属宿主已陷 / R-S7-18 stdin 未设 DEVNULL 当前无实害 / R-S7-20 规划是否消费不设硬约束 / R-S7-24 既有 `resource_strategy` 枚举泄漏面归 TODO 余项）。
 
 **自测检查点**：
-- [ ] CP-4.9-1 **档 A 工具层真机探测**（零配额）：清单内命令在本机真跑，**实测拿到 GPU / CUDA / Python / 已装包 / 磁盘事实**（mock 补不了的盲区），证据落测试报告
-- [ ] CP-4.9-2 **档 A 真机 AC-S7-26**：真机 `pip list --format=freeze` 返回串长度实测 < `TOOL_RESULT_MAX_LENGTH`(8000) 且 `_parse_tool_content` 解析成功、6 键齐全
+- [x] CP-4.9-1 **档 A 工具层真机探测**（零配额）：清单内命令在本机真跑，**实测拿到 GPU / CUDA / Python / 已装包 / 磁盘事实**（mock 补不了的盲区），证据落测试报告
+- [x] CP-4.9-2 **档 A 真机 AC-S7-26**：真机 `pip list --format=freeze` 返回串长度实测 < `TOOL_RESULT_MAX_LENGTH`(8000) 且 `_parse_tool_content` 解析成功、6 键齐全
 - [ ] CP-4.9-3 **档 B AC-S7-25 观测**（⚠ **须 Maria 明确授权具体动作**，合并既有真跑窗口）：真机一次端到端跑，`probe_environment` ToolMessage 条数 ≤ 5 + 未走 force_finish + 未进 `degraded_nodes` + `resource_strategy` 未被改写
-- [ ] CP-4.9-4 handoff 归档齐备：AC-S7-15~26 覆盖矩阵 + 四道命门验红证据（含 AC-S7-18 假解法复刻演示）+ 真机事实 + AC-S7-25 计数 + 已知限制清单
+- [x] CP-4.9-4 handoff 归档齐备：AC-S7-15~26 覆盖矩阵 + 四道命门验红证据（含 AC-S7-18 假解法复刻演示）+ 真机事实 + AC-S7-25 计数 + 已知限制清单
+
+> **档 A 实测（2026-07-29，@全栈开发代理，零 deepxiv 配额 / 零 LLM / 零网络；证据见 `test-reports/2026-07-29_s706-cp-verify-red.md` §4）**：
+> 清单 **15 条全部在本机真跑**，`timed_out` 恒 False、`truncated` 恒 False、无一抛异常。实测事实：**GPU/CUDA = 无**（`nvidia-smi` / `nvcc` 均 `No such file or directory`，digest 渲染为「该命令在本机不可用」）；**CPU** = x86_64 / 12 核 / AMD EPYC-Genoa；**内存** = 22Gi（available 10Gi）+ Swap 7.6Gi；**磁盘** = `/dev/mapper/vg_data-lv_data` 278G，**可用 241G**（9% 使用，挂 `/data`）；**内核** = Linux 6.1.62-4.x86_64；**工具链** = git 2.39.3 / gcc 8.5.0 / GNU Make 4.2.1 / cmake 3.26.5；**Python 与已装包见下方 PATH 依赖**。真机 digest = 2221 字符 / 82 行（结构性上界 6KB 内），零内部术语泄漏。
+> **CP-4.9-2 真机数字**：`pip list --format=freeze` → 返回串 **1856 < 8000** ✅、`_truncate_tool_result` 原样不变 ✅、`_parse_tool_content` 解析成功且 **6 键齐全** ✅；stdout_tail 1633 字节 / 90 换行 / **换行密度 1/18.1**（= P-8 的真实形态基准）。诚实标注：本机 90 个包未撑到 2500 字节上限，故真机这一跑**未走到返回端截断分支**，"撑满后仍 < 8000"由 mock 满载用例（含两次验红）覆盖，两者互补。
+> ⚠ **真机新发现（如实登记，非缺陷）**：`_run_subprocess` 白名单继承 `PATH`，故 **Python / pip 两项事实取决于宿主 PATH**——默认 PATH 下 `python3`=3.6.8、`python`=2.7.18、`pip` **不可解析**（探不到已装包）；PATH 前置 `.venv/bin` 后 `python3`/`python`=3.11.5、`pip`=26.1.1 且能拿到 90 行包列表。清单用裸名是刻意设计（R-S7-17 已判"等价宿主已陷、不做安全剧场加固"），**本批不扩围**；如需覆盖属"单点加清单条目、机制不动"（R-S7-13 回退路径）。
+> **CP-4.9-3（档 B / AC-S7-25）未执行**——耗 deepxiv 日配额 + 真实 LLM，须 **Maria 单独授权具体动作**。按 §25.4 容量裁剪线**延后不注销**，已登记进 handoff 与 TODO。**在拿到该实证前，Q-S7-12「只做 prompt 措辞、不加机制计数器」这一裁决暂时无法被证伪**（超标即为 R-S7-27 实证，届时加约 4 行闭包计数器）。
 
 > **批次 4 收口门（= S7-06 交付）**：CP-4.1~4.8 全绿 + **四道命门逐环验红全部通过**（CP-4.8-2 AC-S7-16 / CP-4.8-3 AC-S7-18 四环含假解法复刻 / CP-4.8-4 AC-S7-21 清单漂移 / CP-4.8-5 AC-S7-26 静默截断）+ AC-S7-15~24/26 全覆盖 + 全量非 e2e 回归零退化（CP-4.8-9，相对 2044 绿基线账目闭合）+ **零改动红线全部成立**（`run_command_tool.py` / `config.py` / `_repo_scoring.py` / `ResourceInfo` / `RESOURCE_SCOUT_SCHEMA` / 【输出格式】段 / interrupt payload，git diff 逐一为空）+ 三步链 1/2/3 字节不动 + R-PC4 跨论文（AC-S7-20）与跨任务（AC-S7-24）双向守门通过 + 档 A 真机探测证据齐（CP-4.9-1/2）。**档 B 端到端真跑（CP-4.9-3）须 Maria 明确授权具体动作**（合并既有授权窗口）；若未获授权，AC-S7-25 按 §25.4 容量裁剪线**延后不注销**、登记进 handoff 与 TODO。**停手等 Maria 确认。S7-06 交付。**
 
@@ -1493,7 +1509,26 @@ graph TD
 | **P-3（重要，真守门落空）** | PRD §3 AC-S7-19 与架构均称"**扩写**既有守门 `tests/test_e2e2_message_guard.py`（`resource_scout` 已在 `_GUARDED_MODULES` 内），覆盖新增文案" | 该守门的 `_extract_message_literals`(:104-129) **只抽 `make_node_error(...)` 的第 3 位置参数 / `error_message=` 关键字实参**（含同作用域变量赋值解析），**不是模块内全部字面量**。而 S7-06 按 AC-S7-17 **不新增任何 `make_node_error` 调用** ⇒ 仅靠"模块名在册"对新增文案（digest / 拒绝文案 / prompt）**零覆盖**；且 `:155` 的 `assert literals` 保险因既有 `from_scratch` 那条本就在册而**不会响**（它防"扫描逻辑失效扫到 0 条"，防不了"新文案不在扫描面内"） | **高**——若照文档只把模块留在 `_GUARDED_MODULES` 内就算完成，AC-S7-19 **在全绿状态下零覆盖**（沿 E2E-2 发现① 同款失效模式） | **AC-S7-19 必须新增独立断言**（对 `_digest_env_probe` 产出 + `_reject` 拒绝文案跑同一份 `_BLACKLIST`，复用 `_hits` 口径 + 断言扫描对象非空）。已写进 T-4-1（CP-4.1-2）与 T-4-8（CP-4.8-7），登记 R-S7-30。**不改架构文档** |
 | **P-4（轻微，仅口径提示）** | 架构 §16.4 落点表 `_PROBE_OUTPUT_MAX_BYTES` 一行与 §16.1 正文"沿用、零新常量"并存（§16.1 已加"⚠已被推翻"标注） | 二者以 **§17 为准**（返回端 2500 字节）；§16.1 原文若被单独阅读会导向错误实现 | 中（本 dev-plan 已在 §23.2 / §28 纪律 2 / T-4-2 三处重申冲突口径） | 实施照 §17.3；`_PROBE_OUTPUT_MAX_BYTES`（返回端字节）与 `_PROBE_OUTPUT_MAX_CHARS`（digest 渲染端字符）**两者并存不合并** |
 
+| **P-5**（2026-07-28 T-S7-4-1 开工复核新增，轻微，仅行号） | 本 dev-plan §26 T-4-1 核实项 3 与 §31 P-3 均记 `_extract_message_literals`(**:104-129**) | 该函数实际 `def` 在 **`tests/test_e2e2_message_guard.py:85`**、函数体止于 `:129`；`:104-129` 只是函数体后半段（`:85-103` 是 docstring + `found`/`name_literals` 初始化），**行号起点偏 19 行** | 极轻微（结论完全不变：扫描面确只覆盖 `make_node_error` message 实参） | 仅留档订正行号为 **`:85-129`**；P-3 的实质结论与 AC-S7-19 实施路径**不变** |
+| **P-6**（2026-07-28 T-S7-4-1 开工复核新增，轻微，仅计数） | 本 dev-plan §26 T-4-1 核实项 1 与 PRD §2.6 均记 `test_sprint6_b1_prompt_guards.py` 的 `TestCP154AffectedAssertionsFix` 类"**两个用例** :275/:293 只断 pwc 相关" | 该类实际有 **4 个用例**：`:275`（import 行无 pwc_tools）、`:293`（prompt 无 search_pwc）、**`:306`（config 无 PWC_* 常量）、`:314`（pwc_tools 模块已删除）** | 极轻微（结论完全不变：4 个用例**无一**断言工具集条数，新增工具不会打红该文件） | 仅留档订正为 4 个用例；"仅类 docstring 文字同步、非断言"的处置**不变** |
+| **P-7**（2026-07-28 T-S7-4-2 实施时新增，实现口径） | 架构 §16.2(a) 描述草案 Returns 段原文写 `JSON 字符串 {command, exit_code, stdout_tail, stderr_tail, timed_out, truncated}`（**含花括号字面量**） | 与 CP-4.2-7 / AC-S7-24 的"`description` 中**不出现未渲染的 `{` / `}`**"守门**形态冲突**——若照抄草案，任何写成 `assert "{" not in description` 的守门都会误红，而把守门放宽成"只查特定占位符名"又会削弱防线 | 中（不改语义，只改呈现形态） | **实施取"描述正文零花括号"**：Returns 段改为中文列举六个键名（`含 command、exit_code、stdout_tail、stderr_tail、timed_out、truncated 六个字段`），语义与草案等价、六个键名一字不少，同时让"描述内零 `{`/`}`"成为可直接断言的强形态。已自测：`"{" not in description and "}" not in description` 成立。**不改设计**（AC-S7-24 的守门意图正是如此） |
+| **P-8**（2026-07-28 T-S7-4-2 自测发现，残余风险，**须写进 T-4-8**） | 架构 §17.3 取值依据称"最坏两路满载 = 5000 字节 + JSON 转义膨胀 ≈6% + 其余 4 键 ≈237 字符 ⇒ 最坏约 5.6k 字符，距 8000 仍有约 30% 余量" | **实测复核**：真实形态（`pip list --format=freeze` 风格，换行占比 1/27）两路满载 → 返回串 **5404 字符 < 8000**，§17.3 结论成立；但**病态构造**（stdout / stderr 均为纯换行满载 2500 字节）→ 每字节转义为 `\n` 两字符 → 返回串 **10218 字符 > 8000**，仍会触发截断 | 低（清单 15 条命令的真实输出换行占比 1/16~1/40，够不着病态形态；且 §17.3 本就以"真实输出"为取值依据） | **不改常量、不改设计**（调到 1500 会牺牲 `pip list` 信息密度换一个不存在的场景）。**处置 = 把口径写死进 T-4-8 的 CP-4.8-5**：AC-S7-26 的"最坏两路满载"构造须用**真实命令输出形态**（经 `_truncate_output` 真实截断路径产出），**不得**用纯换行/纯引号等病态填充——否则该守门会以"设计缺陷"之名恒红。本条残余如实登记，供后人若真观测到超长换行密集输出时单点调小常量 |
+| **P-9**（2026-07-28 T-S7-4-4~4-7 收口时发现，**既有 flaky 用例，非本批引入**） | 全量非 e2e 回归的"零失败"口径隐含"`tests/test_plan_review_e2e.py` 恒绿" | **实测**：`tests/test_plan_review_e2e.py::test_e2e_code_only`（Playwright 点 shadcn iframe 里的「📄 仅复现代码」按钮）**在 HEAD 与本批改动下同样间歇性失败**，失败文案恒为「未找到/点不到「仅复现代码」按钮」。**对照实验**：`git stash` 掉本批两个源文件后于 HEAD 连跑 4 次 → **2 失败 / 2 通过**；带本批改动连跑 9 次 → 6 失败 / 3 通过。失败跑耗时恒 ~54s、通过跑恒 ~40s，差值 ≈ `_click_in_frame` 的 15s 超时用尽 ⇒ 根因是 **shadcn 组件 iframe 未在 15s 内加载**（页面主文档正文在 HEAD 与本批下**字节长度完全相同**，均为 436 字符、`page.frames == 1`，且 `pageerror` 为空 ⇒ 与本批改动无因果） | 中（会让"全量回归零失败"这条收口门**间歇性误红**，误导后人把本批改动当回归） | **不在本批处理**（属 UI e2e harness 的等待策略问题，改它要碰 `tests/test_plan_review_e2e.py` 的 `_wait_app_ready` / `_click_in_frame` 超时，超出本程四任务边界）。**处置 = 如实登记 + 收口时以"复跑取稳态"为准**：本批最终全量回归实测 **2056 passed / 0 failed / 25 skipped / 138.93s**，与 2056 绿基线账目闭合。建议后续单开一条 TODO 修 harness 等待（如把 `_click_in_frame` 超时从 15s 提到 30s，或改为显式 `wait_for_selector` iframe 就绪），**不要**在 S7-06 批内顺手改（会扩大触碰面） |
+| **P-10**（2026-07-29 T-S7-4-8 验红时发现，**文档笔误，防线未受损**，主控已复核裁定） | 本 dev-plan §26 T-S7-4-8 第 4 条与 architecture §15.6"验红操作"第一行均写：注掉 `build_context` lambda 第 6 实参 → **②④ 必红**、①③ 仍绿 | **实测只有 ④ 红**（1 红 / 28 绿），①②③ 全绿。**根因**：② 送达环按 CP-4.6-1 明文是"调 `_format_planning_context(...)`"，用例**自己传第 6 实参**（`state.get("local_env_facts")`），**绕过 planning.py 的 lambda** ⇒ 注掉 lambda 实参对 ② 无影响，逻辑上不可能红。且 §26 T-S7-4-6 第 3 条自己写着"**④端到端环守的就是这一行**"，与"②④必红"自相矛盾——**是文档表述错，不是实现错**。主控 2026-07-29 独立复核用例源码确认 ② 确为直接调用形态 | 低（**防线未受损**：为"lambda 忘传"这一形态设计的守门环 ④ 确实红了、且**只有它红**，定位精确度反而更高） | **订正文档，不改测试**。强行让 ② 也覆盖 lambda 只会让 ②④ 重复，丢掉四环"哪一层断了一看便知"的分层定位价值（② 管"函数层能否把键放进 payload"，④ 管"接线层有没有真传"，分工不同不该重叠）。已同步订正 dev-plan §26 T-S7-4-8 第 4 条与 architecture §15.6 验红操作行 |
+
 > **其余架构 §落点行号逐处核源码全部对得上**，无需调整设计：`resource_scout.py:571-577`（get_tools 5 工具 + `max_rounds`:579）、`:79-95`（prompt 主体，三步链 `:88-93`、拼接点 `:95`）、`_parse_tool_content`（`:290-318`，含剥截断后缀分支）、`_map_resource_scout_result` 3 参签名（`:427-431`）与**三个 return 点 `:459` / `:479` / `:549`**（主控订正值经复核为准）、`:503-510` from_scratch 改写；`planning.py:302-308` 签名 / `:346` `user_feedback` / `:351-352` `pending_repo_url` / `:354` return / `:711-717` lambda / `:285-291` 冻结前缀只有 SystemMessage；`react_base.py:528` `bind_tools` / `:63` `_truncate_tool_result` / `:268` `_repair_truncated_json_prefix`（**确未被 `_parse_tool_content` 复用**，§17.2 论据成立）/ `:850-862` initial_messages；`sandbox/local_venv.py:358` `_run_subprocess` 与 `:239` `_require_within_workspace` 签名与草图一致 / `:400` `subprocess start failed` 兜底串；`run_command_tool.py:41` `mask_value` / `:47` `_error_json` / `:60` 工厂 / `:76` 不插值写法；`test_sprint2_b2.py:444-467` 唯一真守门；`config.py` `TOOL_RESULT_MAX_LENGTH=8000`(:63) / `REACT_MAX_ROUNDS_RESOURCE_SCOUT=20`(:66) / `SANDBOX_EXEC_TIMEOUT=1800`(:104) / `SANDBOX_OUTPUT_MAX_BYTES=1MiB`(:107) / `RUN_COMMAND_TIMEOUT=120`(:132)；`core/tools/` 现 5 文件、`env_probe_tool.py` 为新造；`grep -rn "env_probe|probe_environment|local_env_facts" --include="*.py" .` **零命中**（S7-06 代码零行）。
+
+### 31.1 T-S7-4-1 开工复核证据（2026-07-28，全栈开发代理，逐条上磁盘 Read/grep）
+
+| 核实项 | 磁盘证据 | 结论 |
+|---|---|---|
+| **1. 5→6 真守门唯一性** | `tests/test_sprint2_b2.py:444` `def test_acc_tool_set_composition_five_tools(monkeypatch):`；`:445-448` docstring 含"由 6 个降为 5 个"；`:463` `names = sorted(t.name for t in captured["tools"])`；`:464-467` 精确集合断言 5 项。全仓另两处 `["tools"]` 断言：`tests/test_sprint4_e2.py:264`（execution 节点 3 工具，与 scout 无关）、`test_sprint6_b1_prompt_guards.py:130-138`（**单向**：现有工具名须出现在 prompt，新增工具不打红） | **成立**。唯一真守门 = `test_sprint2_b2.py:444-467`，三处一并改（函数名 / docstring / sorted 列表）。`test_sprint6_b1_prompt_guards.py:267-273` 确为类 docstring（`:267` `class TestCP154AffectedAssertionsFix:`），该类 **4** 个用例（见 P-6）无一断工具集条数 ⇒ 仅文字同步 |
+| **2. `MAX_NODE_LLM_CALLS` 不构成探测约束** | `grep -rn "MAX_NODE_LLM_CALLS" core/ config.py` → **仅** `config.py:30`；全仓（去 `.venv`）另 3 处均为测试值断言（`test_sprint5_t11_config.py:57` / `test_sprint3_a1.py:138` / `test_sprint2_a4.py:122`） | **成立**，`core/` 下零消费点 |
+| **3. message guard 真实扫描面（决定 AC-S7-19 路径）** | `tests/test_e2e2_message_guard.py:85-129` `_extract_message_literals`：`:114` `if fname == "make_node_error": calls.append(node)`；`:118` `arg = call.args[2] if len(call.args) >= 3 else None`；`:119-121` 仅取 `kw.arg == "error_message"`；`:125-126` 变量名走同作用域 `name_literals` 解析。`:29` `_GUARDED_MODULES = ("resource_scout",)`；`:155-158` `assert literals` 的报错文案自述"未扫到任何 make_node_error message 字面量——守门可能已失效"。`grep -n "make_node_error" core/nodes/resource_scout.py` → 仅 `:21` import + `:458` / `:478` / `:512` 三处调用（全部既有） | **成立且严重**。扫描面确只覆盖 `make_node_error` 的 message 实参；S7-06 按 AC-S7-17 零新增该调用 ⇒ 新增 digest / 拒绝文案 / prompt 文案**零覆盖**；`:155` 保险因既有 3 条本就在册**不会响**。⇒ **AC-S7-19 必须在 T-4-8 新增独立断言**（对 `_digest_env_probe` 产出 + `env_probe_tool._reject` / `_reject_with_list` 文案跑同一份 `_BLACKLIST` + 复用 `_hits` 口径 + 断言扫描对象非空），**不得**只写"已在 `_GUARDED_MODULES` 内"就算完成 |
+| **4. 护栏签名零适配** | `sandbox/local_venv.py:239` `def _require_within_workspace(target: str, *, label: str) -> Path:`；`:358` `def _run_subprocess(cmd, *, cwd: str, timeout: int, output_max_bytes: int, extra_env: Optional[Dict[str,str]] = None) -> SandboxRunResult`；`core/secrets_store.py:261` `def mask_value(text: Optional[str]) -> Optional[str]`；`SandboxRunResult`（`:177-189`）含 `exit_code/stdout/stderr/duration_seconds/timed_out/output_truncated/command` | **成立**，与架构 §14.3 草图完全一致，直接照抄零适配。T-4-2 已按此实现并真跑通过 |
+| **5. `resource_scout.py` import 面** | `core/nodes/resource_scout.py:20` `from config import REACT_MAX_ROUNDS_RESOURCE_SCOUT`——**无 `import config`** | **成立**（P-2）。T-4-4 装配 fallback 须改为 `from config import REACT_MAX_ROUNDS_RESOURCE_SCOUT, WORKSPACE_DIR`，否则 `str(config.WORKSPACE_DIR)` 会 `NameError`（R-S7-33） |
+
+**附：`langchain_core` `@tool(description=...)` 优先级实测**（架构 §16.2(a) 依据）：`.venv/bin/python` 真跑 `@tool(description='DESC-X')` → `tool.description == 'DESC-X'`（docstring 被覆盖），`tool.name == 函数名`，`args_schema.model_json_schema()["description"]` 仍取 docstring（同为静态常量，不影响字节幂等）。**结论成立**。
 
 ---
 

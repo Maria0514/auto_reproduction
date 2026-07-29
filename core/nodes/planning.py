@@ -305,6 +305,7 @@ def _format_planning_context(
     resource_info: Optional[Dict[str, Any]],
     user_feedback: Optional[str],
     pending_repo_url: Optional[str] = None,
+    local_env_facts: Optional[str] = None,
 ) -> Dict[str, Any]:
     """提取 planning 规划必需的上下文（HumanMessage 通道，含 user_feedback）。
 
@@ -350,6 +351,11 @@ def _format_planning_context(
     # 不进 system prompt（保持 §4.5 字节稳定）。为空时不写。
     if pending_repo_url:
         payload["pending_repo_url"] = _coerce_str(pending_repo_url)
+
+    # S7-06：资源探索阶段实测的本机环境事实（来源 = 只读探测工具历史，非论文推断）。
+    # 为空时不写——"未知"在规划上下文里就是"这个键不存在"，不造哨兵值（架构 §15.5）。
+    if local_env_facts:
+        payload["local_env_facts"] = _coerce_str(local_env_facts)
 
     return payload
 
@@ -714,6 +720,7 @@ _planning_react = _make_react_wrapper(
         state.get("resource_info") or {},
         state.get("_planning_user_feedback"),
         state.get("_planning_pending_repo_url"),
+        state.get("local_env_facts"),
     ),
     build_system_prompt=_build_planning_system_prompt,
     get_tools=lambda state: [

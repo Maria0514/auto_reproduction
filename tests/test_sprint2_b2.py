@@ -439,12 +439,15 @@ def test_aux_repoinfo_strict_fields():
 # 测试工程师独立验收补强（2026-06-02）：覆盖 dev 自测未触及的边界
 # ===========================================================================
 
-# --- 补强 1：工具集组成（6 工具含 search_pwc）+ wrapper 参数透传 -------------
+# --- 补强 1：工具集组成（6 工具）+ wrapper 参数透传 --------------------------
 
-def test_acc_tool_set_composition_five_tools(monkeypatch):
-    """Sprint 6 MF-5 摘除 PwC 后，resource_scout 工具集由 6 个降为 5 个（无 search_pwc）。
+def test_acc_tool_set_composition_six_tools(monkeypatch):
+    """resource_scout 工具集恰 6 个（精确集合断言，只换不弱化）。
 
-    降级链变更：deepxiv github_url -> web search（PwC 通道移除，PwC 网站 2025 年中下线）。
+    Sprint 6 MF-5 摘除 PwC 后由 6 个降为 5 个（无 search_pwc）；降级链变更为
+    deepxiv github_url -> web search（PwC 网站 2025 年中下线）。
+    Sprint 7 S7-06 加入只读环境探测工具 probe_environment 后重新为 6 个
+    （AC-S7-15 正向；负向守门"planning 工具集不变"另见 S7-06 CP 测试）。
     """
     captured: Dict[str, Any] = {}
 
@@ -463,7 +466,7 @@ def test_acc_tool_set_composition_five_tools(monkeypatch):
     names = sorted(t.name for t in captured["tools"])
     assert names == [
         "check_url_reachable_tool", "get_paper_brief", "git_clone_and_analyze",
-        "search_papers", "web_search",
+        "probe_environment", "search_papers", "web_search",
     ], names
     assert captured["max_rounds"] == 20
     assert captured["result_schema"]["title"] == "ResourceInfo"

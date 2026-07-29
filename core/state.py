@@ -287,6 +287,14 @@ class GlobalState(TypedDict):
     last_fix_note: str
     last_files_written: List[str]
 
+    # === Sprint 7 S7-06 新增（只读环境探测结论落点，架构 v1.3 §15）===
+    # resource_scout 单点写（_map_resource_scout_result 从 ReAct 工具历史确定性提取，
+    # 非 LLM <result> 字段）；planning 单点读（_format_planning_context）。单值、
+    # last-write-wins 正确，**绝不加 reducer**。旧 checkpoint 无此键由消费侧
+    # ``.get("local_env_facts", "")`` 兜底，不 KeyError。
+    # 值 = 预渲染多行字符串（本机实测环境事实），空串表示"未知"。
+    local_env_facts: str
+
 
 def _is_legacy_llm_config(value: Any) -> bool:
     """判定入参是否为 sp1 老形态 LLMConfig（dict 含 base_url 但不含 default）。"""
@@ -378,4 +386,5 @@ def create_initial_state(
         honesty_audit=None,
         last_fix_note="",
         last_files_written=[],
+        local_env_facts="",
     )

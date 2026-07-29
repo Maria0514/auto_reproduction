@@ -17,7 +17,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from config import REACT_MAX_ROUNDS_RESOURCE_SCOUT
+from config import REACT_MAX_ROUNDS_RESOURCE_SCOUT, WORKSPACE_DIR
 from core.errors import make_node_error
 from core.nodes._repo_scoring import REPO_QUALITY_SCORING_SECTION
 from core.react_base import _make_react_wrapper
@@ -27,6 +27,7 @@ from core.tools.deepxiv_tools import (
     search_papers_tool,
     web_search_tool,
 )
+from core.tools.env_probe_tool import PROBE_TOOL_NAME, make_probe_environment_tool
 from core.tools.git_tools import (
     make_check_url_reachable_tool,
     make_git_clone_and_analyze_tool,
@@ -47,6 +48,13 @@ _BACKFILL_DEFAULT_QUALITY: float = 0.5
 _QUALITY_WARN_THRESHOLD: float = 0.3
 
 _VALID_STRATEGIES = ("use_repo", "hybrid", "from_scratch")
+
+# S7-06（T-S7-4-5，架构 §15.4/§15.7）：digest **渲染端**单条输出上限（字符），
+# 沿 coding.py:78 _FIX_NOTE_MAX_CHARS 范式。与 env_probe_tool 的
+# _PROBE_OUTPUT_MAX_BYTES=2500（工具**返回端**字节上限）**职责不同、两者并存
+# 不合并**（架构 §17.3 明裁：合并会让"给模型看的"和"给规划看的"两个上限互相绑架）。
+# 体量结构性封顶 = 清单 15 条 × 400 ≈ 6KB，典型 3~6 条约 1.5KB。
+_PROBE_OUTPUT_MAX_CHARS: int = 400
 
 
 RESOURCE_SCOUT_SCHEMA: Dict[str, Any] = {
@@ -84,6 +92,7 @@ _RESOURCE_SCOUT_SYSTEM_PROMPT_BODY = """你是资源搜集与评估专家。任�
 - search_papers(query, size): 按关键词搜索 arXiv（可用于查相关工作 / 基线，辅助理解仓库相关性）。
 - get_paper_brief(arxiv_id): 读取论文摘要信息（含 github_url 等），用于补全检索线索。
 - web_search(query): 通用网页搜索，兜底寻找代码仓库 URL。
+- probe_environment(command)：在本机跑一条【只读】环境探测命令（只接受固定清单内的整条命令，如 nvidia-smi / nvcc --version / pip list --format=freeze），用来问清这台机器有没有 GPU、CUDA 版本、已装依赖、磁盘余量；只能查，不能装、不能删、不能下载。
 
 【搜索优先级链】（按顺序，前一步已得到可用仓库时可提前收敛）
 1. deepxiv github_url -- 若 paper_meta.github_url 非空，先用 check_url_reachable_tool 校验可达性，
@@ -91,6 +100,13 @@ _RESOURCE_SCOUT_SYSTEM_PROMPT_BODY = """你是资源搜集与评估专家。任�
 2. Web Search -- 用 title + framework + "code" / "github" 等关键词调用 web_search 兜底；
    找到候选 GitHub URL 后同样走克隆流程；
 3. 全部失败 -- 在 <result> 中输出 resource_strategy = "from_scratch"，repos = []，selected_repo = null。
+
+【环境探测（可选补充步，不属于上面的优先级链）】
+- 上面三步是主线；探测只是给结论补事实，不改变三步的顺序与判定，任何探测结果都不构成"找不到仓库"。
+- 只在探测结果会改变你的判断时才探。典型场景：候选仓库要求某个 CUDA 或框架版本、或者需要判断权重与数据能不能在本机落地。
+- 全程最多探 3~5 条，尽量集中在一轮里一次性给出。轮次要留给仓库检索与克隆——轮次耗尽会导致你来不及给出仓库结论。
+- 命令必须与清单逐字一致。被拒绝时不要反复猜写法，看返回里的清单换一条，或者直接放弃探测。
+- 探不到、命令在这台机器上不存在、没有 GPU，都是有效结论；照常继续，不要因此改成从零实现。
 
 """ + REPO_QUALITY_SCORING_SECTION + """
 【策略选择】
@@ -404,6 +420,118 @@ def _backfill_repos_from_tools(
     return True
 
 
+# ---------- 只读环境探测结论的确定性提取（S7-06 / T-S7-4-5，架构 §15.3(b)/§15.5） ----------
+
+
+def _digest_env_probe(react_messages: Optional[Any]) -> str:
+    """从 ReAct 工具历史确定性提取本机环境事实，渲染为单个多行字符串。
+
+    沿 _backfill_repos_from_tools（BUG-S1-03）范式：**零 LLM 依赖**——不要求 agent
+    在 <result> 里写任何新字段，直接扫 name == PROBE_TOOL_NAME 的 ToolMessage，
+    逐条走既有 _parse_tool_content 解析（PROBE_TOOL_NAME 走 import 常量而非字面量，
+    杜绝"工具改名 → digest 悄悄失效 → 白探回潮"这类静默漂移，R-S7-21）。
+
+    渲染规则（架构 §15.4/§15.5，字节幂等硬要求）：
+    - 段首固定一行，随后每条 ``$ {命令}`` + 换行 + 输出；
+    - 命令按**首次出现顺序**、同命令去重**保留最后一次**结果；
+    - 单条输出 ``out = stdout_tail.strip() or stderr_tail.strip()``；若为空
+      **或以 "subprocess start failed" 开头** → 归一为"该命令在本机不可用"。
+      后者把 _run_subprocess 的内部英文兜底串（sandbox/local_venv.py:400）挡在
+      规划上下文之外——规划 LLM 写出的 plan_summary 是**用户可见**的，任何进它
+      上下文的英文内部串都有被原样引用的风险（AC-S7-19 精神）；
+    - 单条截断到 _PROBE_OUTPUT_MAX_CHARS；
+    - **禁止任何非确定性成分**（不写时间戳 / 耗时 / uuid），否则 checkpoint 重放
+      与 revise 重入会字节抖动，Prompt Cache 的"破一次"退化成"破每次"。
+
+    失败与缺席不造状态机（架构 §15.5）：空 / 全被拒 / 全不可解析 / 任意异常
+    一律返回 ""（消费侧表现为"键不存在"，**不造 unknown / N/A 哨兵值**），
+    且**不阻断节点**。存在目标 ToolMessage 却提取不出任何可用记录时打 WARNING
+    （项目已知 bug 模式 3：禁止静默吞错）；无目标 ToolMessage 时不打（避免噪声）。
+    """
+    if not react_messages:
+        return ""
+
+    try:
+        from langchain_core.messages import ToolMessage
+    except Exception:  # pragma: no cover - defensive
+        return ""
+
+    try:
+        probe_msgs = [
+            m for m in react_messages
+            if isinstance(m, ToolMessage) and getattr(m, "name", None) == PROBE_TOOL_NAME
+        ]
+        if not probe_msgs:
+            return ""
+
+        order: List[str] = []
+        rendered: Dict[str, str] = {}
+        skip_reasons: List[str] = []
+
+        for m in probe_msgs:
+            content = getattr(m, "content", "")
+            content_strip = (
+                content.strip() if isinstance(content, str) else str(content).strip()
+            )
+            # 工厂层失败 / react_base 异常分支前缀 —— 必须过滤失败 ToolMessage。
+            if content_strip.startswith("Error in ") or content_strip.startswith("tool "):
+                skip_reasons.append("tool-level error prefix")
+                continue
+            parsed = _parse_tool_content(content)
+            if not parsed:
+                skip_reasons.append("content not parsable as JSON dict")
+                continue
+            command = _coerce_str(parsed.get("command")).strip()
+            if not command:
+                # 结构化拒绝返回 {"error", "exit_code", ...} 无 command 键：非事实，跳过。
+                skip_reasons.append("no command key (rejected or non-probe payload)")
+                continue
+
+            out = (
+                _coerce_str(parsed.get("stdout_tail")).strip()
+                or _coerce_str(parsed.get("stderr_tail")).strip()
+            )
+            if not out or out.startswith("subprocess start failed"):
+                out = "该命令在本机不可用"
+            out = out[:_PROBE_OUTPUT_MAX_CHARS]
+
+            if command not in rendered:
+                order.append(command)
+            rendered[command] = out
+
+        if not rendered:
+            logger.warning(
+                "[%s] env probe digest skipped: %d %s ToolMessage(s) present but none "
+                "yielded a usable record (reasons=%s)",
+                NODE_NAME,
+                len(probe_msgs),
+                PROBE_TOOL_NAME,
+                "; ".join(sorted(set(skip_reasons))) or "unknown",
+            )
+            return ""
+
+        lines: List[str] = ["本机环境实测（资源探索阶段真机探测所得，非论文推断）："]
+        for command in order:
+            lines.append(f"$ {command}")
+            lines.append(rendered[command])
+        return "\n".join(lines)
+    except Exception as exc:  # noqa: BLE001 — 渲染异常一律兜底为 ""，不阻断节点
+        logger.warning(
+            "[%s] env probe digest failed, fallback to empty: %s", NODE_NAME, exc
+        )
+        return ""
+
+
+def _with_env_facts(update: dict, facts: str) -> dict:
+    """收尾 helper：非空才写 local_env_facts（架构 §15.3(b)，避免三处 return 复制）。
+
+    为空时**不写键**——"未知"在规划上下文里就是"这个键不存在"（架构 §15.5）。
+    """
+    if facts:
+        update["local_env_facts"] = facts
+    return update
+
+
 # ---------- 主映射 ----------
 
 
@@ -443,6 +571,11 @@ def _map_resource_scout_result(
     degraded_nodes = list(state.get("degraded_nodes", []))
     notes = ""
 
+    # S7-06：只读环境探测结论确定性提取一次，三个 return 点统一用 _with_env_facts 收尾。
+    # **三点都要写**：agent 的 <result> 崩了不代表机器没被探到，探到的事实照样对规划
+    # 有用——这正是 BUG-S1-03 范式的原意（架构 §15.3(b)）。
+    env_facts = _digest_env_probe(react_messages)
+
     # 空结果 / error：不抛致命异常，降级 from_scratch。
     if not result or not isinstance(result, dict):
         message = "未取得资源侦察结果，已降级为从零实现"
@@ -456,12 +589,12 @@ def _map_resource_scout_result(
         if NODE_NAME not in degraded_nodes:
             degraded_nodes.append(NODE_NAME)
         node_errors.append(make_node_error(NODE_NAME, "degraded", message, None))
-        return {
+        return _with_env_facts({
             "resource_info": resource_info,
             "current_step": NODE_NAME,
             "node_errors": node_errors,
             "degraded_nodes": degraded_nodes,
-        }
+        }, env_facts)
 
     error_msg = result.get("error")
     if error_msg:
@@ -476,12 +609,12 @@ def _map_resource_scout_result(
         if NODE_NAME not in degraded_nodes:
             degraded_nodes.append(NODE_NAME)
         node_errors.append(make_node_error(NODE_NAME, "degraded", message, None))
-        return {
+        return _with_env_facts({
             "resource_info": resource_info,
             "current_step": NODE_NAME,
             "node_errors": node_errors,
             "degraded_nodes": degraded_nodes,
-        }
+        }, env_facts)
 
     resource_info = _build_resource_info(result)
 
@@ -546,7 +679,7 @@ def _map_resource_scout_result(
     if notes:
         prev = state.get("analysis_notes", "") or ""
         update["analysis_notes"] = f"{prev}\n{notes}" if prev else notes
-    return update
+    return _with_env_facts(update, env_facts)
 
 
 # ReAct wrapper：把 GlobalState ↔ ReActState 双向映射 + 子图编译 + 预算扣减
@@ -555,11 +688,17 @@ def _map_resource_scout_result(
 
 # T-S6-1-2 (MF-5 Prompt Cache 收口)：
 # Sprint 6 批次 0 (T-S6-0-4) 已删除 pwc_tools.py 并清理 resource_scout 代码面。
-# 本任务确认工具装配前缀无 pwc docstring 残留——当前工具集恰五个：
+# 本任务确认工具装配前缀无 pwc docstring 残留——当时工具集恰五个：
 #   web_search_tool / search_papers_tool / get_paper_brief_tool
 #   / make_git_clone_and_analyze_tool / make_check_url_reachable_tool
 # 无任何 pwc / search_pwc / papers_with_code 条目。
 # 批次 1 收口后前缀冻结令生效，sp6 内不再改动此工具集（架构 §9.1 P-S6-2）。
+#
+# T-S7-4-4（S7-06 只读环境探测，架构 §14.4 + §16.2 冻结令放行）：
+# 工具集 5→6，新增 probe_environment（`core/tools/env_probe_tool.py`）。
+# base_dir 闭包绑定 state["workspace_dir"]（资源探索时已就绪；code_output_dir
+# 此刻仍为 None 不可用），缺省回退 WORKSPACE_DIR——既有 lambda 此前未使用 state
+# 形参，本次首次使用。bind_tools 前缀因此"破一次"（一次性版本变更，非持续成本）。
 
 resource_scout = _make_react_wrapper(
     node_name=NODE_NAME,
@@ -574,6 +713,7 @@ resource_scout = _make_react_wrapper(
         get_paper_brief_tool(),
         make_git_clone_and_analyze_tool(),
         make_check_url_reachable_tool(),
+        make_probe_environment_tool(base_dir=state.get("workspace_dir") or str(WORKSPACE_DIR)),
     ],
     map_result=_map_resource_scout_result,
     max_rounds=REACT_MAX_ROUNDS_RESOURCE_SCOUT,
