@@ -63,6 +63,6 @@ class TestCP113ExistingBaselineUnchanged:
     def test_react_rounds_baseline(self):
         assert config.REACT_MAX_ROUNDS_PAPER_INTAKE == 10
         assert config.REACT_MAX_ROUNDS_PAPER_ANALYSIS == 24
-        assert config.REACT_MAX_ROUNDS_RESOURCE_SCOUT == 20
+        assert config.REACT_MAX_ROUNDS_RESOURCE_SCOUT == 30  # S7-07：环境探测改必做步骤后 20->30
         assert config.REACT_MAX_ROUNDS_PLANNING == 16
         assert config.REACT_MAX_ROUNDS_CODING == 24

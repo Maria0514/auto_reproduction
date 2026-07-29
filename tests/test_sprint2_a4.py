@@ -51,7 +51,7 @@ def test_cp_a4_2_constant_values() -> None:
     import config
 
     assert config.PLANNING_SOFT_HINT_THRESHOLD == 5
-    assert config.REACT_MAX_ROUNDS_RESOURCE_SCOUT == 20
+    assert config.REACT_MAX_ROUNDS_RESOURCE_SCOUT == 30
     assert config.REACT_MAX_ROUNDS_PLANNING == 16
 
     # 全表值逐项断言（防回归 / 防默认值漂移）
@@ -208,7 +208,7 @@ def test_aux_5_no_env_override_for_sp2_literals(
 
     reloaded = importlib.reload(config_module)
     try:
-        assert reloaded.REACT_MAX_ROUNDS_RESOURCE_SCOUT == 20
+        assert reloaded.REACT_MAX_ROUNDS_RESOURCE_SCOUT == 30
         assert reloaded.GIT_CLONE_TIMEOUT == 60
         assert reloaded.STREAMLIT_POLL_INTERVAL == 1500
         assert reloaded.PLANNING_SOFT_HINT_THRESHOLD == 5

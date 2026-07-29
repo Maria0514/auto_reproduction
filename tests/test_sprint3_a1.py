@@ -149,7 +149,7 @@ def test_cp_a1_4_sp1_sp2_constants_unchanged() -> None:
 
     # sp2 常量
     assert config.PLANNING_SOFT_HINT_THRESHOLD == 5
-    assert config.REACT_MAX_ROUNDS_RESOURCE_SCOUT == 20
+    assert config.REACT_MAX_ROUNDS_RESOURCE_SCOUT == 30
     assert config.REACT_MAX_ROUNDS_PLANNING == 16
     assert config.GIT_CLONE_TIMEOUT == 60
     # Sprint 6 MF-5: PWC_BASE_URL 等 PWC_* 四常量已删除（PwC 下线），断言移除

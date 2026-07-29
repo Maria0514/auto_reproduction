@@ -63,7 +63,11 @@ REACT_RESULT_TAG_CLOSE: str = "</result>"
 TOOL_RESULT_MAX_LENGTH: int = 8000
 
 # Sprint 2 新增 ReAct 轮数上限（沿用 sp1 字面量风格，无 env 覆盖）
-REACT_MAX_ROUNDS_RESOURCE_SCOUT: int = 20
+# S7-07（2026-07-29 Maria 拍板）：20 -> 30。环境探测由"可选补充步"改为"必做步骤"后
+# 给探测留出宽裕余量。注：agent 看不到本常量的值，它对"轮次紧张"的全部认知来自
+# prompt 措辞——S7-07 已同步删除 prompt 中"轮次耗尽会导致你来不及给出仓库结论"
+# 这类负面暗示（LangSmith trace 实证：该句与"可选"定位叠加，导致探测触发率为 0）。
+REACT_MAX_ROUNDS_RESOURCE_SCOUT: int = 30
 REACT_MAX_ROUNDS_PLANNING: int = 16
 
 

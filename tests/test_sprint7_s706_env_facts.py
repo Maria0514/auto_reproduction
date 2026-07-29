@@ -219,7 +219,7 @@ def _patch_subgraph(monkeypatch, result=None, messages=None, rounds: int = 3) ->
 
 
 def test_ac_s7_15_scout_tool_set_is_six_with_probe(monkeypatch):
-    """正向：资源探索装配出的工具集恰 6 个，含 probe_environment；max_rounds 仍为 20。"""
+    """正向：资源探索装配出的工具集恰 6 个，含 probe_environment；max_rounds 为 30（S7-07 上调）。"""
     captured = _patch_subgraph(monkeypatch)
     resource_scout(_scout_state())
 
@@ -228,7 +228,7 @@ def test_ac_s7_15_scout_tool_set_is_six_with_probe(monkeypatch):
         "check_url_reachable_tool", "get_paper_brief", "git_clone_and_analyze",
         "probe_environment", "search_papers", "web_search",
     ], names
-    assert captured["max_rounds"] == 20 == config.REACT_MAX_ROUNDS_RESOURCE_SCOUT
+    assert captured["max_rounds"] == 30 == config.REACT_MAX_ROUNDS_RESOURCE_SCOUT
 
 
 def test_ac_s7_15_planning_tool_set_unchanged_no_probe(monkeypatch):
@@ -676,7 +676,7 @@ def test_ac_s7_19_digest_does_not_leak_tool_or_node_name():
 # ===========================================================================
 
 _PROBE_TOOL_LINE_PREFIX = "- probe_environment(command)"
-_PROBE_SECTION_HEADER = "【环境探测（可选补充步，不属于上面的优先级链）】"
+_PROBE_SECTION_HEADER = "【环境探测（必做步骤）】"  # S7-07：由"可选补充步"改为"必做步骤"
 
 
 def _new_prompt_text() -> str:
@@ -715,7 +715,7 @@ def test_ac_s7_20_new_prompt_text_has_no_interpolation_traces():
 
 
 def test_ac_s7_20_probe_section_is_outside_the_three_step_chain():
-    """探测段落位于三步降级链之后、仓库评分段之前（链外补充步，三步链字节不动）。"""
+    """探测段落位于三步降级链之后、仓库评分段之前（S7-07 改必做步骤后位置不变，三步链字节仍不动）。"""
     body = _SCOUT_BODY
     step3 = body.index('3. 全部失败 -- 在 <result> 中输出 resource_strategy = "from_scratch"')
     probe = body.index(_PROBE_SECTION_HEADER)
@@ -725,5 +725,11 @@ def test_ac_s7_20_probe_section_is_outside_the_three_step_chain():
         assert keyword in body, keyword
 
 
-def test_ac_s7_20_round_budget_unchanged():
-    assert config.REACT_MAX_ROUNDS_RESOURCE_SCOUT == 20
+def test_s7_07_round_budget_raised_to_30():
+    """S7-07（2026-07-29 Maria 拍板）合法推翻 AC-S7-20 的"轮次预算零退化"分句：
+
+    环境探测由"可选补充步"改为"必做步骤"，配套把 resource_scout 轮次上限 20 -> 30，
+    给探测留出宽裕余量。**断言只换不弱化**：仍为精确 `==`，不改成范围/下界断言。
+    AC-S7-20 的其余分句（跨论文 SystemMessage 字节一致、新增文案无插值痕迹）不受影响。
+    """
+    assert config.REACT_MAX_ROUNDS_RESOURCE_SCOUT == 30
