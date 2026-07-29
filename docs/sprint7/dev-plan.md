@@ -1388,6 +1388,15 @@ graph TD
 2. **档 B：端到端一次跑（AC-S7-25 观测）——**⚠ **Maria 授权点，须明确授权具体动作**：真机跑一次完整资源探索（真实 LLM + deepxiv 工具，**耗日配额**），统计 `final_state["messages"]` 中 `name == "probe_environment"` 的 **ToolMessage 条数 ≤ 5**，且该次运行 `resource_scout` **未因轮次耗尽走 force_finish**、**未进 `degraded_nodes`**、`resource_strategy` **未被改写为从零实现**。
    **为什么不能省**（PRD §3 原文）：AC-S7-25 **不是可选观测，是 Q-S7-12「只做 prompt 措辞、不加机制计数器」这一裁决的验证条件**——**超标即为"prompt 措辞不够"的实证**，届时才加机制计数器（单点约 4 行闭包计数，R-S7-27）。在拿到这条实证之前不预造机制（反过度工程）；**本条缺席则该裁决无法被证伪，等于把节制交给运气**。
    **省配额范式**（既有）：mock 守门先行（T-4-8 全绿）、smoke fail-fast、**合并既有真跑授权窗口**（不单独多开一次真跑）。
+
+   > **【2026-07-29 档 B 真跑实测结果 —— Maria 授权后主控亲跑，靶 arXiv:2405.14831 (HippoRAG)】**
+   > 四项判定**形式上全过**：`probe_environment` ToolMessage **0 条**（≤ 5 ✅）、未走 force_finish ✅、`degraded_nodes` 空 ✅、`resource_strategy == "use_repo"` 未被改写 ✅。耗时 paper_intake 17.3s + resource_scout **16.8s**；`resource_info.repos` 1 条、`selected_repo = https://github.com/OSU-NLP-Group/HippoRAG`。
+   >
+   > **但实质结论是"另一个方向的失败"，必须与"通过"分开记**：**探测触发次数为 0，`local_env_facts` 落库为空串**——本次真跑**没有验证到"真实 agent 会用这个工具"**。
+   > **已排除实现故障**（零配额复核）：真实形态 state 下 `get_tools` 装配**确为 6 个含 `probe_environment`**，`_RESOURCE_SCOUT_SYSTEM_PROMPT_BODY` 中探测段落**在位** ⇒ 是 **agent 自主判断不需要探**，不是工具没送到。
+   > **归因**：靶论文有明确官方仓库，agent 一击命中（16.8s / 1 repo / `use_repo`），而 prompt 措辞为"**只在探测结果会改变你的判断时才探**"——在"仓库现成"的场景下 agent 判定无需看机器，**该判断本身合理**。
+   > **对 Q-S7-12 裁决的影响**：该裁决在"防挥霍"方向**站得住**（0 ≪ 5，R-S7-27/R-S7-28 挥霍风险本次无实证，**不加计数器的决定正确**）；但暴露**反向新风险 R-S7-34：探测触发率过低 ⇒ 功能形同虚设**。**单次样本不足以定论**（未覆盖"重型训练 / 需判断权重与数据能否落地"这类 prompt 明列的典型触发场景）。
+   > **处置**：本条**观测已完成、不阻断 S7-06 交付**；R-S7-34 登记 TODO，是否补跑"需重型训练"靶论文、或调 prompt 触发措辞（属设计变更，须走 PRD）由 Maria 裁定。
 3. **观测结果处置**：
    - 条数 ≤ 5 且三条负向状态断言全绿 → 记录证据、关项，Q-S7-12 裁决站得住；
    - **超标（> 5 条）或触发 force_finish / degraded / from_scratch 改写** → 即为 R-S7-27 实证，**不阻断本批交付**（探测是补充非主线），但须如实记录并按 R-S7-27 回退方案登记"加闭包计数器"为后续单点改动（工厂每次节点调用重建，计数天然按次任务重置）。
@@ -1396,7 +1405,7 @@ graph TD
 **自测检查点**：
 - [x] CP-4.9-1 **档 A 工具层真机探测**（零配额）：清单内命令在本机真跑，**实测拿到 GPU / CUDA / Python / 已装包 / 磁盘事实**（mock 补不了的盲区），证据落测试报告
 - [x] CP-4.9-2 **档 A 真机 AC-S7-26**：真机 `pip list --format=freeze` 返回串长度实测 < `TOOL_RESULT_MAX_LENGTH`(8000) 且 `_parse_tool_content` 解析成功、6 键齐全
-- [ ] CP-4.9-3 **档 B AC-S7-25 观测**（⚠ **须 Maria 明确授权具体动作**，合并既有真跑窗口）：真机一次端到端跑，`probe_environment` ToolMessage 条数 ≤ 5 + 未走 force_finish + 未进 `degraded_nodes` + `resource_strategy` 未被改写
+- [x] CP-4.9-3 **档 B AC-S7-25 观测**（⚠ **须 Maria 明确授权具体动作**，合并既有真跑窗口）：真机一次端到端跑，`probe_environment` ToolMessage 条数 ≤ 5 + 未走 force_finish + 未进 `degraded_nodes` + `resource_strategy` 未被改写
 - [x] CP-4.9-4 handoff 归档齐备：AC-S7-15~26 覆盖矩阵 + 四道命门验红证据（含 AC-S7-18 假解法复刻演示）+ 真机事实 + AC-S7-25 计数 + 已知限制清单
 
 > **档 A 实测（2026-07-29，@全栈开发代理，零 deepxiv 配额 / 零 LLM / 零网络；证据见 `test-reports/2026-07-29_s706-cp-verify-red.md` §4）**：
