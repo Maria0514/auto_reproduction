@@ -1542,3 +1542,757 @@ graph TD
 ---
 
 *（S7-06 增补完：§23 概述（目标/方案要点/红线/前置事实/关键风险）+ §24 任务总表（9 任务 48 CP）+ §25 批次依赖图/顺序理由/**容量裁剪线** + §26 批次 4 任务详细规格（含 CP 与逐环验红要求）+ §27 风险登记（引 R-S7-13~29 + 新登记 R-S7-30~33）+ §28 纪律汇总（13 条）+ §29 CP 索引（含四道命门验红专项）+ §30 编号速查 / AC 映射 / 交付物清单 + §31 落点勘误留档（P-2/P-3/P-4，其中 **P-3 为真守门落空**）。本增补不覆盖 §1~§22 既有内容，忠实落地架构 v1.3 §14~§17（六问全裁）+ PRD v1.0 §2.6，**不重新决策**；冲突口径统一为"§16.1 与 §17 冲突处以 §17 为准"。待 Maria 审阅后授权进入批次 4——批次边界逐批确认制照旧，档 B 端到端真跑（T-S7-4-9 / CP-4.9-3）须 Maria 单独授权具体动作。）*
+
+---
+
+## 32. S7-08 概述
+
+> **对应 PRD**：`docs/sprint7/prd.md` §10（S7-08 v1.0，2026-07-29，Maria 全部阻塞项已拍板）
+> **对应架构**：`docs/sprint7/architecture.md` **§18**（v1.4，Q-S7-13~15 三问全裁 + §18.7 六条验证方式 + §18.4(2) 硬触发）
+> **本节及以下 §33~§40 为纯追加**，不覆盖 §1~§31 任何既有内容。
+
+### 32.1 需求目标（一句话）
+
+三次迭代已把"本机事实"送到规划门口（S7-06 造工具 → S7-07 改必做 → 事实已进 planning 的 HumanMessage），但**规划从没被要求采纳它**，反被一条旧指令（`planning.py:151-152`）要求去引用一个可能根本不存在的论文字段 ⇒ 无据可依 → 凭常识补 → 编出"建议 32GB 内存"（本机压根没探过内存）。**本批补的是 prompt 契约层与"够不够"的询问闭环，不是数据通道层。**
+
+### 32.2 方案要点（架构 v1.4 §18 定稿，本批不改设计）
+
+1. **三级优先级契约**（AC-S7-32）：本机实测 > 论文推断 > 明确写"未探测/未知"；`planning.py:151-152` 那条无条件"引用论文分析的 hardware_requirements"**被替换**，禁编造条款同段落落地。属 planning 冻结区**一次性静态变更**（架构 §18.4(1) 背书，判 bug 标准是"是否引入论文级/任务级动态值"而非"是否修改过"）。
+2. **计划新两键**（Q-S7-13）：`ReproductionPlan` **顶层两个扁平键** `scale_reduced: bool` + `local_fit_note: str`；**进 LLM 输出契约（schema properties + 【输出格式】JSON 示例）但不进 `required`**（`react_base.py:697-705` 对 required 缺失会再跑一次 `with_structured_output` = 多烧一次 LLM 调用，而缺省 `False` 已是安全值）；**必改的构造点恰 2 处**——`planning.py:384` `_build_reproduction_plan` 与 `:589` `_minimal_plan`，不改必丢。
+3. **三方键集合相等断言**（架构 §18.1.1 的机制性防线）：`set(ReproductionPlan.__annotations__) == set(_build_reproduction_plan({}, state).keys()) == set(_minimal_plan(state,"x").keys())`，一次性关死"加键只改一处"。
+4. **审核面板披露**（AC-S7-37）：interrupt payload **+1 键** `local_env_facts`（既有 10 键一字不动）；`ui/pages/plan_review.py` 新增**恒常展示**的只读块（本机实测原文 + 适配说明 + 预计占用）；"仅复现代码"按钮补一句上下文说明；**不新增中断种类、不新增决策类型、不新增按钮**。
+5. **下游贯穿**（AC-S7-39）：沿 sp6 `_CREDENTIAL_DEGRADATIONS_DIRECTIVE` 范式（`coding.py:82-86` / `execution.py:98-103`），coding/execution 两侧各自模块常量 `_SCALE_REDUCED_DIRECTIVE`，**非空才注入**；`reporting.py` annotations **末尾**追加第 4 条 `scale_reduced`（与 plan 键 1:1 同名，省一张映射表）+ 声明块第 4 段；`ui/term_map.py` +1 条。
+6. **术语守门新写独立文件**（Q-S7-14）：`tests/test_s708_user_text_guard.py`，**绝不扩 `_GUARDED_MODULES`**——决定性论据是**扫描面错配**（既有守门只扫 `make_node_error` 第 3 实参，本次新增文案一条都不在那个面上）；"扫不到必报红"靠三重机制：**按名 import**（删/改名 → `AttributeError` → 红）+ `assert scanned == EXPECTED_N`（少扫一条即红）+ 每条 `assert literal.strip()`（清空成 `""` 不能蒙混）。
+7. **探测摘要上限**（Q-S7-15）：`_PROBE_OUTPUT_MAX_CHARS` **400 → 2600**（≥ 返回端 `_PROBE_OUTPUT_MAX_BYTES=2500`，使 AC-S7-42 **结构上必然成立**而非碰运气）+ 新增总长 `_PROBE_DIGEST_MAX_CHARS = 8000`（S7-09 放开白名单后"清单条数 15"这个分母消失，它是**前置防波堤**）；截尾**不静默**，追加一行中文说明。
+8. **6 项必探维度**（AC-S7-41）：`resource_scout` 冻结区**第三次**改动（S7-06 新增段落 → S7-07 改必做 → 本次改必探维度），并把 AC-S7-25 上界 **5 → 10**、其三条负向状态断言**一字不动**。**⚠ 架构 §18.4(2) 硬触发见 §37 纪律 12。**
+9. **R-S7-41 假绿处置**：`tests/test_sprint6_b1_prompt_guards.py:69` 的 `EXPECTED_HASH = actual_hash` 是**恒真断言**，planning 冻结区的"字节回归门"从来就不存在。本批改完 prompt 后**把哈希写死为真实值** + 本 dev-plan §40.1 留基线，并做一次全仓"自锁定"模式扫描。
+
+**架构侧对 PRD 三条 AC 口径的修正（§18.5，本批一律照修正后口径实施）**：
+
+| AC | 原口径 | 修正后口径（本批以此为准） |
+|---|---|---|
+| AC-S7-36 | 断言"两版计划的执行步骤规模参数出现差异" | **mock 层不可证伪**（预设两份假输出 = 断言 mock 自己）⇒ 改为只断言"两组本机事实产生**不同的 HumanMessage**"，"计划规模真的变了"整体交 AC-S7-43 真跑 |
+| AC-S7-41 | "出现该维度的数值" | **改为"digest 中存在该命令的记录"**——否则本机缺 `free` 时 digest 只写"该命令在本机不可用"，该 AC 永远不过且无法修（`env_probe_tool.py` 已被红线冻结） |
+| AC-S7-42 | 只写一条构造用例 | **两条都写**：绕过工具直接造 ToolMessage 的验渲染端上限；走真实工具的验两级截断方向合成后 `torch` 仍在 |
+
+### 32.3 红线（本批任一任务不得破）
+
+- **零改动红线四条**（PRD §10.13）：`core/nodes/_repo_scoring.py`（planning 与 resource_scout **共享同一对象**，改它 = 同时改两个节点的冻结前缀）、`core/graph.py`（出边路由不变）、`core/tools/env_probe_tool.py`（清单放开已剥离为 S7-09）、`core/plan_checks.py`（**不加 gate**，Maria 原话"这种不是需要你硬性 gate 的问题"）。收口时 `git diff` 逐一为空。
+- **不新增 interrupt 种类、不新增决策类型、不新增按钮**：`interrupt_kind` 集合不变；决策仍恰 5 类（approve / code_only / revise / switch_repo / cancel）；两个降级选项**映射到审核面板已有的两个按钮**（A-S7-14）。
+- **不留偏离痕**（Maria 裁决 7）：系统不产出任何机器可读的"计划与实测偏离"信号；`scale_reduced` 是**模型自报的判断结果**，不是系统算出的偏离标记，两者不可混同。
+- **既有 interrupt payload 10 键一字不动**，只 +1 键 `local_env_facts`。
+- **`local_env_facts` 绝不进 system prompt**（R-S7-38）：它是**任务级动态值**，写进 system prompt 那一刻 planning 前缀"破成每次"——功能全对、账单持续渗漏、零告警。唯一防线是 AC-S7-34 的负向断言。
+- **planning / resource_scout 两处冻结区文案零插值**：无 `{`/`}`、不含 `arxiv`、不含绝对路径、不含任何论文级/任务级值；跨论文 SystemMessage 主体字节一致（CP-B3-10 口径不破）。
+- **`REPO_QUALITY_SCORING_SECTION` 仍 `is` 同一对象**（`tests/test_sprint2_s2_13.py:148-149`）、**`_PLANNING_TERMINOLOGY_SECTION` 字节不动**。
+- **`scale_reduced=False` 时全链路零扰动**（AC-S7-38/39）：coding/execution HumanMessage 与 reporting 报告**与 sp5 基线字节一致**——正负两向都要断。
+- **旧 checkpoint 兼容**：新两键缺省 `False` / `""`，缺键 ≡ 缺省，下游**一律 `.get()` 防御读**，不 KeyError、不造哨兵值。
+- **断言只换不弱化**：AC-S7-25 上界 5→10 时其**三条负向状态断言一字不动**；`_PROBE_OUTPUT_MAX_CHARS` 相关既有断言只换值不放宽形态。
+- **不做**：远程/云执行、多 GPU 分布式、按显存自动算 batch size 这类逐参数精调、固定缩规模档位枚举、用户手填环境表单、探测结果缓存、给 coding/execution 直连 `local_env_facts`（仍只走 resource_scout → planning 一条线）。
+- **不扩 `_GUARDED_MODULES`、不做模块级全量字面量扫描**（§40 P-15）：`reporting.py:922/930` 的 `code_only` / `code_output_dir` 是 TODO 登记的既有 16 处泄漏余项，全量扫描会**连带打红**，与"其余 16 处不得同期开工"正面冲突。
+
+### 32.4 前置事实（本 dev-plan 落盘时逐条上磁盘 Read / grep / **真跑**核实）
+
+1. **R-S7-41 原文属实**：`tests/test_sprint6_b1_prompt_guards.py:69` `EXPECTED_HASH = actual_hash  # 首次运行自锁定当前值`，`:71` `assert actual_hash == EXPECTED_HASH` ⇒ `x == x` 恒真；其 docstring（`:59`）自称"若后续批次意外改动主体前缀，此断言报红（字节级回归门）"。**全仓 `EXPECTED.*=.*actual` 扫描已跑：仅此一处**（扫描面 `tests/ core/ ui/`，另加 `(expected|baseline|snapshot|golden)\w*\s*=\s*(actual|current|got|...)` 变体，唯一另一命中 `test_sprint6_s6_01_controller.py:242` 是 `expected_interrupt_token=current` 实参传递，**非自锁定**）。
+2. **三方键集合今天就恒等**（`.venv/bin/python` 真跑）：`ReproductionPlan.__annotations__` **11** 键 == `_build_reproduction_plan({}, {})` **11** 键 == `_minimal_plan({}, "x")` **11** 键，差集全空。⇒ 该断言**可先写后改**（见 §34.3 顺序理由 1）。改后应为 **13 == 13 == 13**。
+3. **构造点与复制点拓扑**（架构 §18.1.1，复核对上）：`_build_reproduction_plan` 签名 `(result: Dict[str, Any], state: GlobalState)`（`:384` 区间，`return ReproductionPlan(` 在 `:384`）、`_minimal_plan` 签名 `(state: GlobalState, reason: str)`（`:580` 起，`return ReproductionPlan(` 在 `:589`）；复制点 `planning.py:806` / `execution.py:2076` 全键透传零改动安全。
+4. **planning system prompt 主体现状**：`_PLANNING_SYSTEM_PROMPT_BODY` = `"""..."""` + `REPO_QUALITY_SCORING_SECTION` + `_PLANNING_TERMINOLOGY_SECTION`，**长 4005 字符**、`sha256[:16] = cc8056d04a6b5595`（改前基线，§40.1 留档）。待改那条在 `:151-152`：「2. environment（硬件 / 软件 / 预估时间）：引用论文分析的 hardware_requirements 中文主字段，\n   列出 GPU / 内存 / Python 与关键依赖版本。」
+5. **interrupt payload 恰 10 键**（`planning.py:877-890`）：`interrupt_kind` / `reproduction_plan` / `resource_info` / `paper_analysis_summary` / `degraded_nodes` / `node_errors` / `revise_count` / `soft_hint_threshold` / `max_total_llm_calls` / `switch_repo_failed`。**⚠ 全仓无任何"payload 键集合恰为 N"的断言、也无"决策集合恰 5 类"的断言**（grep 核实）⇒ AC-S7-37 的两道守门是**新造**，不是"保持既有"。
+6. **【好消息，省一个分支】`_render_annotation_notices` 三形态共用**：`reporting.py:1094` 位于 form 分支（`:1095-1101`）**之前** ⇒ Maria 裁决第 8 条「只产代码路径也要带缩规模声明」**结构上自动成立**，`_render_code_only` 零改动。且 `_render_annotation_notices:535-536` 在 `annotations` 为空时**早退返回 `[]`** ⇒ `scale_reduced=False` 的零扰动结构上成立。`plan = state.get("reproduction_plan")` 现在 `:273`（需上移到 annotations 判定之前）。
+7. **`_determine_conclusion` 的 `and not annotations`** 在 `reporting.py:281-283` 属实（任一标注禁 science）；`ui/pages/result_report.py:59` 直接 `from core.nodes.reporting import _determine_conclusion, _determine_report_form` ⇒ **UI 结论卡片自动跟随降档，零改动**。
+8. **两侧 directive 范式属实**：`coding.py:82` 与 `execution.py:98` 两个 `_CREDENTIAL_DEGRADATIONS_DIRECTIVE` **字面值逐字相同**；注入点 `coding.py:436` / `execution.py:1133` 均为"非空才注入"。
+9. **term_map 实测 41 条**（不是架构 §18.2 写的"既有 50 条"，§40 P-11）；41 条 values **全部**过 `_BLACKLIST` + `_S708_EXTRA` 五词（`scale_reduced` / `local_fit_note` / `local_env_facts` / `probe_environment` / `code_only`）**零命中** ⇒ 架构"零连带打红风险"结论成立。`tests/__init__.py` 存在，跨模块 import 可行；`_hits(literal: str) -> List[str]` 签名核实。
+10. **截断 marker 无具名常量**：`sandbox/local_venv.py:353` 是内联 f-string `f"... [truncated, kept last {max_bytes} bytes] ...\n"`，2500 时**实测长 42 字符** ⇒ 返回端单路硬上界 **2542 字符**，2600 覆盖之（§40 P-12 有断言写法修正）。
+11. **既有 digest 上限断言两处待改**（`tests/test_sprint7_s706_env_facts.py`）：`:490` 逐行 `len(line) <= max(cap, 60)`（cap 变大后退化成几乎不可能失败）、`:492` `len(long_digest) <= len(_PROBE_COMMANDS) * (cap + 60) + 200`（cap=2600 时松到 ~40KB）；用例内 `"X" * (cap * 3)` × 15 条会触发新的 8000 总长截断 ⇒ **用例语义需一并更新**。
+12. **回归基线 = 2103 绿**（`.venv/bin/pytest -q -m "not e2e"` → 2103 passed / 0 failed / 25 skipped / 46 deselected，S7-06 收口三次亲跑一致）。**已知 flaky（P-9，非本批引入）**：`tests/test_plan_review_e2e.py::test_e2e_code_only`（Playwright 点 shadcn iframe）会让"零失败"收口门间歇性误红，收口以复跑取稳态为准。
+13. **`core/nodes/__init__.py` 显式 export 遮蔽陷阱仍在**（已知 bug 模式 #6，S7-06 两次撞过）：测试/脚本访问 `core.nodes.planning` 模块属性必须走 `importlib.import_module("core.nodes.planning")`，不得 `from core.nodes import planning`。
+
+### 32.5 关键风险一句话
+
+**本批的价值只能由 AC-S7-43 真跑证明，mock 全绿证不了任何东西**——S7-06 与 S7-07 两次都是 mock 层验绿、真实行为却没达成（S7-06 探测触发 0 次、S7-07 才改到 3 次；本项目实测 prompt 服从率 **75%**）。而本批的三道防假绿命门各守一种隐蔽失效：**AC-S7-33 验红**防"禁编造规则写了但模型照旧编"、**AC-S7-38 验红**防"标注加了但没真参与降档"、**新守门三重自证逐条验红**防"扫描范围指错、扫 0 条却 passed"（S7-06 同款教训，R-S7-39）。**外加 R-S7-41——planning 冻结区那道自称字节回归门的断言是 `x == x`，本批不修则该守门永久为零。**
+
+---
+
+## 33. S7-08 任务清单总表
+
+| 任务编号 | 任务名 | 产出文件 | 依赖前置 | 估时 | 风险 |
+|---|---|---|---|---|---|
+| **T-S7-5-1** | **实现前核实 + 机制性防线前置落地**：三方键集合断言先写（此刻 11==11==11 即绿）+ 自锁定模式全仓扫描 + payload/决策守门缺席坐实 | `tests/test_s708_plan_keys.py`（新，仅 1 条断言）+ 核实落档（§40） | 批次 4 收口 + Maria 确认 | 1h | 中（决定 AC-S7-35/37 走"保持"还是"新造"） |
+| **T-S7-5-2** | `ReproductionPlan` **+2 键** + 缺省语义注释 | `core/state.py` | T-S7-5-1 | 0.5h | 低（TypedDict 加键） |
+| **T-S7-5-3** | **planning 冻结区静态改写**（三级优先级 + 禁编造 + 两键契约 + 缩法举例）+ schema properties +2（`required` 不动）+ **两处构造点 +2 kwargs** + `_coerce_bool` | `core/nodes/planning.py`（**单收口窗口**） | T-S7-5-2 | 4h | **高**（冻结区 + Prompt Cache + 加键只改一处必丢） |
+| **T-S7-5-4** | planning interrupt payload **+1 键** `local_env_facts`（既有 10 键一字不动） | `core/nodes/planning.py`（同窗口） | T-S7-5-3 | 0.5h | 中（R-S7-43 checkpoint 体积 + 指纹语义变化） |
+| **T-S7-5-5** | **R-S7-41 假绿处置**：哈希写死真实值 + 验红 + §40.1 留基线 + 全仓"自锁定"模式复扫 | `tests/test_sprint6_b1_prompt_guards.py` | T-S7-5-3、T-S7-5-4 | 1h | 中（**必须在 planning 改完之后做**，否则锁的是旧值） |
+| **T-S7-5-6** | 探测摘要上限 `400 → 2600` + 新增 `_PROBE_DIGEST_MAX_CHARS=8000` + **截尾中文说明提为具名常量** | `core/nodes/resource_scout.py`（**单收口窗口**） | T-S7-5-1 | 2h | 中高（外层≥内层关系断言 + 截尾说明是新用户可见文案，P-13） |
+| **T-S7-5-7** | **resource_scout 冻结区第三次改动**：6 项必探维度段落 + AC-S7-25 上界 5→10 断言同步（**三条负向断言一字不动**） | `core/nodes/resource_scout.py`（同窗口）+ 相关既有测试 | T-S7-5-6 | 2h | 中高（第三次改同一段落，**§18.4(2) 硬触发已挂在其后**） |
+| **T-S7-5-8** | 下游贯穿：coding / execution 两侧 `_SCALE_REDUCED_DIRECTIVE`（非空才注入）+ 两侧字节相等 | `core/nodes/coding.py`、`core/nodes/execution.py` | T-S7-5-3 | 1.5h | 中（零扰动正负两向） |
+| **T-S7-5-9** | reporting 第 4 条标注（**末尾追加**）+ `plan` 变量上移 + 声明块第 4 段（具名常量）+ `ui/term_map.py` +1 条 | `core/nodes/reporting.py`、`ui/term_map.py` | T-S7-5-2 | 2h | 中（强制降档链 + 假时字节零扰动） |
+| **T-S7-5-10** | 审核页披露：只读展示块（恒常）+ "仅复现代码"按钮上下文说明 + `_format_plan_context` 第 4 键 + `_build_chat_system_prompt` 边界语补句 | `ui/pages/plan_review.py` | T-S7-5-4 | 3h | 中（文案零术语 + 不新增按钮/决策） |
+| **T-S7-5-11** | **新术语守门** `tests/test_s708_user_text_guard.py` + **三重自证逐条验红** | `tests/test_s708_user_text_guard.py`（**新文件**） | T-S7-5-9、T-S7-5-10、T-S7-5-6 | 3h | **高**（防"扫 0 条却 passed"的全部命门，R-S7-39） |
+| **T-S7-5-12** | CP 测试 AC-S7-32~42 全覆盖 + **§18.7 六条验证方式逐条落地** + AC-S7-33/38 逐环验红 + 既有断言同步 + 全量回归零退化 | `tests/test_sprint7_s708_*` + 既有断言同步 | T-S7-5-5、T-S7-5-7、T-S7-5-8、T-S7-5-11 | 8h | **高**（两条验红 + 零扰动正负两向 + 账目精确闭合） |
+| **T-S7-5-13** | **AC-S7-43 真跑验收（⚠ 须 Maria 单独申请 deepxiv 配额、严禁预授权）** + handoff | `docs/sprint7/test-reports/` | T-S7-5-12 | 3h | **高**（本需求价值的**唯一实证**；服从率 75%，无机制回退） |
+
+**任务总数**：**13 个**（单批 T-S7-5-1 ~ T-S7-5-13）。
+**批次数**：1（**批次 5** = S7-08 planning 平台感知规划）。
+**检查点总数**：**CP 69 个**（CP-5.1-1 ~ CP-5.13-4，分布见各任务；T-S7-5-12 为收口闸门）。
+**总估时**：**~31.5h**。
+**验红项（三道命门）**：AC-S7-33（禁编造——撤掉禁编造条款必红）、AC-S7-38（强制降档——去掉标注映射必红）、**新守门三重自证**（删常量必红 / 少扫一条必红 / 常量清空必红，**三条逐条验**）。
+**真跑验证项**：T-S7-5-13（**耗 deepxiv 配额 + 真实 LLM，须 Maria 单独授权具体动作，严禁预授权**）。
+**新增生产模块**：**0 个新 .py 生产文件**（全部为既有文件增量）；**plan +2 键**；**interrupt payload +1 键**；`_repo_scoring.py` / `graph.py` / `env_probe_tool.py` / `plan_checks.py` **零改动**。
+**新增测试文件**：2 个（`tests/test_s708_plan_keys.py` 极小 + `tests/test_s708_user_text_guard.py` 守门）+ `tests/test_sprint7_s708_*`（AC 覆盖）。
+
+---
+
+## 34. S7-08 批次划分与依赖图
+
+### 34.1 批次总览
+
+| 批次 | 名称 | 任务 | 前置条件 | AC 映射 | 特殊标注 |
+|---|---|---|---|---|---|
+| **5** | S7-08 planning 平台感知规划（单批） | T-S7-5-1 → 5-2 → 5-3 → 5-4 → 5-5 / 5-6 → 5-7 / 5-8 / 5-9 / 5-10 → 5-11 → 5-12 → 5-13 | **批次 4（S7-06）收口 + Maria 确认**；架构 v1.4 §18 三问全裁 + Maria §10.9 十条拍板（设计侧无待裁项） | AC-S7-32~43（12 条） | `planning.py` **单收口窗口**（T-5-3/5-4 同窗口）；`resource_scout.py` **单收口窗口**（T-5-6/5-7 同窗口，且是该文件**第三次**改动）；三道命门逐环验红；真跑须 Maria **单独**授权 |
+
+> **`planning.py` 单收口窗口（本批硬约束）**：S7-08 有**四处**改动落在该文件——①冻结区 prompt 主体静态改写（`:141-210`）、②`REPRODUCTION_PLAN_SCHEMA.properties` +2（`:67-118`）、③两处构造点 +2 kwargs（`:384` / `:589`）+ `_coerce_bool`、④interrupt payload +1 键（`:877-890`）。**①②③ 归 T-5-3、④ 归 T-5-4，两任务串行同窗口**，不得与其他任务并行触碰该文件。
+>
+> **`resource_scout.py` 单收口窗口**：T-5-6（两个上限常量 + 截尾说明常量 + digest 截尾逻辑）与 T-5-7（冻结区必探维度段落）串行同批。**与 TODO「其余 16 处同族术语泄漏」余项文件重叠 ⇒ 那 16 处清理不得同期开工**（沿 S7-06 §25.1 同款约束）。
+>
+> **与既有批次的冲突面**：S7-01/02/03/05/06 均已交付。本批新触碰 `core/state.py`（`ReproductionPlan` +2 键，**不改既有字段、不改顺序**）、`core/nodes/planning.py`、`core/nodes/resource_scout.py`、`core/nodes/coding.py`、`core/nodes/execution.py`、`core/nodes/reporting.py`、`ui/term_map.py`、`ui/pages/plan_review.py`。**`coding.py` / `execution.py` 与 S7-01/02/03/05 落点重叠但那些批次已收口**，本批只在两文件各加一个模块常量 + 一处"非空才注入"分支。
+
+### 34.2 依赖关系图（Mermaid）
+
+```mermaid
+graph TD
+    B4[（前置）批次 4 收口 + Maria 确认]
+    ARCH[（前置）架构 v1.4 §18 三问全裁 + Maria §10.9 十条拍板]
+    N1[T-S7-5-1 核实 + 三方键集合断言前置落地]
+    N2[T-S7-5-2 state ReproductionPlan +2 键]
+    N3[T-S7-5-3 planning 冻结区 + schema + 两构造点]
+    N4[T-S7-5-4 interrupt payload +1 键]
+    N5[T-S7-5-5 R-S7-41 哈希写死 + 自锁定复扫]
+    N6[T-S7-5-6 探测摘要上限 2600 + 总长 8000]
+    N7[T-S7-5-7 resource_scout 6 项必探维度]
+    N8[T-S7-5-8 coding/execution 缩规模指令贯穿]
+    N9[T-S7-5-9 reporting 第 4 标注 + term_map]
+    N10[T-S7-5-10 审核页披露 + 讨论助手第 4 键]
+    N11[T-S7-5-11 新术语守门 + 三重自证验红]
+    N12[T-S7-5-12 CP 测试 + §18.7 六条 + 两条验红 + 全量回归]
+    N13[T-S7-5-13 AC-S7-43 真跑（Maria 单独授权）]
+
+    B4 --> N1
+    ARCH --> N1
+    N1 --> N2
+    N1 --> N6
+    N2 --> N3
+    N3 --> N4
+    N4 --> N5
+    N3 --> N8
+    N2 --> N9
+    N4 --> N10
+    N6 --> N7
+    N6 --> N11
+    N9 --> N11
+    N10 --> N11
+    N5 --> N12
+    N7 --> N12
+    N8 --> N12
+    N11 --> N12
+    N12 --> N13
+```
+
+**关键路径**：核实 + 键集合断言前置 → state +2 键 → **planning 冻结区（地基）** → payload +1 键 → R-S7-41 哈希写死 → CP 测试 → 真跑。
+**可并行支线**（单人开发建议仍按编号串行，文件边界虽不重叠但并行收益 <1h 不值得引入合入风险）：`resource_scout.py` 线（T-5-6/5-7）与 `planning.py` 线（T-5-3/5-4/5-5）文件零交集；`coding/execution` 线（T-5-8）、`reporting/term_map` 线（T-5-9）、`ui/plan_review` 线（T-5-10）三者互不重叠。
+
+### 34.3 任务顺序理由
+
+1. **T-5-1 核实优先，且把三方键集合断言"先写后改"**（本批最划算的一步）：该断言**此刻就成立**（实测 11==11==11）⇒ 先落盘并验绿，则 T-5-2 只改 `state.py` 不改构造点时**当场红**、T-5-3 漏改 `_minimal_plan` 时**当场红**——把架构 §18.1.1 的机制性防线从"收口时才发现"提前到"写错那一刻发现"。零额外成本（同一条断言，只是提前写）。**另需坐实两件事**：AC-S7-37 的 payload 键守门与决策集合守门**全仓不存在**（是新造不是保持）；R-S7-41 与全仓"自锁定"模式的扫描面。
+2. **T-5-2 state 先扩**：`ReproductionPlan` 是 T-5-3（构造）、T-5-9（reporting 读）、T-5-10（UI 读）的共同载体，先扩才能编译通过。
+3. **T-5-3 planning 冻结区是地基**（PRD §10.13 第 1 步原话"形态未定则后续返工"）：prompt 契约 + schema + 两处构造点**必须同任务一次改完**——冻结令放行的是**一次性**前缀变更，分两次改等于破两次缓存；且 schema 加了键而【输出格式】JSON 示例没同步，模型根本不知道要输出（架构 §18.1.2 明标"不改则模型不知道要输出"）。
+4. **T-5-4 payload +1 键紧跟**：同文件同窗口，且它是 T-5-10（UI 展示）与 AC-S7-37 的前提。
+5. **T-5-5 R-S7-41 必须排在 T-5-3/5-4 之后**：哈希要锁的是**改完之后**的主体字节，先锁等于锁了旧值、白做一次。
+6. **T-5-6 上限调值先于 T-5-7 必探维度**：必探维度里的 `pip list --format=freeze` 正是被 400 字符渲染端上限切掉的那条（R-S7-25 在渲染端原样复发）——**上限没改就让它多探，等于白探**（PRD §10.9 顺带挖出的隐患 ②原话）。
+7. **T-5-8 / T-5-9 / T-5-10 三条下游支线**：分别依赖 plan 新键（T-5-2/5-3）与 payload 新键（T-5-4），彼此文件零交集。
+8. **T-5-11 新守门必须在三条支线之后**：它要按名 import 的具名常量分别产自 T-5-6（截尾说明）、T-5-9（reporting 声明段 + term_map）、T-5-10（UI 展示块 + 按钮说明 + 讨论助手边界语）——常量不存在则守门无从写起。
+9. **T-5-12 统一收口**：三道命门验红、§18.7 六条、零扰动正负两向、既有断言同步、全量回归账目闭合都在此做。
+10. **T-5-13 真跑最后**：mock 只能证"prompt 里写了规则"，证不了"模型真的照做"——**这是本需求价值的唯一实证**，也是 §18.4(2) 硬触发的判定入口。
+
+### 34.4 容量裁剪线（若批次超限，按此顺序砍；上面的绝不砍）
+
+| 优先级 | 项 | 砍还是保 | 理由 |
+|---|---|---|---|
+| **绝不砍（契约层本体）** | T-5-3 的三级优先级 + 禁编造 + 两键契约（含【输出格式】示例同步） | **保** | 砍了整个需求归零——本次补的就是契约层，不是通道层 |
+| **绝不砍（防假绿）** | T-5-12 的 AC-S7-33 / AC-S7-38 逐环验红 + T-5-11 的三重自证**逐条**验红 | **保** | 三条各守一种隐蔽失效；少任一条，对应缺陷可在全绿状态下进代码（S7-06 同款教训） |
+| **绝不砍（唯一实证）** | T-5-13 的 AC-S7-43 真跑 | **保**（可**延后不注销**） | S7-06/S7-07 两次都是 mock 验绿而真实行为未达成（服从率 75%）。**未获配额授权时只可延后**，须登记进 handoff 与 TODO，**绝不可注销** |
+| **绝不砍（机制性防线）** | T-5-1 的三方键集合相等断言 + T-5-5 的 R-S7-41 哈希写死 | **保** | 前者一次性关死"加键只改一处"；后者不做则 planning 冻结区守门**永久为零**（无回退方案） |
+| 第 1 顺位可砍 | AC-S7-43 的**对照篇**（再加一篇有 `hardware_requirements` 的论文验证"两信源都在时确实本机优先"） | 可砍 | PRD §10.9 剩余项 1 明标"属加分项，可省"；主靶不可省 |
+| 第 2 顺位可砍 | T-5-10 的"预计占用"展示细化（GPU 张数 / 显存 / 磁盘增量分列） | 可降级 | 降级为"整段 `local_fit_note` 原样展示"，产品红线（恒常展示 + 通俗中文）仍成立 |
+| 第 3 顺位可砍 | AC-S7-42 的**两条**用例之一（绕过工具那条） | 可合并 | 走真实工具那条覆盖面更大（两级截断方向合成）；但**架构 §18.5(3) 明确要求两条都写**，砍它须在 handoff 显式登记代价 |
+| **不在裁剪范围** | 远程执行 / 多 GPU 分布式 / 逐参数自动调参 / 固定缩规模档位 / 用户手填环境表单 / 偏离留痕 / 硬性 gate | **本就不做** | PRD §10.2 非目标 1~10 + Maria 裁决 4/7 |
+
+---
+
+## 35. 批次 5：S7-08 planning 平台感知规划（单批，`planning.py` + `resource_scout.py` 双单收口窗口）
+
+> **前置条件**：批次 4（S7-06）收口 + Maria 确认 + 架构 v1.4 §18 三问全裁 + Maria §10.9 十条拍板（设计侧无待裁项）。
+> **产出**：规划节点由"被要求引用一个可能不存在的论文字段"改为"**本机实测优先、探不到就写未知、不够就首轮即出本机版并把两个选项摆给用户**"；缩规模标记全链路贯穿至编码 / 执行 / 报告并**强制不得评为科学复现**。
+> **文件边界**：`core/state.py`（+2 键）+ `core/nodes/planning.py`（**单收口窗口**，T-5-3/5-4）+ `core/nodes/resource_scout.py`（**单收口窗口**，T-5-6/5-7）+ `core/nodes/coding.py` / `core/nodes/execution.py`（各 +1 常量 +1 分支）+ `core/nodes/reporting.py` + `ui/term_map.py` + `ui/pages/plan_review.py` + `tests/`。
+> **零改动红线**：`core/nodes/_repo_scoring.py` / `core/graph.py` / `core/tools/env_probe_tool.py` / `core/plan_checks.py`。
+> **红线全集**：见 §32.3。
+
+### 任务 T-S7-5-1：实现前核实 + **三方键集合断言前置落地**（架构 §18.1.1 + §18.7(1)）
+
+- **产出文件**：`tests/test_s708_plan_keys.py`（**新文件，极小，仅承载三方键集合相等断言**）+ 核实结论落档（§40）
+- **依赖项**：批次 4 收口 + Maria 确认
+- **预计复杂度**：中（1h；决定 AC-S7-35/37 的实施路径，并把机制性防线提前）
+- **架构参考**：architecture §18.1.1（三方相等）/ §18.4(1)（R-S7-41）/ §18.7(1)；PRD §10.7 AC-S7-35/37
+
+**需要实现的内容**：
+
+1. **三方键集合相等断言先写后改**（本批最划算的一步）：
+   ```python
+   # tests/test_s708_plan_keys.py
+   mod = importlib.import_module("core.nodes.planning")   # ⚠ 已知陷阱 #6，不得 from core.nodes import planning
+   assert (set(ReproductionPlan.__annotations__)
+           == set(mod._build_reproduction_plan({}, {}).keys())
+           == set(mod._minimal_plan({}, "x").keys()))
+   ```
+   **此刻就成立**（实测 11==11==11）⇒ 落盘验绿；T-5-2 只改 `state.py` 时**当场红**、T-5-3 漏改 `_minimal_plan` 时**当场红**。**不要等到 T-5-12 再写。**
+2. **核实 AC-S7-37 的两道守门是新造还是保持**（本 dev-plan 已 grep 坐实，开工复核一遍）：全仓**无**"planning interrupt payload 键集合恰为 N"的断言、**无**"决策集合恰 5 类"的断言 ⇒ **AC-S7-37 的"既有 payload 键结构不变"必须由 T-5-12 新造断言来承载**，不能写"既有守门会保证"。
+3. **核实 R-S7-41 原文 + 做全仓"自锁定"模式扫描**（PRD R-S7-41 顺带提示）：
+   - `grep -rnE "EXPECTED[A-Z_]*\s*=\s*.*actual"` 与 `(expected|baseline|snapshot|golden)\w*\s*=\s*(actual|current|got|result|value|digest)` 两组模式，扫描面 `tests/ core/ ui/ sandbox/ scripts/`；
+   - 本 dev-plan 落盘时预跑结果：**仅 `tests/test_sprint6_b1_prompt_guards.py:69` 一处**（另一命中 `test_sprint6_s6_01_controller.py:242` 是 `expected_interrupt_token=current` 实参传递，非自锁定）。**T-5-5 收口时须复跑并落档。**
+4. **核实 reporting 三形态共用声明块**（省一个分支，§40 P-14）：`reporting.py:1094` `_render_annotation_notices` 在 form 分支（`:1095-1101`）**之前** ⇒ code_only 路径自动带声明，`_render_code_only` 零改动；`:535-536` 空 annotations 早退 ⇒ 零扰动结构上成立。
+5. **核实 term_map 条数与清白度**（§40 P-11）：`len(TERM_LABELS)` 实测 **41**（架构 §18.2 写的"既有 50 条"是笔误）；41 条 values 过 `_BLACKLIST` + `_S708_EXTRA` 五词零命中。
+6. **核实截断 marker 长度**（§40 P-12）：`sandbox/local_venv.py:353` 内联 f-string，2500 时实测 42 字符 ⇒ 返回端单路硬上界 **2542**。
+
+**自测检查点**：
+- [ ] CP-5.1-1 `tests/test_s708_plan_keys.py` 落盘并**当前即绿**（11==11==11）；**验红：临时往 `ReproductionPlan` 加一个键而不改两处构造点 → 本断言必须变红**，还原后复绿
+- [ ] CP-5.1-2 AC-S7-37 两道守门缺席坐实落档：全仓无 payload 键集合断言、无决策集合断言 ⇒ **T-5-12 须新造**（不得写"既有守门保证"）
+- [ ] CP-5.1-3 R-S7-41 原文核实 + **全仓两组"自锁定"模式扫描结果落档**（预期仅 1 处；若发现第 2 处，登记进 §40 并由 T-5-5 一并处置）
+- [ ] CP-5.1-4 reporting 三形态共用声明块 + 空 annotations 早退核实落档（P-14）
+- [ ] CP-5.1-5 term_map 条数（41）+ 41 条 values 过 `_BLACKLIST` + `_S708_EXTRA` 零命中核实落档（P-11）
+- [ ] CP-5.1-6 截断 marker 长度（42）与返回端硬上界（2542）核实落档，供 T-5-6 写关系断言（P-12）
+
+### 任务 T-S7-5-2：`ReproductionPlan` +2 键（架构 §18.1.2 落点 1）
+
+- **产出文件**：`core/state.py`（`ReproductionPlan` TypedDict，`:115-137` 区间）
+- **依赖项**：T-S7-5-1
+- **预计复杂度**：低（0.5h）
+- **架构参考**：architecture §18.1 裁决 1/4 + §18.1.2；PRD §10.5 落点 + AC-S7-35
+
+**需要实现的内容**：
+
+1. **两个扁平顶层键**（**不新增 `GlobalState` 顶层键**）：
+   ```python
+   scale_reduced: bool      # 缺省 False；缺键 ≡ False（"没缩规模"是安全默认）
+   local_fit_note: str      # 缺省 ""；缺键 ≡ ""
+   ```
+   接在 `required_credentials` 之后（尾部追加，**不改既有 11 键顺序、不改任何既有字段**）。
+2. **docstring 增补 Sprint 7 变更段**：说明两键语义（是否按本机可跑规模缩过 + 给用户看的一段通俗中文说明：够不够 / 缺口 / 预计占用）、**缺省安全值**、**下游一律 `.get()` 防御读（旧 checkpoint 兼容）**、以及"**这不是系统算出的偏离标记，是模型自报的判断结果**"（Maria 裁决 7 不留痕，两者不可混同）。
+3. **零改动确认**：`GlobalState` 一字不动；`ExecutionResult` / `ResourceInfo` 一字不动。
+
+**自测检查点**：
+- [ ] CP-5.2-1 `ReproductionPlan.__annotations__` 恰 **13** 键；新两键类型为 `bool` / `str`；既有 11 键名称与顺序一字不动
+- [ ] CP-5.2-2 **CP-5.1-1 的三方键集合断言此刻应为红**（只改 state 未改构造点）——这正是 T-5-1 前置落地的价值；红了才继续 T-5-3
+- [ ] CP-5.2-3 `git diff core/state.py` 仅在 `ReproductionPlan` 内新增 2 行字段 + docstring 段落；`GlobalState` 零改动
+
+### 任务 T-S7-5-3：planning 冻结区静态改写 + schema +2 + **两处构造点 +2 kwargs**（架构 §18.1.2 落点 2/3/4/5 + §18.4(1)）
+
+- **产出文件**：`core/nodes/planning.py`（**单收口窗口，本批最重的一处**）
+- **依赖项**：T-S7-5-2
+- **预计复杂度**：**高**（4h，冻结区 + Prompt Cache 字节幂等 + "加键只改一处必丢"）
+- **架构参考**：architecture §18.1 裁决 2/3/4 + §18.1.2 四行落点 + §18.4(1) 冻结令背书；PRD §10.4 三分支+兜底 / §10.5 判定输入 / §10.7 AC-S7-32/33/34/35/36 / A-S7-19
+
+**需要实现的内容**（四处改动**同任务一次改完**——冻结令放行的是**一次性**前缀变更，分两次改 = 破两次缓存）：
+
+1. **冻结区 prompt 主体静态改写**（`:141-210` 区间，主要落在 `:151-152` 那条第 2 章节规则）：
+   - **替换**那条无条件"引用**论文分析的** `hardware_requirements` 中文主字段"（AC-S7-32 会断言**旧句不再存在**）；
+   - **三级优先级**：本机实测事实 > 论文推断（可能缺失）> 明确写"未探测 / 未知"；
+   - **禁编造**（AC-S7-33 命门）：探测未覆盖的维度**不得给具体数值**、不得写"建议 XX GB"这类无依据数字，一律写"未探测"；**已确定的事实不得降级回条件句**（"若无 GPU…"就是反面样本）；
+   - **两键契约**：说清 `scale_reduced` 与 `local_fit_note` 各自要写什么（是否按本机可跑规模缩过 + 一段通俗中文说明：够不够 / 缺口是什么 / 按什么方式缩的 / 本次预计占用 GPU 张数·显存·磁盘增量·预计时长）；
+   - **缩法举例（A-S7-19，作举例不作枚举）**：更小的模型 / 数据子集 / 减少实验组——**不得写成固定档位**（不做 1/10 数据这类枚举，Maria 最小设计裁定 2）；
+   - **首轮即本机版**（A-S7-16 / 场景 B）：本机不够时**首轮产出的就是这台机器跑得动的版本**，不是"先出理想计划、等用户选降级后再重写"；
+   - **只披露不自判占用**（场景 C / Maria 裁决 5）：把预计占用写进说明交用户判断，**不设阈值、不自动降级**；
+   - **兜底场景 D**：本机事实缺席（上下文中该键不存在）时**必须显式写"未探测 / 未知"**。
+   - ⚠ **零插值纪律**：新增文案不得出现 `{`/`}`、`arxiv`、绝对路径、任何论文级/任务级值；**`local_env_facts` 的值绝不写进 system prompt**（R-S7-38，它只走 HumanMessage）。
+2. **`REPRODUCTION_PLAN_SCHEMA.properties` +2**（`:67-118`）：`"scale_reduced": {"type": "boolean"}`、`"local_fit_note": {"type": "string"}`；**`required` 一字不动**（架构 §18.1 裁决 3：required 缺失会触发 `react_base.py:697-705` 再跑一次 `with_structured_output` = 多烧一次 LLM 调用，而缺省 `False` 已是安全值）。
+3. **【输出格式】JSON 示例同步 +2 键**（架构 §18.1.2 明标"**不改则模型不知道要输出**"）——这是最容易漏的一处：schema 改了、prompt 示例没改，模型照旧不产出。
+4. **两处构造点 +2 kwargs**（**不改必丢**）：
+   - `:384` `_build_reproduction_plan`：`scale_reduced=_coerce_bool(result.get("scale_reduced"))`、`local_fit_note=_coerce_str(result.get("local_fit_note"))`；
+   - `:589` `_minimal_plan`：`scale_reduced=False`、`local_fit_note=""`——**降级路径不得冒充"已做本机适配"**。
+5. **新增 `_coerce_bool`**（宽松但不误判）：`True` / `"true"` / `"True"` / `"是"` / `1` → `True`；**`"false"` / `"False"` / `0` / `None` / `""` 必须判 `False`**（架构 §18.1.2 明标）。**踩坑提示**：`bool("false") is True`，直接 `bool(x)` 会把字符串 `"false"` 判成真。
+6. **零改动确认**：`_PLANNING_TERMINOLOGY_SECTION` 字节不动；`REPO_QUALITY_SCORING_SECTION` 仍 `is` 同一对象（`_repo_scoring.py` git diff 为空）；`_format_planning_context` 第 6 形参（S7-06 产物）一字不动；`_CORE_PLAN_FIELDS` 不动（新两键**不进**核心字段判定，缺省即安全值）。
+
+**自测检查点**：
+- [ ] CP-5.3-1 **CP-5.1-1 三方键集合断言复绿**（13==13==13）——两处构造点都改到了
+- [ ] CP-5.3-2 AC-S7-32 正向 + 负向：主体含三级优先级 / 禁编造 / 两键契约 / 缩法举例四类关键措辞；**旧句"引用论文分析的 hardware_requirements"子串不再存在**
+- [ ] CP-5.3-3 **AC-S7-34 冻结零退化**：跨两篇不同论文 `_build_planning_system_prompt` 主体**字节一致**（CP-B3-10 口径不破）；新增文案零 `{`/`}`、零 `arxiv`、零绝对路径；`REPO_QUALITY_SCORING_SECTION` 仍 `is` 同一对象；`_PLANNING_TERMINOLOGY_SECTION` 字节不动
+- [ ] CP-5.3-4 **AC-S7-34 负向（R-S7-38 唯一防线，§18.7(2)）**：构造带非空 `local_env_facts` 的 state，取 `initial["messages"][0]`（SystemMessage），断言**该值的任一非平凡子串均不出现在 system prompt 中**；且带/不带该键时 SystemMessage **字节完全一致**
+- [ ] CP-5.3-5 schema：`properties` 含新两键且类型正确；**`required` 集合与改前逐字相等**（仍恰 `["plan_summary", "code_strategy", "deliverables"]`）
+- [ ] CP-5.3-6 【输出格式】JSON 示例**同步含新两键**（子串断言）——防"schema 改了示例没改、模型不产出"
+- [ ] CP-5.3-7 `_coerce_bool` 真值表：`True`/`"true"`/`"True"`/`"是"`/`1` → True；**`"false"`/`"False"`/`0`/`None`/`""`/`[]` → False**（`bool("false") is True` 陷阱须被覆盖）
+- [ ] CP-5.3-8 `_minimal_plan` 产出恒 `scale_reduced is False` 且 `local_fit_note == ""`；`_build_reproduction_plan` 在 `result` 为 `{}` 时同样回落缺省
+
+### 任务 T-S7-5-4：interrupt payload +1 键 `local_env_facts`（架构 §18.1.2 落点 6 + R-S7-43）
+
+- **产出文件**：`core/nodes/planning.py`（`:877-890`，**与 T-5-3 同收口窗口**）
+- **依赖项**：T-S7-5-3
+- **预计复杂度**：中（0.5h，改动小但牵动 checkpoint 体积与 payload 指纹语义）
+- **架构参考**：architecture §18.1.2 落点 6 + §18.6 R-S7-43；PRD §10.6 审核页展示 + AC-S7-37
+
+**需要实现的内容**：
+
+1. **payload 追加第 11 键**：`"local_env_facts": state.get("local_env_facts") or ""`（防御读；为空时给 `""` 而非缺键——**UI 侧恒常展示需要一个确定的键**，与规划上下文"为空则不写键"的语义**刻意不同**，理由：前者是给人看的展示位、后者是给模型看的上下文）。
+2. **既有 10 键一字不动**（AC-S7-37 硬要求）：`interrupt_kind` / `reproduction_plan` / `resource_info` / `paper_analysis_summary` / `degraded_nodes` / `node_errors` / `revise_count` / `soft_hint_threshold` / `max_total_llm_calls` / `switch_repo_failed`。
+3. **`interrupt_kind` 仍为 `"planning"`**，中断种类集合不新增；决策路由仍恰 5 类（`:893` 起的路由分支一字不动）。
+4. **R-S7-43 已知增量备案**：payload 增 `local_env_facts`（≤8000 字符，受 T-5-6 的 `_PROBE_DIGEST_MAX_CHARS` 硬顶）后，每次 revise 都会把它再存一份进 checkpoint；`app.py:479-488` 的 payload 指纹随之变化**属正常语义**（payload 变 → 指纹变 → token 变 → 禁沿用旧 resume，符合 S6-01 换代判定设计）。**回退方案（不预造）**：改为只放截断摘要。
+
+**自测检查点**：
+- [ ] CP-5.4-1 payload 键集合恰为 **11 键**（既有 10 + `local_env_facts`）；**既有 10 键名逐一存在且值来源未变**
+- [ ] CP-5.4-2 `local_env_facts` 为空 / 缺失 / 非串三形态下 payload 该键均为 `str`（不 KeyError、不为 `None`）；`interrupt_kind` 仍 `"planning"`
+- [ ] CP-5.4-3 决策路由五分支（approve / code_only / revise / switch_repo / cancel）行为与改前一致（复跑 `tests/test_sprint2_b3.py` 全绿，含五处 `assert "reproduction_plan" not in out`）
+
+### 任务 T-S7-5-5：**R-S7-41 假绿处置**——哈希写死 + 验红 + 基线留档 + 自锁定模式复扫（架构 §18.4(1) + §18.6 R-S7-41）
+
+- **产出文件**：`tests/test_sprint6_b1_prompt_guards.py`（`:56-74` 一个用例）+ 本 dev-plan §40.1 基线留档
+- **依赖项**：T-S7-5-3、T-S7-5-4（**必须在 planning 改完之后**，否则锁的是旧值）
+- **预计复杂度**：中（1h）
+- **架构参考**：architecture §18.4(1) ⚠框 + §18.6 R-S7-41；PRD §10.12 R-S7-41
+
+**问题原文（主控与架构师均已上磁盘核实）**：
+
+```python
+# tests/test_sprint6_b1_prompt_guards.py:65-74
+actual_hash = hashlib.sha256(body_bytes).hexdigest()[:16]
+EXPECTED_HASH = actual_hash  # 首次运行自锁定当前值        # ← :69
+assert actual_hash == EXPECTED_HASH, (...)                  # ← :71  x == x，恒真
+```
+
+而其 docstring（`:59`）自称"**若后续批次意外改动主体前缀，此断言报红（字节级回归门）**" ⇒ **零守门能力**，与 S7-06「扫 0 条却 passed」同族的假绿。**不修则"planning 主体的静态变更必须是有意为之"这条纪律在机制上根本不存在，且无任何回退方案。**
+
+**需要实现的内容**：
+
+1. **把 `EXPECTED_HASH` 写死为真实字面量**：T-5-3/5-4 改完后，用 `.venv/bin/python` 重算 `_PLANNING_SYSTEM_PROMPT_BODY` 的 `sha256[:16]`，替换 `:69` 那行为 `EXPECTED_HASH = "<16 位十六进制字面量>"`，并在注释里写明"**基线值见 dev-plan §40.1；改主体必须同步更新此值并在 dev-plan 留档变更原因**"。
+2. **删掉"首次运行自锁定当前值"这句注释**——它正是这条假绿的诱因，留着会诱导后人再次自锁定。
+3. **逐条验红**（不验红等于没改）：在 `_PLANNING_SYSTEM_PROMPT_BODY` 末尾**临时加一个空格** → 该断言必须**变红**；逐字节还原后复绿。**红/绿两态都要留证据。**
+4. **§40.1 留基线**：记录改前哈希 `cc8056d04a6b5595`（长 4005 字符）与改后真实哈希、变更日期、变更原因（S7-08 三级优先级 + 禁编造 + 两键契约 + 缩法举例的一次性静态变更）。
+5. **全仓"自锁定"模式复扫**（PRD R-S7-41 顺带提示）：复跑 T-5-1 的两组 grep 模式，确认无第二处；若发现，**如实登记进 §40 并同批处置**（同款假绿不得跨批遗留）。
+6. **不改该文件其他用例**：`test_planning_prompt_body_exists_and_nonempty` / `test_planning_prompt_body_has_no_dynamic_variables` / `test_planning_prompt_no_pwc_reference` 一字不动（前者的 `>100` 与后者的 `\d{4}\.\d{4,5}` 负向断言在新文案下仍应绿——若变红说明新文案里混进了论文级动态值，是**真 bug 不是断言问题**）。
+
+**自测检查点**：
+- [ ] CP-5.5-1 `:69` 改为写死的 16 位十六进制字面量；"首次运行自锁定当前值"注释已删；新注释指向 §40.1 基线
+- [ ] CP-5.5-2 **验红：body 末尾临时加一个空格 → 该断言变红**；逐字节还原后复绿（红/绿两态证据落测试报告）
+- [ ] CP-5.5-3 §40.1 基线留档齐备：改前哈希 `cc8056d04a6b5595`（4005 字符）+ 改后真实哈希 + 日期 + 变更原因
+- [ ] CP-5.5-4 **全仓"自锁定"模式复扫**（两组 grep 模式，扫 `tests/ core/ ui/ sandbox/ scripts/`）结果落档；同文件另三个用例**未被改动**且仍绿
+
+### 任务 T-S7-5-6：探测摘要上限 `400 → 2600` + 新增总长 `8000` + **截尾说明提为具名常量**（架构 §18.3 + §18.7(4)）
+
+- **产出文件**：`core/nodes/resource_scout.py`（**单收口窗口**，`:57` 常量 + `:496` 截断处 + digest 收尾）
+- **依赖项**：T-S7-5-1
+- **预计复杂度**：中高（2h；关系断言形态 + 截尾说明是**新的用户可见文案**）
+- **架构参考**：architecture §18.3.1~§18.3.4 + §18.7(4)；PRD §10.7 AC-S7-42 + R-S7-37 / R-S7-42
+
+**需要实现的内容**（值取架构，不自创）：
+
+1. **`_PROBE_OUTPUT_MAX_CHARS: 400 → 2600`**（渲染端单条上限，`:57`）。**值是推导出来的不是拍的**：`sandbox/local_venv.py:353` 返回端 `raw[-max_bytes:]` **保尾** + 42 字符 marker，而 `resource_scout.py:496` 渲染端 `out[:cap]` **取头** ⇒ **两级截断方向相反**，返回端刻意保尾留下的 `torch` / `transformers` 被渲染端取头原样作废（R-S7-25 在渲染端原样复发）。2600 ≥ 2500 + 42 = 2542 ⇒ AC-S7-42 **结构上必然成立**。**调到 800 / 1200 这类中间值是错的**——仍低于 2500，`torch` 进不进 digest 取决于该机 venv 包数，用例退化成运气测试。
+   > **新立结构性原则（架构 §18.3.1，写进注释）**：**外层上限必须 ≥ 内层上限，否则内层的截断方向选择被外层作废。**
+2. **新增 `_PROBE_DIGEST_MAX_CHARS: int = 8000`**（整份 digest 总长上限）。**决定性理由**：现结构性上界 = 15（清单条数）× 单条上限，单条抬到 2600 后变 ≈39KB 过松；且 **S7-09 一旦放开白名单，"清单条数 = 15"这个分母直接消失**，结构性上界不复存在 ⇒ 该常量既是 AC-S7-42 的答案，也是 **S7-09 的前置防波堤**。取 8000：6 项必探维度典型合计约 5.2KB，留 ~50% 余量。
+3. **截尾而非截头 + 不静默**（架构 §18.3.2）：整份渲染完按总上界**截尾**（抬头行与前几条必探维度更重要），末尾**追加一行显式中文说明**。
+   > **⚠ 该说明是新增的用户可见文案（§40 P-13）**：S7-08 之后 `local_env_facts` 经 interrupt payload 直达审核页只读展示块，**用户会亲眼看到它**（S7-06 时它只进 LLM 上下文）。故必须：
+   > - **提为模块级具名常量**（如 `_PROBE_DIGEST_TRUNCATED_NOTE`），**不写成内联字面量**；
+   > - **纳入 T-5-11 新守门的按名 import 集合**（架构 §18.2 原列的三个扫描源**没包含它**，这是本 dev-plan 补的一处）；
+   > - 通俗中文、零内部术语（不出现 `digest` / `probe` / 常量名 / 字节数这类内部表述）。
+4. **`_PROBE_OUTPUT_MAX_BYTES` 零改动**（它在 `env_probe_tool.py`，属本批零改动红线）；两个常量**职责不同、并存不合并**（架构 §17.3 既有裁定，S7-08 不动）。
+5. **关系断言写法（§18.7(4)，比断言字面量 2600 更抗腐坏；§40 P-12 有修正）**：
+   - 架构原文要求 `_PROBE_OUTPUT_MAX_CHARS >= _PROBE_OUTPUT_MAX_BYTES`——**按字面写会漏掉 42 字符 marker**（调到 2520 仍能过，而 `torch` 已可能被切）；
+   - **本批实施口径**：断 `_PROBE_OUTPUT_MAX_CHARS >= _PROBE_OUTPUT_MAX_BYTES + _MARKER_LEN`，其中 `_MARKER_LEN` **在测试内按 `sandbox/local_venv.py` 同一 f-string 就地计算**（`len(f"... [truncated, kept last {_PROBE_OUTPUT_MAX_BYTES} bytes] ...\n")`），**不新增生产常量**；
+   - 这样 S7-09 改返回端字节数时该断言**自动跟随**，且 marker 若被改写也会被发现。
+6. **既有断言两处同步**（架构 §18.3.4，本 dev-plan 已复核）：`tests/test_sprint7_s706_env_facts.py:490` 逐行 `len(line) <= max(cap, 60)` 改为对"**单条命令块整体**"断言；`:492` 结构性上界断言换成 `_PROBE_DIGEST_MAX_CHARS` 断言；用例内 `"X" * (cap * 3)` × 15 条会触发新的总长截断 ⇒ **用例语义一并更新**（并顺带成为总长截断的正向覆盖）。**只换不弱化**。
+
+**自测检查点**：
+- [ ] CP-5.6-1 `_PROBE_OUTPUT_MAX_CHARS == 2600`、`_PROBE_DIGEST_MAX_CHARS == 8000`；两常量各带"外层≥内层"结构性原则注释
+- [ ] CP-5.6-2 **关系断言（§18.7(4)）**：`_PROBE_OUTPUT_MAX_CHARS >= _PROBE_OUTPUT_MAX_BYTES + len(marker)`，marker 按 `local_venv` 同一 f-string 就地计算；**不断言字面量 2600**
+- [ ] CP-5.6-3 总长截尾生效且**不静默**：构造超长 digest → 长度 `<= _PROBE_DIGEST_MAX_CHARS`（含说明行）且**末尾含 `_PROBE_DIGEST_TRUNCATED_NOTE` 原文**；未超长时**说明行不出现**（零扰动）
+- [ ] CP-5.6-4 `_PROBE_DIGEST_TRUNCATED_NOTE` 为**模块级具名常量**、非空、通俗中文、零内部术语（并已登记进 T-5-11 按名 import 集合）
+- [ ] CP-5.6-5 既有 `tests/test_sprint7_s706_env_facts.py:490/:492` 两处断言同步改毕（**形态只换不弱化**）；该文件 29 用例全绿；`env_probe_tool.py` git diff 为空
+
+### 任务 T-S7-5-7：resource_scout 冻结区第三次改动——6 项必探维度 + AC-S7-25 上界 5→10（架构 §18.4(2) + PRD §10.3 #1 / §10.8 第 2 条）
+
+- **产出文件**：`core/nodes/resource_scout.py`（冻结区探测段落，**与 T-5-6 同收口窗口**）+ 既有 AC-S7-25 相关断言
+- **依赖项**：T-S7-5-6（**上限没改就让它多探等于白探**）
+- **预计复杂度**：中高（2h；**第三次**改同一段落，硬触发已挂在其后）
+- **架构参考**：architecture §18.4(2)（放行 + 硬触发）；PRD §10.3 #1 / §10.7 AC-S7-41 / §10.8 第 2/3 条
+
+**需要实现的内容**：
+
+1. **6 项必探维度写进探测段落**（真跑实证只探到 3 项：GPU / CUDA / 磁盘；**CPU / 内存 / Python / 已装包从未被探**，因为 `resource_scout.py:105` 只点名了三项）：
+   **GPU（显存与占用）/ CUDA / 内存 / 磁盘 / Python 版本 / 关键包版本**。六项**全部已在现有 15 条清单内**（主控逐条核实），`env_probe_tool.py` **零改动**。
+2. **删掉"一般探 3~5 条即可"这类硬数字**（PRD §10.8 第 2 条原话：**`resource_scout.py:107` 的「一般探 3~5 条即可」与 AC-S7-25 的 `≤5` 是本次编造内存的共犯**——一个想说"别刷屏"的意图被写成了硬数字）。改为与 6 项必探维度一致的措辞。
+3. **AC-S7-25 修订（非废弃）**：上界 **≤5 → ≤10**；其**三条负向状态断言一字不动**（未 force_finish / 未进 `degraded_nodes` / `resource_strategy` 未被改写为从零实现）。**断言只换不弱化**——全仓 grep 同步面**禁止用 `head` 截断**（S7-07 就是因为 `head -6` 漏掉 3 处断言，靠改完后无截断复查才抓回）。
+4. **冻结区纪律**（沿 S7-06 T-4-4）：三步降级链 1/2/3 字节不动；`REPO_QUALITY_SCORING_SECTION` 拼接点之前落文案；`_repo_scoring.py` git diff 为空；【输出格式】段零改动；新增文案零 `{`/`}`、零 `arxiv`、零绝对路径；跨论文 SystemMessage 字节一致。
+5. **AC-S7-41 判定口径钉死**（架构 §18.5(2)）：判"覆盖 6 项必探维度"= **digest 中存在该命令的记录**，**不是**"出现该维度的数值"——否则本机缺 `free` 时 digest 只写"该命令在本机不可用"，该 AC **永远不过且无法修**（`env_probe_tool.py` 已被红线冻结）。
+6. **⚠ §18.4(2) 硬触发登记（本批必须白纸黑字带走）**：
+   > 三个 Sprint 内同一段落改三次（S7-06 新增 → S7-07 改必做 → 本次改必探维度），说明该段落缺一条稳定验收锚——每次都是"真跑发现没照做 → 改措辞"。
+   > **若 AC-S7-43 真跑后仍需第四次改这段措辞，不再改措辞，直接回头找 Maria 重议手段。**
+   > 该触发条件写进 T-5-13 的处置分支与 §37 纪律 12，**不得在真跑失败后由开发自行"再调一次文案"了事**。
+7. **"破一次"口径澄清**（架构 §18.4(2)）：三次改动 = 三次 Prompt Cache 冷启动，线性叠加但仍是**常数级**，不会退化成"破每次"（那要求前缀含动态值）。故放行成立。真正的守门仍是 `test_sprint6_b1_prompt_guards.py:295` 跨论文一致 + AC-S7-27 负向断言。
+
+**自测检查点**：
+- [ ] CP-5.7-1 探测段落含 6 项必探维度（GPU 显存与占用 / CUDA / 内存 / 磁盘 / Python 版本 / 关键包版本）；**"3~5 条"类硬数字已删**
+- [ ] CP-5.7-2 **冻结区零退化**：三步降级链 1/2/3 逐字符与改前相同；跨论文 SystemMessage 主体字节一致；`REPO_QUALITY_SCORING_SECTION` 仍 `is` 同一对象；`_repo_scoring.py` / 【输出格式】段 git diff 为空；新增文案零 `{`/`}`、零 `arxiv`、零绝对路径
+- [ ] CP-5.7-3 **AC-S7-25 上界 5→10 断言同步面精确闭合**：全仓 grep（**禁 `head` 截断**）无遗漏；**三条负向状态断言一字不动**（形态与文案逐字比对）
+- [ ] CP-5.7-4 AC-S7-41 判定口径落测试：按"**digest 中存在该命令的记录**"断言 6 项必探维度覆盖（不是断数值）
+- [ ] CP-5.7-5 **§18.4(2) 硬触发已登记**进 T-5-13 处置分支 + §37 纪律 12 + handoff（"第四次改措辞 → 停手找 Maria 重议手段"）
+
+### 任务 T-S7-5-8：下游贯穿——coding / execution 两侧 `_SCALE_REDUCED_DIRECTIVE`（架构 §18.1.2 落点 8 + §18.7(5)(6)）
+
+- **产出文件**：`core/nodes/coding.py`、`core/nodes/execution.py`
+- **依赖项**：T-S7-5-3（plan 新键已产出）
+- **预计复杂度**：中（1.5h）
+- **架构参考**：architecture §18.1.2 落点 8 + §18.7(5)(6)；PRD §10.7 AC-S7-39 + A-S7-17
+
+**需要实现的内容**（**沿 sp6 `_CREDENTIAL_DEGRADATIONS_DIRECTIVE` 范式，不造新抽象**）：
+
+1. **两侧各加一个模块常量**（`coding.py:82-86` / `execution.py:98-103` 紧邻处），**两侧值必须逐字节相同**：
+   ```python
+   _SCALE_REDUCED_DIRECTIVE: str = (
+       "重要：本次复现计划已按本机实际可跑的规模缩小。"
+       "计划中的规模参数（模型大小 / 数据子集 / 实验组数 / 训练步数等）是硬约束，"
+       "不得按论文原始规模放大，也不得自行恢复被裁掉的实验组；"
+       "并在产出中如实体现这是缩小规模的复现。"
+   )
+   ```
+   （措辞可微调，但"**计划中的规模参数是硬约束、不得按论文原始规模放大**"这层语义是 AC-S7-39 的断言对象。）
+2. **注入点：非空才注入**（沿 `coding.py:436` / `execution.py:1133` 同款位置与写法）：
+   ```python
+   plan = state.get("reproduction_plan") or {}
+   if isinstance(plan, dict) and plan.get("scale_reduced") is True:
+       payload["scale_reduced_directive"] = _SCALE_REDUCED_DIRECTIVE
+   ```
+   **必须 `is True` 而非真值判断**——防旧 checkpoint 里该键为 `"false"` 字符串时误注入（`bool("false") is True` 陷阱的下游对称面）。
+3. **零扰动硬要求（§18.7(6)）**：`scale_reduced` 为假 / 缺键 / 旧 checkpoint 三形态下，两侧 HumanMessage payload **与 sp5 基线字节一致**——**正负两向都要断**（只断"真时有"不断"假时零扰动"是本条最常见的漏法）。
+4. **不给 coding / execution 直连 `local_env_facts`**（PRD 非目标 8）：下游只靠"计划文本 + 缩规模指令"承载，**不新增任何本机事实通道**。
+5. **不改 system prompt**：两侧 directive 走 HumanMessage 动态 payload，由 wrapper 统一 `json.dumps(sort_keys=True)` 渲染（同一 state 下字节幂等，R-PC4 无扰）。
+
+**自测检查点**：
+- [ ] CP-5.8-1 **§18.7(5) 两侧字节相等断言**：`coding._SCALE_REDUCED_DIRECTIVE == execution._SCALE_REDUCED_DIRECTIVE`（防日后单边改漂移）；两常量均非空且含"硬约束 / 不得按论文原始规模放大"语义
+- [ ] CP-5.8-2 `scale_reduced=True` → 两侧 payload 均含 `scale_reduced_directive` 且值 `is` 各自模块常量
+- [ ] CP-5.8-3 **§18.7(6) 零扰动负向（三形态）**：`scale_reduced=False` / 键缺失（旧 checkpoint）/ 值为 `"false"` 字符串 → 两侧 payload **与基线字节一致**、不含该键
+- [ ] CP-5.8-4 两侧 system prompt 字节零改动；`credential_degradations` 既有注入路径行为不变（复跑 sp6 B2 相关用例全绿）
+
+### 任务 T-S7-5-9：reporting 第 4 条标注 + 声明块第 4 段 + `term_map` +1 条（架构 §18.1.2 落点 7/9 + §18.7(6)）
+
+- **产出文件**：`core/nodes/reporting.py`、`ui/term_map.py`
+- **依赖项**：T-S7-5-2（plan 新键已在类型里）
+- **预计复杂度**：中（2h；强制降档链 + 假时字节零扰动）
+- **架构参考**：architecture §18.1 裁决 7 + §18.1.2 落点 7/9；PRD §10.7 AC-S7-38 + Maria 裁决 6/8 + §10.3 #15/#18
+
+**需要实现的内容**：
+
+1. **`_determine_conclusion` annotations **末尾**追加第 4 条**（`:253-273` 区间）：
+   ```python
+   plan = state.get("reproduction_plan")            # ← 现在 :273，需上移到 annotations 判定之前
+   if isinstance(plan, dict) and plan.get("scale_reduced") is True:
+       annotations.append("scale_reduced")
+   ```
+   - **必须追加在末尾**、**保持既有三条顺序**（simulation → credential_degraded → incomplete_execution）⇒ 假时零扰动结构上成立；
+   - **标注值复用同名 `scale_reduced`**（与 plan 键 1:1，省掉一张映射表，架构 §18.1 裁决 7）；
+   - `plan` 变量上移即可复用，**不新增读取**。
+2. **强制降档自动成立**（无需额外代码）：`reporting.py:281-283` 的 `and not annotations` 即"任一标注禁 science"（主控核实属实）⇒ `scale_reduced` 进 annotations 后**结论档位自动不得为科学复现**（AC-S7-38 / Maria 裁决 6）。**AC-S7-38 的验红对象正是这条映射**：去掉 `annotations.append("scale_reduced")` 后本条必须变红。
+3. **声明块第 4 段**（`_render_annotation_notices`，`:524-619`）：在 `incomplete_execution` 段之后追加
+   ```python
+   if "scale_reduced" in annotations:
+       lines.append("### 缩小规模复现")
+       lines.append("")
+       lines.append(_SCALE_REDUCED_DECLARATION)     # ← 模块级具名常量，受 T-5-11 新守门覆盖
+       ...
+   ```
+   - 文案要点：本次复现按这台机器实际可跑的规模缩小、**不能作为论文原始规模实验结论的依据**、缩了什么（若 `local_fit_note` 非空则原样附上）；
+   - **必须提为模块级具名常量**（T-5-11 按名 import）；通俗中文、零内部术语。
+4. **只产代码路径自动覆盖（Maria 裁决 8，§40 P-14）**：`_render_annotation_notices` 在 `_render_report:1094` 位于 form 分支**之前**、三形态共用 ⇒ **code_only 报告自动带该声明，`_render_code_only` 零改动**。**不要按三形态各写一遍**（会造成重复渲染）。
+5. **`ui/term_map.py` +1 条**（`:82-85` 的 annotation 段）：`"annotation:scale_reduced": "缩小规模复现"`。
+6. **零扰动硬要求（§18.7(6)）**：`scale_reduced` 为假时，报告 Markdown **与 sp5 基线字节一致**——`_render_annotation_notices:535-536` 的空 annotations 早退保证了这一点，但**仍须正负两向断言**。
+7. **不做**：全局文档 §4.6.2「硬件配置」完整章节转 backlog（PRD §10.3 #18），本次只落"缩规模强制声明"这一条。
+
+**自测检查点**：
+- [ ] CP-5.9-1 `scale_reduced=True` → `_determine_conclusion` 的 `annotations` **末尾**含 `"scale_reduced"`，既有三条顺序与取值不变；`level` **不得为 `"science"`**（即便 goal_checks 全符合）
+- [ ] CP-5.9-2 **AC-S7-38 验红（命门）**：删掉 `annotations.append("scale_reduced")` 这条映射 → 本条断言必须**变红**；还原后复绿（红/绿两态落测试报告）
+- [ ] CP-5.9-3 报告含"### 缩小规模复现"段与 `_SCALE_REDUCED_DECLARATION` 原文；**三形态（full_success / code_only / degraded）均带该声明**（Maria 裁决 8 在 code_only 路径成立）
+- [ ] CP-5.9-4 **零扰动（§18.7(6)）**：`scale_reduced=False` / 缺键 / `"false"` 三形态下报告 Markdown **与 sp5 基线字节一致**；`_render_code_only` git diff 为空
+- [ ] CP-5.9-5 `term_map` +1 条且 `humanize("annotation", "scale_reduced") == "缩小规模复现"`；`len(TERM_LABELS) == 42`（41 + 1，供 T-5-11 的 `EXPECTED_N` 对账）；`ui/pages/result_report.py` **零改动**且结论卡片自动跟随降档
+
+### 任务 T-S7-5-10：审核页披露 + 讨论助手第 4 键（架构 §18.1.2 落点 10 + §18.8 ①②③）
+
+- **产出文件**：`ui/pages/plan_review.py`
+- **依赖项**：T-S7-5-4（payload 已带 `local_env_facts`）
+- **预计复杂度**：中（3h；文案红线密集）
+- **架构参考**：architecture §18.1.2 落点 10 + §18.8 三条缺口（Maria 已全部拍板）；PRD §10.6 全节 + AC-S7-37/40 + Maria 裁决 9/10
+
+**需要实现的内容**：
+
+1. **新增只读展示块（恒常展示，不做条件隐藏）**，四项内容（PRD §10.6）：
+   - ①**这台机器实测到什么**——`payload["local_env_facts"]` 原文只读展示（**当前用户完全看不到它，这是本次 bug 无人察觉的根因之一**）；
+   - ②**按这台机器能不能完整跑** + ③**本次预计占用** + ④**若走了缩规模：缩了什么怎么缩的**——由 `plan.get("local_fit_note")` 承载；
+   - `local_fit_note` 为空时用**静态兜底句**（具名常量，受 T-5-11 守门）；`local_env_facts` 为空时同样给静态兜底句（"本次未取得这台机器的实测信息"之类）。
+   - ⚠ **不得把说明只塞进现有默认折叠的 `st.json`（`:290-293` `environment` 折叠块）了事**（PRD §10.6 注明确禁止）；`environment` 折叠块本身**保持不动**。
+2. **"仅复现代码"按钮补上下文说明**（`:735-737` 附近）：在**本机不够**（`scale_reduced is True`）时补一句大意"这台机器跑不动完整规模，可以只产出代码、之后拿到机器再跑"的**静态常量**说明。**不改按钮本身、不新增按钮、不新增决策类型**（决策仍恰 5 类）。
+3. **`_format_plan_context` 加第 4 键**（`:133-147`，Maria 裁决 9）：`"local_env_facts": payload.get("local_env_facts") or ""`。理由：用户讨论"换一种缩法"时，助手若看不到本机没 GPU，会建议这台机器根本跑不动的方案。**其余三键与 `json.dumps(..., sort_keys=True, ensure_ascii=False, indent=2, default=str)` 渲染形态一字不动**。
+4. **`_build_chat_system_prompt` 边界语补一句**（Maria 裁决 10 附带缓解）："不要复述字段名 / 英文标识"。**这是新增静态文案，须提为具名常量并受 T-5-11 守门覆盖**。背景：`_format_plan_context` 会把整份 plan（含 `scale_reduced` 等英文键名）dump 进助手 system prompt，助手可能在中文回复里复述字段名。
+5. **文案红线（AC-S7-40，逐条对照）**：
+   - **一律通俗中文**；禁止出现任何内部枚举值 / 字段名 / 节点名 / 工具名 / 自创英文缩写；
+   - **不得出现"提供其他远程机器"或任何暗示远程执行的选项**（本次明确不做，Maria 裁决 2）；
+   - 探测未覆盖的维度写"**未探测**"，**不写数字、不写"建议 XX GB"**；
+   - **所有新增静态文案必须提为模块级具名常量**（T-5-11 按名 import 的前提）——写成内联 `st.markdown("...")` 字面量则守门扫不到，AC-S7-40 直接落空。
+6. **已接受的残留（Maria 裁决 10，不为此松红线 4）**：模型生成的 `local_fit_note` 是运行时产物，**任何静态守门都扫不到**；其唯一防线是 prompt 契约（实测服从率 75%）+ AC-S7-43 真跑人眼。**不加 gate、不加运行时标记。**
+7. **零改动确认**：决策集合仍恰 5 类；`interrupt_kind` 集合不新增；既有五个按钮的 key / label / resume payload 一字不动。
+
+**自测检查点**：
+- [ ] CP-5.10-1 **恒常展示**：`local_env_facts` 非空 / 空 / 缺键三形态下，只读展示块**均渲染**（空时走静态兜底句），不做条件隐藏；`environment` 折叠块（`:290-293`）git diff 为空
+- [ ] CP-5.10-2 `local_fit_note` 非空时原文展示、为空时走静态兜底常量；两条兜底句均为**模块级具名常量**
+- [ ] CP-5.10-3 "仅复现代码"按钮上下文说明：`scale_reduced is True` 时出现、为假/缺键时**不出现**（零扰动）；**按钮 key / label / resume payload 一字不动**
+- [ ] CP-5.10-4 `_format_plan_context` 恰 **4 键**（三既有 + `local_env_facts`）；`payload=None` / 空 dict / partial 三形态均不抛；渲染形态（`sort_keys`/`ensure_ascii`/`indent`/`default`）一字不动
+- [ ] CP-5.10-5 `_build_chat_system_prompt` 含"不要复述字段名 / 英文标识"边界语且该句为**具名常量**
+- [ ] CP-5.10-6 **AC-S7-37 契约不变**：决策选项集合仍恰 5 类（approve / code_only / revise / switch_repo / cancel）；`interrupt_kind` 集合不新增；**新增文案全部为模块级具名常量**（逐个 `hasattr` 核对，供 T-5-11 按名 import）
+
+### 任务 T-S7-5-11：**新术语守门** `tests/test_s708_user_text_guard.py` + 三重自证**逐条验红**（架构 §18.2 + §18.7(3)）
+
+- **产出文件**：`tests/test_s708_user_text_guard.py`（**新文件**）
+- **依赖项**：T-S7-5-6（截尾说明常量）、T-S7-5-9（reporting 声明常量 + term_map）、T-S7-5-10（UI 三处常量）
+- **预计复杂度**：**高**（3h；这是防"扫 0 条却 passed"的全部命门，R-S7-39）
+- **架构参考**：architecture §18.2 方案 A 全节 + §18.7(3)；PRD §10.7 AC-S7-40 + §10.6 守门盲区警示 + R-S7-39
+
+**为什么新写而不扩 `_GUARDED_MODULES`（架构 §18.2，决定性论据不是取舍、是扫描面错配）**：既有守门 `tests/test_e2e2_message_guard.py:85-129` 扫的是 `make_node_error(...)` **第 3 实参的字面量**，而本次新增的用户可见文案**一条都不在这个面上**（reporting 声明块是 `lines.append(...)`、UI 是 `st.markdown` 字面量、term_map 是表值）。扩围会**两头不讨好**：①扫不到本次新增文案（产品红线直接落空）；②连带打红既有文案（`reporting.py:922` 的 `code_only`、`:930` 的 `code_output_dir` 等，属 TODO 登记的 16 处余项，与"不得同期开工"正面冲突）。
+
+**需要实现的内容**：
+
+1. **复用不复制黑名单**：`from tests.test_e2e2_message_guard import _BLACKLIST, _hits`（`tests/__init__.py` 已存在，跨模块 import 可行——已核实；`_hits(literal: str) -> List[str]` 签名已核实）。本次新增词单独放 `_S708_EXTRA`（`scale_reduced` / `local_fit_note` / `local_env_facts` / `probe_environment` / `code_only` …），**不改共享 `_BLACKLIST`**（避免连带影响 resource_scout 既有扫描面）。
+2. **三个扫描源，全部"数据源全量"而非抽样**：
+   - **`ui/term_map.py::TERM_LABELS.values()` —— 全量扫值**（key 天然是内部枚举，只能扫值）。顺带把既有条目纳入守门；**已实测 41 条全部零命中**（`_BLACKLIST` + `_S708_EXTRA` 五词），零连带打红风险；T-5-9 加 1 条后为 **42**。
+   - **本批新增静态文案的具名常量集合 —— 按名 import**：`resource_scout._PROBE_DIGEST_TRUNCATED_NOTE`（T-5-6）+ `reporting._SCALE_REDUCED_DECLARATION`（T-5-9）+ `plan_review` 的三处（只读块兜底句 ×2 / 按钮上下文说明 / 讨论助手边界语，T-5-10）。**⚠ 架构 §18.2 原列的三个扫描源没包含截尾说明常量**——本 dev-plan 补入（§40 P-13：它经 payload 直达审核页，S7-08 之后是真·用户可见文案）。
+   - **`coding/execution` 的 `_SCALE_REDUCED_DIRECTIVE` 不入本守门**（它是给模型看的，不是给用户看的），只入 T-5-8 的"两侧字节相等"断言。
+3. **"扫不到必报红"三重机制（对准 S7-06 那次"扫 0 条却 passed"）**：
+   - ①**按名 import** ⇒ 常量删除 / 改名 → `AttributeError` → **红**（不是 skip、不是 0 条 passed）；
+   - ②**`assert scanned == EXPECTED_N`**（硬编码期望条数）⇒ **少扫一条即红**；
+   - ③**每条 `assert literal.strip()`** ⇒ 常量被清空成 `""` 不能蒙混。
+4. **`EXPECTED_N` 的维护语义必须写进注释（防后人"顺手改成 `>=`"）**：`EXPECTED_N` 用 `==` 是**刻意的**——新增 term_map 条目或新增用户可见文案常量时必须同步 +1，**这道"必须过一次守门评审"正是产品红线（新增文案必须被真正扫到）的机制载体**。**任何把它放宽为 `>=` 的改动都等于废掉机制 ②**，须在 dev-plan 留档才允许。
+5. **扫描器活性金丝雀**（沿 S7-06 AC-S7-19 同款）：断言 `_hits` 对 `from_scratch` / `resource_scout` / `ReAct` 都命中、对通俗中文不误报——**防"扫描器坏了导致零命中"的假绿**。
+6. **`_GUARDED_MODULES` 零改动**（与 TODO 那 16 处零冲突，日后清理路径完全不变）；`tests/test_e2e2_message_guard.py` **git diff 为空**。
+
+**自测检查点**：
+- [ ] CP-5.11-1 三个扫描源全量扫描零命中（`_BLACKLIST` + `_S708_EXTRA`）；`EXPECTED_N` 与实际条数对账一致（term_map 42 + 具名常量 5~6 条，实施时以实际为准并写死）
+- [ ] CP-5.11-2 **§18.7(3) 自证机制 ① 验红：删常量必红** —— 临时删除/改名任一被按名 import 的常量 → **`AttributeError` 打红**（不是 skip、不是 passed）；还原后复绿
+- [ ] CP-5.11-3 **§18.7(3) 自证机制 ② 验红：少扫一条必红** —— 临时从 `TERM_LABELS` 删 1 条（或从常量集合移除 1 条）→ **`assert scanned == EXPECTED_N` 打红**；还原后复绿
+- [ ] CP-5.11-4 **§18.7(3) 自证机制 ③ 验红：常量清空必红** —— 临时把任一常量改为 `""` → **`assert literal.strip()` 打红**；还原后复绿
+- [ ] CP-5.11-5 扫描器活性金丝雀绿：`_hits` 对 `from_scratch` / `resource_scout` / `ReAct` 命中，对通俗中文零误报；`_S708_EXTRA` 五词各自能命中一条人造样本
+- [ ] CP-5.11-6 `tests/test_e2e2_message_guard.py` **git diff 为空**（`_GUARDED_MODULES` 与 `_BLACKLIST` 均未被改）；`EXPECTED_N` 的"禁止放宽为 `>=`"维护语义已写进注释
+
+> **⚠ 本任务的交付标准是"三条验红各打红一次并留证据"，不是"守门写出来了"**（架构 §18.7(3) 原话：*这三条本身要在开发时逐条验红，否则又是一次 S7-06*）。三次验红的红/绿两态截图或输出片段必须落测试报告。
+
+### 任务 T-S7-5-12：CP 测试 AC-S7-32~42 全覆盖 + **§18.7 六条验证方式** + 两条命门验红 + 全量回归（架构 §18.5 / §18.7 + PRD §10.7）
+
+- **产出文件**：`tests/test_sprint7_s708_*`（建议按面拆 2~3 文件：`_plan_contract`（AC-S7-32/33/34/35/36）、`_downstream`（AC-S7-38/39）、`_payload_ui`（AC-S7-37/40）；探测面 AC-S7-41/42 就近落 `tests/test_sprint7_s706_env_facts.py` 与新文件）+ 既有断言同步
+- **依赖项**：T-S7-5-5、T-S7-5-7、T-S7-5-8、T-S7-5-11
+- **预计复杂度**：**高**（8h）
+- **架构参考**：architecture §18.5 三条口径修正 + §18.7 六条验证方式；PRD §10.7 AC 表 + 测试盲区警示
+
+**§18.7 六条验证方式 → CP 映射（逐条闭合，一条都不能缺）**：
+
+| # | §18.7 验证方式 | 落点 CP |
+|---|---|---|
+| (a) | **三方键集合相等**（`ReproductionPlan.__annotations__` == `_build_reproduction_plan` keys == `_minimal_plan` keys） | **CP-5.1-1**（前置落地 + 验红）+ CP-5.3-1（改后复绿 13==13==13）+ CP-5.12-1（收口复核） |
+| (b) | **`local_env_facts` 不进 system prompt 的负向断言** | **CP-5.3-4** + CP-5.12-2（收口复核，含"带/不带该键 SystemMessage 字节完全一致"） |
+| (c) | **新守门三重自证逐条验红** | **CP-5.11-2 / CP-5.11-3 / CP-5.11-4**（三条各验红一次） |
+| (d) | **`_PROBE_OUTPUT_MAX_CHARS >= _PROBE_OUTPUT_MAX_BYTES` 关系断言**（**不是**断言字面量 2600） | **CP-5.6-2**（含 42 字符 marker 修正，§40 P-12） |
+| (e) | **指令常量两侧字节相等** | **CP-5.8-1** |
+| (f) | **`scale_reduced=False` 时全链路零扰动，正负两向** | **CP-5.8-3**（coding/execution）+ **CP-5.9-4**（reporting）+ **CP-5.12-6**（端到端三链路一次断完） |
+
+**需要实现的内容**（逐 AC，12 条全覆盖）：
+
+1. **AC-S7-32**（三级优先级进契约）：见 CP-5.3-2（正向子串 + **负向：旧句消失**）。
+2. **AC-S7-33 禁编造（命门，须验红）**：构造"只含 GPU/CUDA/磁盘的本机事实" + "论文分析**无** `hardware_requirements`"的双缺失 state（真实复现本次 bug 的输入形态），断言产出计划的环境章节**内存维度不出现任何具体数值**、且出现"未探测/未知"类表述。**验红：撤掉 prompt 里的禁编造条款 → 本条必须变红。**
+   > ⚠ **测试形态说明（须写进用例 docstring）**：mock LLM 层只能验"**规则在 prompt 里且被送达**"这一半——"模型真的照做"这一半由 AC-S7-43 真跑承担（本项目实测服从率 75%）。故本条的 mock 侧断言对象应是 **prompt 契约文本 + 契约缺失时的可观测差异**，**不得**把 mock 预设的假输出当作"模型没编造"的证据（同 §18.5(1) 对 AC-S7-36 的判定逻辑）。
+3. **AC-S7-34 规划侧冻结零退化**：见 CP-5.3-3（跨论文字节一致 + 零插值 + `REPO_QUALITY_SCORING_SECTION` `is` 同一对象 + `_PLANNING_TERMINOLOGY_SECTION` 字节不动）+ **CP-5.3-4 负向**（§18.7(b)）。
+4. **AC-S7-35 计划自带本机适配结论**：见 CP-5.2-1 / CP-5.3-1 / CP-5.3-8；另加**旧 checkpoint 形态构造**——用只有 11 键的旧 plan dict 走下游全链路（reporting / UI / coding / execution），断言**零 KeyError**。
+5. **AC-S7-36 对照断言（口径已由 §18.5(1) 修正）**：同一篇重算力论文 + 两组本机事实（无 GPU 小盘 / 多卡大盘）→ 断言两组产生**不同的 HumanMessage**（确定性可测）。**不断言"两版计划的规模参数出现差异"**（mock 层不可证伪 = 断言 mock 自己）。**必须是对照断言，不能单跑一组**（单跑无法区分"按本机缩了"与"本来就这么写"）。
+6. **AC-S7-37 审核面板可见性 + 契约不变**：**新造两道守门**（§32.4 事实 5：全仓原本没有）——①payload 键集合**恰 11 键**且既有 10 键一字不动；②决策选项集合**恰 5 类**。另加 UI 渲染用例（见 CP-5.10-1~6）。
+7. **AC-S7-38 缩规模强制降档（命门，须验红）**：见 CP-5.9-1/2/3/4（正负两向 + 验红）。
+8. **AC-S7-39 缩规模贯穿下游**：见 CP-5.8-1/2/3。
+9. **AC-S7-40 用户可见文案零术语**：见 CP-5.11-1~6（**守门须真正覆盖新增文案**，防"范围指错、扫 0 条却 passed"的假绿）。
+10. **AC-S7-41 必探维度覆盖**：见 CP-5.7-1/4（判定口径 = **digest 中存在该命令的记录**）；上界断言 5→10 见 CP-5.7-3（**三条负向状态断言一字不动**）。真跑侧覆盖归 T-5-13。
+11. **AC-S7-42 探测摘要不切掉关键包（§18.5(3)：两条都写）**：
+    - **条 1（绕过工具）**：直接造含 120 行 `pip list --format=freeze` 的 ToolMessage → 验**渲染端上限**：摘要中仍含 `torch` / `transformers`；
+    - **条 2（走真实工具）**：经 `env_probe_tool` 真实返回端 2500 字节尾部截断 → 再过渲染端 → 验**两级截断方向合成后 `torch` 仍在**；
+    - 两条均加**总长确定性上界**断言（`_PROBE_DIGEST_MAX_CHARS`）。
+12. **既有断言同步面精确闭合**（**只换不弱化，全仓 grep 禁 `head` 截断**）：`test_sprint7_s706_env_facts.py:490/:492`（T-5-6）、AC-S7-25 上界 5→10 相关（T-5-7）、`test_sprint6_b1_prompt_guards.py:69` 哈希（T-5-5）。
+13. **全量非 e2e 回归**（`.venv/bin/pytest -q -m "not e2e"`）相对 **2103 绿**基线**零退化零失败**，新增用例数与增量**精确闭合**；P-9 flaky（`test_plan_review_e2e.py::test_e2e_code_only`）以复跑取稳态为准并如实记录。
+
+**自测检查点**：
+- [ ] CP-5.12-1 **§18.7(a)** 三方键集合相等收口复核（13==13==13）+ 验红复现（加键只改一处 → 红）
+- [ ] CP-5.12-2 **§18.7(b)** `local_env_facts` 不进 system prompt 负向断言收口复核（含带/不带该键 SystemMessage 字节完全一致）
+- [ ] CP-5.12-3 **AC-S7-33 验红（命门）**：双缺失场景断言全绿；**撤掉禁编造条款后本条必须变红**；红/绿两态落测试报告
+- [ ] CP-5.12-4 **AC-S7-38 验红（命门）**：见 CP-5.9-2 收口复现；**去掉标注映射后本条必须变红**
+- [ ] CP-5.12-5 **AC-S7-36 对照断言**：两组本机事实 → **不同的 HumanMessage**（按 §18.5(1) 修正口径；**不写"规模参数差异"断言**）
+- [ ] CP-5.12-6 **§18.7(f) 端到端零扰动正负两向**：`scale_reduced=False` 时 coding HumanMessage / execution HumanMessage / reporting Markdown **三链路一次断完与 sp5 基线字节一致**；`=True` 时三链路均出现对应内容
+- [ ] CP-5.12-7 **AC-S7-37 两道新造守门**：payload 键集合恰 11 键（既有 10 键逐一核对）+ 决策集合恰 5 类
+- [ ] CP-5.12-8 **AC-S7-42 两条用例都写**（绕过工具验渲染端上限 / 走真实工具验两级截断合成后 `torch` 仍在）+ 总长上界断言
+- [ ] CP-5.12-9 **AC-S7-35 旧 checkpoint 兼容**：11 键旧 plan dict 走 reporting / UI / coding / execution 全链路**零 KeyError**
+- [ ] CP-5.12-10 **全量非 e2e 回归零退化零失败**（相对 **2103 绿**基线，账目精确闭合）+ **AC-S7-32~42 覆盖矩阵审计**（每条 AC 至少一个可测断言映射，映射落 handoff）
+
+### 任务 T-S7-5-13：**AC-S7-43 真跑验收**（⚠ **须单独向 Maria 申请 deepxiv 配额、严禁预授权**）+ handoff
+
+- **产出文件**：`docs/sprint7/test-reports/`（真跑证据 + LangSmith trace 链接 + AC 覆盖矩阵 + handoff）
+- **依赖项**：T-S7-5-12
+- **预计复杂度**：**高**（3h；本需求价值的**唯一实证**）
+- **架构参考**：architecture §18.4(2) 硬触发 + §18.3.3 token 代价核对；PRD §10.7 AC-S7-43 + 测试盲区警示 + §10.9 剩余项 1
+
+> ## ⚠ 授权红线（本任务开工前必须逐条满足）
+>
+> - **本任务耗 deepxiv 日配额 + 真实 LLM，须单独向 Maria 申请具体动作的授权，严禁预授权。**
+> - **对批次 5 的授权 ≠ 对本任务的授权**；泛泛一句"好 / 继续"**不算**（见 `[[real-e2e-needs-explicit-quota-auth]]`）。
+> - **为什么不能靠 mock 顶替**：**S7-06 与 S7-07 两次都是 mock 层验绿、真实行为却没达成**——S7-06 全绿交付后真跑探测触发 **0 次**（功能形同虚设），S7-07 改完才到 3 次。本项目实测 prompt 服从率仅 **75%**。**mock 只能证"prompt 里写了规则"，证不了"模型真的照做"。**
+> - 缺席则本次与前两次同样只是"看起来修好了"。**未获授权时按 §34.4 容量裁剪线延后、登记进 handoff 与 TODO，绝不注销。**
+
+**需要实现的内容**：
+
+1. **主靶重跑**：arXiv **2403.06402**（即产出本次 bug 的那一篇，LangSmith trace `019fad37-2c98` 的同一靶），跑到 planning 产出计划为止。
+2. **逐条判定**（AC-S7-43）：
+   - 计划中 **GPU 表述与本机实测一致**，**不再出现"若无 GPU"这类把已确定事实降级回条件句的措辞**（本次 bug 的原文样本，逐字比对）；
+   - **内存维度不出现凭空数值**（"建议 32GB 及以上"是反面样本；本机根本没探过内存 → 探到了就按实测写，没探到就写"未探测"）；
+   - 磁盘表述与实测一致（上次唯一采纳的一条，回归不得退化）；
+   - `scale_reduced` / `local_fit_note` 两键**实际被模型产出**（不是回落缺省）——若恒为缺省，即 R-S7-35 的实证。
+3. **同时核对的观测项**（零额外配额，同一次跑里读）：
+   - **AC-S7-41 必探维度覆盖**：digest 中**存在** 6 项必探命令的记录（口径 = 命令记录存在，不是数值出现）；
+   - **AC-S7-25 修订后上界**：`probe_environment` ToolMessage 条数 **≤10**，且**未走 force_finish / 未进 `degraded_nodes` / `resource_strategy` 未被改写为从零实现**（三条负向断言一字不动）；
+   - **§18.3.3 token 代价核对**：用 LangSmith 核对 digest 实际长度与进 planning 的实际 token（架构估算最坏 ≈2.2K token / 每次进 planning，走 Prompt Cache 稳定前缀）；
+   - **R-S7-42 核对**：digest 实际长度是否咬到 8000 总长上界（多卡机 / 大 venv 场景）。
+4. **⚠ §18.4(2) 硬触发（处置分支，不得自行绕过）**：
+   > **若真跑后仍需第四次改 `resource_scout` 那段措辞 —— 不再改措辞，直接回头找 Maria 重议手段。**
+   > 三个 Sprint 内同一段落改三次（S7-06 新增 → S7-07 改必做 → S7-08 改必探维度），每次都是"真跑发现没照做 → 改措辞"，说明该段落缺一条稳定验收锚。**开发不得在真跑失败后自行再调一次文案了事**；须如实登记实证并停手上报。
+5. **R-S7-35 处置分支**（模型乐观偏差，规则写了但照旧写理想规模 / `scale_reduced` 恒假）：**无机制回退**（Maria 已否掉硬 gate 与偏离留痕）⇒ 若真跑发现服从率不足，**须回头找 Maria 重议手段**，不得自行加 gate、不得自行加留痕。
+6. **可选加分项（可省，PRD §10.9 剩余项 1）**：再加一篇**有** `hardware_requirements` 的对照论文，验证"两个信源都在时确实本机优先"。**再耗一次配额 ⇒ 须再单独申请**。§34.4 裁剪线第 1 顺位可砍。
+7. **省配额范式**（既有）：mock 守门先行（T-5-12 全绿）→ smoke fail-fast → **合并既有真跑授权窗口**，不单独多开一次；跑前用零配额脚本先验观测口正确（沿 S7-06 教训：观测口装错会在装口阶段崩掉、或带坏观测口白烧配额；且 `core.nodes.*` 必须 `importlib.import_module`，已知陷阱 #6）。
+8. **handoff 交测试工程师**：AC-S7-32~43 覆盖矩阵 + 三道命门验红证据（AC-S7-33 / AC-S7-38 / 新守门三重自证）+ §18.7 六条验证方式的 CP 映射 + 真跑实测事实与 trace 链接 + **已知限制**（R-S7-35 动态文案守门物理不可达、仅 prompt 契约 + 真跑人眼；R-S7-40 仓库兼容性维度转 backlog；R-S7-42 总长上界在多卡机可能咬到末条；R-S7-43 payload 增量进 checkpoint；`hardware_requirements` 缺失本次不修）。
+
+**自测检查点**：
+- [ ] CP-5.13-1 **（⚠ 须 Maria 明确授权具体动作）** 主靶 arXiv:2403.06402 真跑完成，LangSmith trace 留档；GPU / 内存 / 磁盘三项表述逐条判定并落报告（**"若无 GPU"类条件句零出现**、内存无凭空数值）
+- [ ] CP-5.13-2 同跑观测：6 项必探维度**命令记录存在**（AC-S7-41 修正口径）+ `probe_environment` 条数 ≤10 + 三条负向状态断言全绿（AC-S7-25 修订）
+- [ ] CP-5.13-3 `scale_reduced` / `local_fit_note` 两键**实际被模型产出**（非回落缺省）；digest 实际长度与 planning token 代价核对（§18.3.3 / R-S7-42）
+- [ ] CP-5.13-4 handoff 归档齐备：AC 覆盖矩阵 + 三道命门验红证据 + §18.7 六条 CP 映射 + 真跑事实 + 已知限制清单；**若真跑不达标，按 §18.4(2) 硬触发与 R-S7-35 停手上报 Maria，不得自行改措辞或加 gate**
+
+> **批次 5 收口门（= S7-08 交付）**：CP-5.1~5.12 全绿 + **三道命门逐条验红通过**（CP-5.12-3 AC-S7-33 禁编造 / CP-5.12-4 AC-S7-38 强制降档 / CP-5.11-2·3·4 新守门三重自证）+ **§18.7 六条验证方式逐条闭合**（映射见 T-5-12 表）+ **R-S7-41 假绿已处置**（哈希写死 + 验红 + §40.1 基线留档 + 全仓自锁定复扫）+ AC-S7-32~42 全覆盖 + 全量非 e2e 回归零退化（CP-5.12-10，相对 **2103 绿**基线账目闭合）+ **零改动红线全部成立**（`_repo_scoring.py` / `graph.py` / `env_probe_tool.py` / `plan_checks.py`，git diff 逐一为空）+ 两处冻结区跨论文字节一致 + interrupt 种类与决策集合零新增。**AC-S7-43 真跑（T-S7-5-13）须 Maria 明确授权具体动作**（严禁预授权）；若未获授权，按 §34.4 容量裁剪线**延后不注销**、登记进 handoff 与 TODO。**停手等 Maria 确认。S7-08 交付。**
+
+---
+
+## 36. S7-08 风险登记（接 PRD §10.12 R-S7-35~43 / 架构 §18.6；本 dev-plan 新登记 R-S7-44~46）
+
+| 编号 | 风险 | 落点任务 | 缓解 | 回退 |
+|---|---|---|---|---|
+| **R-S7-35** | **模型乐观偏差**：规则写了但照旧写理想规模 / `scale_reduced` 恒为假（实测服从率 75%） | T-5-3 / T-5-13 | AC-S7-36 对照断言 + **AC-S7-43 真跑** + 审核页披露让用户一眼看出偏离。**Maria 已否掉留痕，机器侧无自动偏离信号**，回归时只能靠这三条 | **无机制回退**——真跑发现服从率不足须**回头找 Maria 重议手段**，开发不得自行加 gate / 加留痕 |
+| R-S7-36 | **缩得太狠**：复现被缩成玩具，用户以为跑通了 | T-5-3 / T-5-9 | 计划须写清缺口与缩法（prompt 契约）；用户可走审核页精修；报告强制降档如实声明（AC-S7-38） | 固定档位（已被最小设计裁定排除，重议才启用） |
+| R-S7-37 | **探测摘要变长的静默成本**：6 项必探 × 更大单条上限，整体进规划 HumanMessage，token 成本上升且无告警 | T-5-6 / T-5-13 | `_PROBE_DIGEST_MAX_CHARS=8000` 确定性上界 + AC-S7-42 断言；**§18.3.3 估算最坏 ≈2.2K token/次**，T-5-13 用 LangSmith 核对实际值 | 上限单点回调 |
+| **R-S7-38** | **规划侧缓存前缀"破成每次"**：有人把 `local_env_facts`（任务级动态值）写进 system prompt ⇒ **功能全对、账单持续渗漏、零告警** | T-5-3 / T-5-12 | **AC-S7-34 负向断言（§18.7(b)）是唯一防线** + 文案零插值纪律 | **无替代防线，断言缺失即失守** |
+| **R-S7-39** | **术语守门盲区**：planning / reporting / UI 新增文案无人守，且"扫 0 条也 passed"（S7-06 同款） | T-5-11 | 新写独立守门 + **三重自证逐条验红**（§18.7(3)）；`EXPECTED_N` 用 `==` 且禁止放宽为 `>=` | — |
+| R-S7-40 | §4.2.2 仓库兼容性维度仍未实现且本次不做——不登记就会成为下一条蒸发的承诺 | — | PRD §10.3 #14 已显式登记转 backlog；本 dev-plan 交付物清单重申 | 立项时走 PRD |
+| **R-S7-41** | **planning 冻结区"字节回归门"是恒真断言**（`EXPECTED_HASH = actual_hash`），守门能力为零 | **T-5-5** | 改完 prompt 后**哈希写死真实值 + 验红 + §40.1 留基线 + 全仓自锁定模式复扫** | **无**——不修则该守门永久为零，"planning 主体的静态变更必须是有意为之"这条纪律在机制上根本不存在 |
+| R-S7-42 | 总长上限 8000 在多卡机（`nvidia-smi` 输出随卡数线性增长）+ 大 venv 下可能咬到最后一条探测记录 | T-5-6 / T-5-13 | 截尾时追加显式中文说明（**不静默**）；T-5-13 真跑核对实际长度 | 单点调值 |
+| R-S7-43 | interrupt payload 增 `local_env_facts`（≤8000 字符）后，每次 revise 都会把它再存一份进 checkpoint | T-5-4 | 已知增量、架构 §18.6 备案；payload 指纹（`app.py:479-488`）随之变化**属正常语义**（payload 变→指纹变→token 变，符合 S6-01 换代判定） | 改为只放截断摘要 |
+| **R-S7-44**（本 dev-plan 新登记） | **截尾说明常量的守门缺口**：`_PROBE_DIGEST_TRUNCATED_NOTE` 经 payload 直达审核页、是真·用户可见文案，但**架构 §18.2 原列的三个扫描源不含它** ⇒ 照架构照抄则该文案零覆盖 | T-5-6 / T-5-11 | 本 dev-plan 已补入 T-5-11 按名 import 集合（§40 P-13）；CP-5.6-4 与 CP-5.11-1 双点守 | 守门缺口 = 术语泄漏可在全绿状态下进代码（S7-06 同款失效模式） |
+| **R-S7-45**（本 dev-plan 新登记） | **关系断言漏 42 字符 marker**：§18.7(4) 按字面写 `2600 >= 2500` 时，把 `_PROBE_OUTPUT_MAX_CHARS` 调到 2520 仍能过，**而 `torch` 已可能被切** —— 断言看起来硬、实际留了 42 字符的洞 | T-5-6 | 断言改为 `>= _PROBE_OUTPUT_MAX_BYTES + len(marker)`，marker 按 `local_venv.py:353` 同一 f-string **就地计算**（不新增生产常量，§40 P-12） | 单点改断言；marker 若被改写也会被该写法发现 |
+| **R-S7-46**（本 dev-plan 新登记） | **AC-S7-37 的"契约不变"无既有守门可依**：全仓**不存在** payload 键集合断言与决策集合断言（grep 坐实）⇒ 若照 PRD 字面理解成"保持既有守门"，这条 AC **零覆盖却 passed** | T-5-1 / T-5-12 | T-5-1 首任务坐实缺席；**T-5-12 必须新造两道守门**（CP-5.12-7），不得写"既有守门保证" | 同 R-S7-30 同族（"以为有守门、实际零覆盖"） |
+
+---
+
+## 37. S7-08 关键纪律汇总（开工前逐条对照）
+
+1. **批次边界逐批确认制**：批次 5 在批次 4 收口、Maria 确认后开工；**批次 5 收口门后停手等 Maria 确认**；**AC-S7-43 真跑（T-5-13）须 Maria 单独授权具体动作，严禁预授权**（对批次的授权 ≠ 对该任务的授权）。
+2. **不改设计**：忠实落地架构 v1.4 §18（三问全裁）+ PRD v1.0 §10 + Maria §10.9 十条拍板，本 dev-plan 不重新决策。**凡 PRD 原口径与架构 §18.5 冲突处一律以 §18.5 修正后口径为准**（AC-S7-36 / AC-S7-41 / AC-S7-42 三条）。
+3. **双单收口窗口**：`planning.py`（T-5-3/5-4）与 `resource_scout.py`（T-5-6/5-7）各走一个窗口串行改写；**TODO「其余 16 处同族术语泄漏」清理不得同期开工**。
+4. **冻结区改动一次改完**：planning 四处（prompt 主体 / schema / 【输出格式】示例 / 两处构造点）同任务落地；resource_scout 两处同任务落地——**分两次改 = 破两次 Prompt Cache 前缀**。
+5. **`local_env_facts` 绝不进 system prompt**（R-S7-38）：它是任务级动态值，唯一防线是 AC-S7-34 负向断言（§18.7(b)），断言缺失即失守。
+6. **三方键集合相等断言先写后改**（§18.7(a)）：T-5-1 就落盘（此刻 11==11==11 即绿），让"加键只改一处"在**写错那一刻**红，而不是收口时才发现。
+7. **零扰动正负两向**（§18.7(f)）：`scale_reduced=False` 时 coding / execution / reporting 三链路**与 sp5 基线字节一致**——只断"真时有"不断"假时零扰动"是本条最常见的漏法。
+8. **`is True` 而非真值判断**：`_coerce_bool` 必须把 `"false"` 判 False（`bool("false") is True` 陷阱）；下游注入点用 `plan.get("scale_reduced") is True`。
+9. **新守门三重自证必须逐条验红**（§18.7(3)）：删常量必红 / 少扫一条必红 / 常量清空必红——**三条各验一次并留红绿两态证据**，不验红等于没写。`EXPECTED_N` 用 `==` 是刻意的，**禁止放宽为 `>=`**。
+10. **不扩 `_GUARDED_MODULES`、不做模块级全量字面量扫描**：扫描面错配 + 会连带打红 `reporting.py:922/930` 等 16 处余项。守门只按名 import 具名常量 + 全量扫 `TERM_LABELS.values()`。
+11. **断言只换不弱化 + grep 同步面禁 `head` 截断**：AC-S7-25 上界 5→10 时三条负向断言一字不动；S7-07 就是因为 `head -6` 漏掉 3 处断言。
+12. **⚠ §18.4(2) 硬触发（本批必须带走的红线）**：**若 AC-S7-43 真跑后仍需第四次改 `resource_scout` 那段措辞，不再改措辞、直接回头找 Maria 重议手段。** 三个 Sprint 改三次说明该段落缺一条稳定验收锚，开发**不得**在真跑失败后自行再调一次文案了事。
+13. **R-S7-35 无机制回退**：真跑发现服从率不足时，**回头找 Maria 重议手段**——不得自行加 gate（红线 4）、不得自行加偏离留痕（Maria 裁决 7）。
+14. **已知 bug 模式规避自查**：①测试/脚本访问 `core.nodes.*` 模块属性一律 `importlib.import_module`（陷阱 #6，S7-06 两次撞过）；②新增工具/序列化若涉 ToolMessage 走 `json.dumps(ensure_ascii=False, sort_keys=True, default=str)`（BUG-S1-02）；③本批**不新增 ReAct 工具、不改 `_map_planning_result` 签名**，故 backfill 类陷阱不适用。
+15. **TODO 维护**：批次 5 开工前在 `docs/TODO.md` 标注负责人，收口后 `- [ ]`→`- [x]` 附日期与实跑数 / 耗时（沿 BUG-S1-02/03 归档格式）；**AC-S7-43 真跑结果如实记录**（不达标即 R-S7-35 实证，须上报不得自处置）。
+16. **容量裁剪线**（§34.4）：超限时先砍对照篇真跑，再砍预计占用展示细化，再砍 AC-S7-42 两条之一（须显式登记代价）；**契约层本体、三道命门验红、三方键集合断言、R-S7-41 处置、AC-S7-43 主靶真跑（只可延后不可注销）绝不砍**。
+
+---
+
+## 38. S7-08 增补 CP 索引
+
+- **批次 5（S7-08）**：CP-5.1-1~6（实现前核实 + 三方键集合断言前置）、CP-5.2-1~3（state +2 键）、CP-5.3-1~8（planning 冻结区 + schema + 两构造点）、CP-5.4-1~3（payload +1 键）、CP-5.5-1~4（**R-S7-41 假绿处置**）、CP-5.6-1~5（探测摘要上限 2600 + 总长 8000）、CP-5.7-1~5（6 项必探维度 + AC-S7-25 上界修订）、CP-5.8-1~4（coding/execution 缩规模指令贯穿）、CP-5.9-1~5（reporting 第 4 标注 + term_map）、CP-5.10-1~6（审核页披露 + 讨论助手第 4 键）、CP-5.11-1~6（**新术语守门 + 三重自证验红**）、CP-5.12-1~10（CP 测试 + §18.7 六条 + 两条命门验红 + 全量回归）、CP-5.13-1~4（**AC-S7-43 真跑，Maria 单独授权**）
+- **CP 总数**：**69 个**（CP-5.1-1 ~ CP-5.13-4）
+- **验红专项（三道命门，须改坏对应实现后断言变红，防假绿）**：
+  - **CP-5.12-3**（AC-S7-33 禁编造——撤掉禁编造条款）
+  - **CP-5.12-4 / CP-5.9-2**（AC-S7-38 强制降档——去掉 `annotations.append("scale_reduced")` 映射）
+  - **CP-5.11-2 / CP-5.11-3 / CP-5.11-4**（新守门三重自证——**删常量 / 少扫一条 / 常量清空各验一次**）
+  - 另：**CP-5.1-1**（三方键集合——加键只改一处）与 **CP-5.5-2**（R-S7-41 哈希——body 加一个空格）同样须验红
+- **§18.7 六条验证方式 → CP 映射**：(a) CP-5.1-1 / CP-5.3-1 / CP-5.12-1｜(b) CP-5.3-4 / CP-5.12-2｜(c) CP-5.11-2·3·4｜(d) CP-5.6-2｜(e) CP-5.8-1｜(f) CP-5.8-3 / CP-5.9-4 / CP-5.12-6
+- **真跑验证项**：**CP-5.13-1~4（⚠ 须 Maria 单独授权具体动作，严禁预授权；未获授权则延后不注销）**
+
+---
+
+## 39. S7-08 增补批次任务编号速查
+
+| 批次 | 任务编号范围 | 任务数 | CP 数 | AC 映射 |
+|---|---|---|---|---|
+| 批次 5（S7-08 planning 平台感知规划） | T-S7-5-1 ~ T-S7-5-13 | 13 | 69 | AC-S7-32~43 全覆盖（12 条） |
+
+**S7-08 AC → 方案组件 / 任务映射**：
+
+| AC | 组件（架构） | 落点任务 | AC | 组件（架构） | 落点任务 |
+|---|---|---|---|---|---|
+| AC-S7-32 | §18.1.2 冻结区静态改写 | T-5-3 | AC-S7-38 ⚠命门 | §18.1 裁决 7 + §18.1.2 落点 7/9 | T-5-9 / T-5-12（验红） |
+| AC-S7-33 ⚠命门 | §18.1.2 禁编造条款 | T-5-3 / T-5-12（验红） | AC-S7-39 | §18.1.2 落点 8 + §18.7(5)(6) | T-5-8 |
+| AC-S7-34 | §18.4(1) 冻结令 + §18.7(2) 负向 | T-5-3 / T-5-5 / T-5-12 | AC-S7-40 ⚠命门 | **§18.2 新写独立守门** | T-5-11（三重自证逐条验红） |
+| AC-S7-35 | §18.1 两扁平键 + §18.1.1 三方相等 | T-5-1 / T-5-2 / T-5-3 | AC-S7-41 | §18.4(2) 必探维度 + §18.5(2) 口径 | T-5-7 / T-5-13 |
+| AC-S7-36 | §18.5(1) 修正口径（HumanMessage 差异） | T-5-12 | AC-S7-42 | §18.3 上限 2600 + 总长 8000 + §18.5(3) 两条用例 | T-5-6 / T-5-12 |
+| AC-S7-37 | §18.1.2 落点 6 + **新造两道守门（R-S7-46）** | T-5-4 / T-5-10 / T-5-12 | AC-S7-43 ⚠**唯一实证** | §18.4(2) 硬触发入口 | **T-5-13（Maria 单独授权）** |
+
+**交付物清单（S7-08 增量）**：
+
+| 类别 | 文件 | 任务 | 说明 |
+|---|---|---|---|
+| state | `core/state.py`（`ReproductionPlan` +2 键） | T-5-2 | `scale_reduced: bool` / `local_fit_note: str`，缺省 `False` / `""`，下游 `.get()` 防御读 |
+| 节点 | `core/nodes/planning.py`（冻结区 + schema + 两构造点 + `_coerce_bool` + payload +1 键） | T-5-3 / T-5-4 | **单收口窗口**；`required` 不动；【输出格式】示例必须同步 |
+| 节点 | `core/nodes/resource_scout.py`（两上限常量 + 截尾说明常量 + 6 项必探维度） | T-5-6 / T-5-7 | **单收口窗口**；该文件**第三次**冻结区改动，§18.4(2) 硬触发已挂 |
+| 节点 | `core/nodes/coding.py` / `core/nodes/execution.py`（各 +1 常量 +1 分支） | T-5-8 | 沿 `_CREDENTIAL_DEGRADATIONS_DIRECTIVE` 范式；两侧字节相等 |
+| 节点 | `core/nodes/reporting.py`（第 4 条标注 + `plan` 上移 + 声明块第 4 段） | T-5-9 | 末尾追加 ⇒ 假时零扰动；三形态共用（code_only 自动覆盖，P-14） |
+| UI | `ui/term_map.py`（+1 条）、`ui/pages/plan_review.py`（只读块 + 按钮说明 + 第 4 键 + 边界语） | T-5-9 / T-5-10 | 新增文案**全部提为具名常量**；`ui/pages/result_report.py` **零改动**自动跟随降档 |
+| 测试 | `tests/test_s708_plan_keys.py`（新）、`tests/test_s708_user_text_guard.py`（新守门）、`tests/test_sprint7_s708_*`（AC 覆盖）、`tests/test_sprint6_b1_prompt_guards.py`（R-S7-41 哈希）、`tests/test_sprint7_s706_env_facts.py`（上限断言同步） | T-5-1 / T-5-5 / T-5-6 / T-5-11 / T-5-12 | 只换不弱化；三道命门验红 |
+| 报告/handoff | `docs/sprint7/test-reports/` + handoff | T-5-13 | 真跑证据 + trace + AC 覆盖矩阵 + 验红证据 + 已知限制 |
+| **零改动红线** | `core/nodes/_repo_scoring.py` / `core/graph.py` / `core/tools/env_probe_tool.py` / `core/plan_checks.py` | — | 收口时 `git diff` 逐一为空 |
+| **收口动作（非开发任务）** | 全局产品文档 §5.2 页面 3 表单 / §5.4 CLI 两条承诺是否撤销（PRD §10.9 剩余项 2）；§4.2.2 兼容性维度 backlog 留档 | 代码交付后回填 | 主控/PM 收口，**不属于本批开发范围**，仅登记 |
+
+---
+
+## 40. S7-08 落点勘误留档（本 dev-plan 落盘时 Read / grep / **真跑**发现的出入）
+
+> 体例同 §31（S7-06 的 P-2~P-10）。**不自行改架构 / PRD 文档**，如实标注、不改设计。编号接续 §31，从 **P-11** 起。
+
+| 编号 | 架构/PRD 落点 | 源码实际 | 影响 | 处置 |
+|---|---|---|---|---|
+| **P-11**（轻微，仅计数） | 架构 §18.2 方案 A 第 2 条称 `ui/term_map.py::TERM_LABELS` "顺带把**既有 50 条**纳入守门" | 实测 `len(TERM_LABELS) == 41`（`.venv/bin/python` 真跑） | 极轻微（"逐条目测清白、零连带打红风险"的结论**完全不变**——本 dev-plan 已实测 41 条 values 过 `_BLACKLIST` + `_S708_EXTRA` 五词**零命中**） | 仅订正条数为 **41**；T-5-9 加 1 条后 **42**，T-5-11 的 `EXPECTED_N` 以实施时实际条数为准（CP-5.9-5 已把 42 写进对账点） |
+| **P-12（重要，断言留洞）** | 架构 §18.7(4) 要求 `_PROBE_OUTPUT_MAX_CHARS >= _PROBE_OUTPUT_MAX_BYTES` 的**关系断言**（"比断言字面量 2600 更抗腐坏，S7-09 改返回端时自动跟随"） | 返回端真实硬上界不是 2500 而是 **2542** —— `sandbox/local_venv.py:353` 截断后**前缀 42 字符 marker**（`f"... [truncated, kept last {max_bytes} bytes] ...\n"`，实测 `len == 42`），且该 marker **无具名常量**（内联 f-string） | **中**：按字面写 `2600 >= 2500` 时，把上限调到 **2520 仍能通过**，而 `torch` 已可能被切 —— 断言看起来硬、实际留了 42 字符的洞（R-S7-45） | **实施口径**：断言写成 `_PROBE_OUTPUT_MAX_CHARS >= _PROBE_OUTPUT_MAX_BYTES + _MARKER_LEN`，`_MARKER_LEN` 在**测试内**按 `local_venv` 同一 f-string 就地计算（**不新增生产常量**）。语义与架构一致、只是补严；S7-09 改返回端时仍自动跟随，且 marker 被改写也会被发现。已写进 CP-5.6-2 |
+| **P-13（重要，守门缺口）** | 架构 §18.2 方案 A 第 2 条列**三个扫描源**：`TERM_LABELS.values()` / reporting·plan_review·讨论助手边界语的新增文案 / （排除 coding·execution directive） | **漏了一处新增用户可见文案**：T-5-6 要新增的 digest 截尾中文说明。它在 S7-06 时只进 LLM 上下文（故不算用户文案），但 **S7-08 之后 `local_env_facts` 经 interrupt payload 直达审核页只读展示块** ⇒ **用户会亲眼看到它** | **高**：照架构照抄则该文案**零守门覆盖**，AC-S7-40 在这一处直接落空（S7-06 "扫 0 条却 passed" 同款失效模式，R-S7-44） | **补入**：该说明**必须提为模块级具名常量** `_PROBE_DIGEST_TRUNCATED_NOTE`（不得内联字面量）并**纳入 T-5-11 按名 import 集合**。已写进 CP-5.6-4 与 CP-5.11-1。**不改架构文档** |
+| **P-14（好消息，省一个分支）** | 架构 §18.1.2 落点表把 reporting 声明块列为 `:536-619` 的改动，未点明三形态覆盖关系；Maria 裁决 8 要求"**只产代码路径也要带缩规模声明**" | `_render_report:1094` 调 `_render_annotation_notices` 的位置**在 form 分支（`:1095-1101`）之前**、**三形态共用**；且 `_render_annotation_notices:535-536` 在 `annotations` 为空时**早退返回 `[]`** | 低（**利好**）：Maria 裁决 8 **结构上自动成立**，`_render_code_only` **零改动**；`scale_reduced=False` 的零扰动也是结构性的 | **显式登记，防开发按三形态各写一遍**（会造成重复渲染）。已写进 T-5-9 第 4 条与 CP-5.9-3 |
+| **P-15（纪律，防扩围）** | 架构 §18.2 备选 C（全模块字面量扫描）已被否决，理由记为"`term_map` 的 key、`humanize` 的 domain 名是合法字面量 ⇒ 大面积假阳" | **还有一条更硬的理由未记**：`core/nodes/reporting.py:922` 用户可见文案含 `code_only`（"本次运行处于 code_only 模式"）、`:930` 含 `code_output_dir` —— 二者属 TODO 登记的**既有 16 处泄漏余项** | 中（若开发"顺手扩大扫描面"求稳，会**当场连带打红**并与"16 处不得同期开工"正面冲突） | 写进 §32.3 红线末条与 §37 纪律 10：**不扩 `_GUARDED_MODULES`、不做模块级全量字面量扫描**，守门只按名 import 具名常量 + 全量扫 `TERM_LABELS.values()`。**不改架构文档**（其结论正确，只是补一条更硬的论据） |
+| **P-16（重要，AC 无守门可依）** | PRD §10.7 AC-S7-37 写"**既有 payload 键结构不变**""决策选项集合**仍恰**为既有 5 类"，措辞暗示存在既有守门 | grep 全仓：**不存在**"planning interrupt payload 键集合恰为 N"的断言，也**不存在**"决策集合恰 5 类"的断言（`test_sprint4_e2e.py:632` 那条 `set(p2.keys()) == {...}` 断的是 **user_input** interrupt 的 4 键 payload，与 planning 无关） | **中**：若照 PRD 字面理解成"保持既有守门即可"，AC-S7-37 会**零覆盖却 passed**（R-S7-46，与 R-S7-30 同族） | **两道守门是新造不是保持**：T-5-1（CP-5.1-2）首任务坐实缺席，T-5-12（CP-5.12-7）新造。**不改 PRD 文档** |
+
+> **其余架构 §18 落点行号逐处核源码全部对得上**，无需调整设计：`core/state.py:115-137` `ReproductionPlan` 11 键 / `planning.py:67-118` `REPRODUCTION_PLAN_SCHEMA`（`required` 恰 3 项）、`:139-140` 冻结注释、`:151-152` 待替换的 environment 规则、`:384` `_build_reproduction_plan` 构造点（签名 `(result, state)`）、`:589` `_minimal_plan` 构造点（签名 `(state, reason)`）、`:296-308` `_format_planning_context` 六形参、`:877-890` interrupt payload 10 键、`:806` plan 复制点；`execution.py:2076` 复制点、`:98-103` directive 常量、`:1133` 注入点；`coding.py:82-86` directive 常量、`:436` 注入点；`reporting.py:253-273` annotations 三条 + `:273` `plan` 变量、`:281-283` `and not annotations`、`:524-619` 声明块、`:1094` 三形态共用调用点；`ui/term_map.py:82-85` annotation 三条；`ui/pages/plan_review.py:133-147` `_format_plan_context` 三键、`:290-293` `environment` 折叠块、`:735-737` "仅复现代码"按钮；`ui/pages/result_report.py:59` 复用 `_determine_conclusion`（**零改动自动跟随降档**）；`resource_scout.py:57` `_PROBE_OUTPUT_MAX_CHARS=400`、`:496` 渲染端 `out[:cap]`；`sandbox/local_venv.py:353` 返回端 `raw[-max_bytes:]` 保尾 + marker；`tests/test_e2e2_message_guard.py:29` `_GUARDED_MODULES=("resource_scout",)`、`:32-42` `_BLACKLIST` 6 词、`_hits(literal) -> List[str]`；`tests/test_sprint7_s706_env_facts.py:490/:492` 两处待改断言；`tests/__init__.py` 存在（跨模块 import 可行）。
+
+### 40.1 R-S7-41 planning prompt 主体字节基线留档（T-S7-5-5 收口时补齐改后值）
+
+| 项 | 值 | 说明 |
+|---|---|---|
+| **改前基线（S7-08 开工时，2026-07-29 主控实测）** | `sha256[:16] = cc8056d04a6b5595`，主体长 **4005 字符** | `_PLANNING_SYSTEM_PROMPT_BODY`（含 `REPO_QUALITY_SCORING_SECTION` + `_PLANNING_TERMINOLOGY_SECTION`）。**该值即 sp5/sp6 期间"本应被锁定却从未被锁定"的那个值** |
+| **改后基线（T-S7-5-5 实测后填入）** | `sha256[:16] = ______________`（**待填**） | 由 T-5-5 用 `.venv/bin/python` 重算并写死进 `tests/test_sprint6_b1_prompt_guards.py:69` |
+| **变更原因** | S7-08 的**一次性静态变更**：替换 `:151-152` 无条件"引用论文 `hardware_requirements`"→ 三级优先级（本机实测 > 论文推断 > 明确写未探测/未知）+ 禁编造条款 + `scale_reduced`/`local_fit_note` 两键契约 + 缩法举例（A-S7-19）+【输出格式】JSON 示例 +2 键 | 架构 §18.4(1) 背书为合法一次性静态变更（判 bug 标准是"是否引入论文级/任务级动态值"，不是"是否修改过"） |
+| **验红记录** | body 末尾临时加一个空格 → 断言变红；逐字节还原 → 复绿（**T-5-5 落测试报告**） | 不验红等于没改（CP-5.5-2） |
+| **全仓自锁定模式复扫** | 预跑结果：**仅 `test_sprint6_b1_prompt_guards.py:69` 一处**（扫 `tests/ core/ ui/ sandbox/ scripts/`，两组模式）；T-5-5 收口复跑并落档 | 唯一另一命中 `test_sprint6_s6_01_controller.py:242` 是 `expected_interrupt_token=current` 实参传递，**非自锁定** |
+| **后人须知** | 此后**任何**改动 `_PLANNING_SYSTEM_PROMPT_BODY` 的批次，都必须：①重算哈希写死；②在本表新增一行留档变更原因；③跑一次验红。**禁止改回 `EXPECTED_HASH = actual_hash` 形态** | 这正是这道守门本该有的语义（其 docstring 自 sp6 起就这么写，只是实现从未成立） |
+
+---
+
+*（S7-08 增补完：§32 概述（目标/方案要点/红线/**前置事实 13 条亲验**/关键风险）+ §33 任务总表（13 任务 69 CP，~31.5h）+ §34 批次依赖图/顺序理由/容量裁剪线 + §35 批次 5 任务详细规格 T-S7-5-1~13（含 CP 与逐条验红要求）+ §36 风险登记（引 R-S7-35~43 + **新登记 R-S7-44~46**）+ §37 纪律汇总（16 条，**含 §18.4(2) 硬触发**）+ §38 CP 索引（含三道命门验红专项 + **§18.7 六条 → CP 映射**）+ §39 编号速查 / AC 映射 / 交付物清单 + §40 落点勘误留档（**P-11~P-16**，其中 **P-12 断言留洞 / P-13 守门缺口 / P-16 AC 无守门可依** 三条为实质性）+ §40.1 **R-S7-41 哈希基线留档**。本增补不覆盖 §1~§31 既有内容，忠实落地架构 v1.4 §18（三问全裁）+ PRD v1.0 §10 + Maria §10.9 十条拍板，**不重新决策**；冲突口径统一为"PRD 原口径与架构 §18.5 冲突处以 §18.5 为准"。待 Maria 审阅后授权进入批次 5——批次边界逐批确认制照旧，**AC-S7-43 真跑（T-S7-5-13）须 Maria 单独授权具体动作、严禁预授权**。）*

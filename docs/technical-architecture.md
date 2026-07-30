@@ -1,9 +1,9 @@
 # 论文自动复现系统 -- 技术架构文档
 
 **产品名称**：Auto-Reproduction
-**版本**：v1.2
+**版本**：v1.3
 **日期**：2026-05-06
-**最后更新**：2026-07-28
+**最后更新**：2026-07-29
 **状态**：正式定稿（当前权威活文档，随代码演进持续更新）
 
 ---
@@ -77,7 +77,7 @@
 |--------|---------|---------|------|------|
 | `paper_intake` | 步骤1: 论文输入与解析 | 接收 UI 层传入的已确认 arXiv ID，调用 deepxiv Reader 获取论文元数据 | 用户已确认的 arXiv ID（由 UI 层完成搜索与确认） | PaperMeta |
 | `paper_analysis` | 步骤2: 深度论文分析 | 渐进式阅读论文，提取复现所需的关键信息 | PaperMeta | PaperAnalysis |
-| `resource_scout` | 步骤3: 资源搜集与评估 | 通过 deepxiv github_url、web search 搜索候选仓库（Sprint 6 MF-5 已移除 PwC 通道），git clone 后本地评估仓库质量；全自动完成仓库搜索与质量评分，不涉及用户交互 | PaperMeta + PaperAnalysis | ResourceInfo（含候选仓库列表及质量评分排序，与自动选出的推荐仓库） |
+| `resource_scout` | 步骤3: 资源搜集与评估 | 通过 deepxiv github_url、web search 搜索候选仓库（Sprint 6 MF-5 已移除 PwC 通道），git clone 后本地评估仓库质量；**并在给出仓库结论前必做一步只读环境探测**（S7-06 交付、S7-07 由可选补充步升为必做步骤，见 §7.5），探得的本机事实经 `local_env_facts` 送达 planning；全自动完成，不涉及用户交互 | PaperMeta + PaperAnalysis | ResourceInfo（含候选仓库列表及质量评分排序，与自动选出的推荐仓库）+ `local_env_facts`（本机实测环境事实，`core/nodes/resource_scout.py:526-531`） |
 | `planning` | 步骤4: 复现规划 | 综合分析结果和资源信息，生成复现计划 | PaperAnalysis + ResourceInfo | ReproductionPlan |
 | `coding` | 步骤5: 编码 | ReAct agent（`_make_react_wrapper` 生成）：依据复现计划与资源信息生成/修复代码文件；接收 execution 经 state 回传的结构化错误反馈进行修复 | ReproductionPlan + ResourceInfo（+ execution 反馈） | 代码文件（`code_output_dir`） |
 | `execution` | 步骤6: 执行与验证 | 手写编排 + 内嵌 ReAct 子图（execution agent）：`_run_execution_agent` 子图自主编排 prepare_environment / run_in_sandbox 两 sandbox 工具（另挂 request_user_input）；编排层收尾：收产物→错误分类→指标解析→B 档判定→单点写回→修复循环边界/interrupt#2；失败且可自动修复时经条件边回退 coding | 代码文件 + ReproductionPlan | ExecutionResult + 错误分类 + `fix_loop_history` |
@@ -179,7 +179,7 @@ class ReActState(TypedDict):
 |------|-----------|---------|---------|
 | paper_intake | 10 | 2-3 | get_paper_brief, get_paper_head, search_papers |
 | paper_analysis | 24 | 6-10 | get_paper_structure, read_section, get_full_paper, search_papers |
-| resource_scout | 20 | 4-7 | web_search, search_papers, get_paper_brief, git_clone_and_analyze, check_url_reachable（共 5 工具；Sprint 6 MF-5 摘除 PwC 通道后已无 `search_pwc`） |
+| resource_scout | 30（REACT_MAX_ROUNDS_RESOURCE_SCOUT，S7-07 由 20 上调） | 4-8 | web_search, search_papers, get_paper_brief, git_clone_and_analyze, check_url_reachable, **probe_environment**（共 6 工具；Sprint 6 MF-5 摘除 PwC 通道后已无 `search_pwc`；S7-06 新增只读环境探测，装配处 `core/nodes/resource_scout.py:711-717`） |
 | planning | 16 | 3-5 | read_section, get_paper_structure, web_search, check_url_reachable, git_clone_and_analyze |
 | coding | 24（REACT_MAX_ROUNDS_CODING） | 视修复轮次 | write_code_file, read_code_file, list_dir, read_section, web_search, run_command, request_user_input（共 7 工具） |
 | execution（内嵌子图） | 20（REACT_MAX_ROUNDS_EXECUTION，FLOOR） | 视执行步骤 | prepare_environment, run_in_sandbox, request_user_input |
@@ -187,6 +187,8 @@ class ReActState(TypedDict):
 > 注：`reporting` 现为纯函数三形态报告（非 ReAct），不在此表；`execution` 行指其内嵌 ReAct 子图（`_run_execution_agent`），编排层收尾本身不调 LLM（仅指标解析档 3 LLM 抽取兜底除外），预算按子图实际轮次由编排层单点扣减。
 >
 > **S7-03（Sprint 7 已交付）单轮刹车**：execution 内嵌子图每回合拿到的轮次上限，在入口再收窄一道——`effective_max_rounds = max(1, min(_effective_max_rounds(plan), MAX_DEV_LOOP_LLM_CALLS - _dev_loop_llm_calls))`（`core/nodes/execution.py`）。即"本轮可烧轮次"要先扣掉跨回合已累计的子预算，防止单轮一口气烧穿 `MAX_DEV_LOOP_LLM_CALLS`（此前子图只看本轮 `round`、对跨回合累计无感）。喂给 agent 的 HumanMessage 里 `max_rounds` 仍是联动值——收窄是系统护栏、agent 无需感知，也避免动态前缀抖动。
+>
+> **S7-06 / S7-07（Sprint 7 已交付）resource_scout 工具集 5→6 与轮次 20→30**：新增只读环境探测工具 `probe_environment`（`core/tools/env_probe_tool.py`，边界见 §7.5），`base_dir` 由工厂闭包绑定 `state["workspace_dir"]`（缺省回退 `config.WORKSPACE_DIR`），是该节点 `get_tools` lambda 首次使用 `state` 形参 —— `bind_tools` 前缀因此"破一次"（一次性静态变更，跨论文仍字节一致）。S7-07 进一步把探测段落由"可选补充步"改为"必做步骤"并删除段内一切轮次紧张暗示（`core/nodes/resource_scout.py:104-109`），`REACT_MAX_ROUNDS_RESOURCE_SCOUT` 同步 20→30（`config.py:70`）作保险——agent 对轮次是否紧张的全部认知只来自 prompt 措辞，删措辞是主因、放大数字是保险。
 
 #### 3.2.2 coding ↔ execution 修复循环（当前代码实证）
 
@@ -544,6 +546,7 @@ auto_reproduction/
 │       ├── git_tools.py          # 仓库克隆与本地仓库分析 + URL 可达性检查（git clone、git log 提交活跃度、目录结构等）
 │       ├── code_fs_tools.py      # 代码文件读写工具（write_code_file / read_code_file / list_dir，锚定 code_output_dir）
 │       ├── run_command_tool.py   # coding 轻量自验命令工具（run_command，短超时 + extra_env 凭证注入，sp4）
+│       ├── env_probe_tool.py     # resource_scout 只读环境探测工具（probe_environment，整条命令允许清单 15 条 + 30s 超时 + 2500 字节返回上限，S7-06；见 §7.5）
 │       └── interaction_tools.py  # request_user_input 通用交互工具（interrupt#3，coding/execution 共用，sp4）
 ├── sandbox/
 │   ├── __init__.py
@@ -723,13 +726,13 @@ v2 版本将支持 Docker 容器作为远程执行沙箱，提供更强的隔离
 凭证以环境变量经 sandbox `extra_env` 注入执行子进程（`_run_subprocess` 的 `env = {**os.environ, **(extra_env or {})}`）。`run_in_venv` 与 `prepare_venv` 均带 `extra_env` 形参并透传给内部子进程（含 pip install，sp4 D1 落地）。git 认证失败经 `GIT_TERMINAL_PROMPT=0` 让子进程立即返回而非挂起等 stdin。敏感值**完全不进 GlobalState / checkpoint**，勾"记住"时写入独立 `.secrets`（0600 + gitignore，MVP 不加密）；全链路（生成代码 / 日志 / 报告）脱敏。`.secrets` 路径与凭证映射已于 sp4 A3 定案：文件名 `config.SECRETS_FILE_NAME=".secrets"`，实际路径 = `Path(workspace_dir) / SECRETS_FILE_NAME`（运行期 state 优先，回退 `config.WORKSPACE_DIR`）；`core/secrets_store.py` 提供 `lookup_secret` / `remember_secret` / `load_all_secrets` / `register_sensitive_value` / `iter_sensitive_values` / `mask_value` 六接口，另有 `build_credential_env` 完成 `purpose_key → env var` 映射（GIT_ASKPASS 脚本 + `GIT_TERMINAL_PROMPT=0` + HF token 等）。
 
 
-### 7.5 只读环境探测边界（S7-06）
+### 7.5 只读环境探测边界（S7-06 / S7-07 已交付）
 
-> **状态：设计已裁决 / 代码未交付**（2026-07-28）。本节是 S7-06 的设计契约先行落盘（裁决见 `docs/sprint7/architecture.md` §14，需求见 `docs/sprint7/prd.md` v0.5 §2.6），**其描述的 `core/tools/env_probe_tool.py` 当前尚不存在**。代码交付后删除本状态行并回填源码行号锚点。
+> **状态：代码已交付**（2026-07-29 回填；S7-06 `d7cd8d3`、S7-07 `8cf95c7`）。落点 `core/tools/env_probe_tool.py`（新增）+ `core/nodes/resource_scout.py` 装配与渲染 + `core/state.py:296` `local_env_facts`。裁决见 `docs/sprint7/architecture.md` §14~§17，需求见 `docs/sprint7/prd.md` §2.6 / §9。
 
 资源探索节点需要知道"这台机器是什么样"（有无 GPU / 显存 / CUDA 版本 / 已装依赖 / 磁盘余量），否则资源结论只能建立在对本机环境的假设上，代价要到下游才暴露。为此新增一个**只读探测**工具，它与 coding 的 `run_command` **不是同一个工具**。
 
-**机制底线：只读由允许清单强制，不由 prompt 约束。** 判定形态 = **整条命令精确匹配**（`shlex` 解析后的 argv 元组相等），而非命令名匹配，判定发生在任何子进程启动之前：
+**机制底线：只读由允许清单强制，不由 prompt 约束。** 判定形态 = **整条命令精确匹配**（`shlex` 解析后的 argv 元组相等，`core/tools/env_probe_tool.py:85-86` 模块级预解析、`:204` 单一判定），而非命令名匹配，判定发生在任何子进程启动之前（`:204-210` 未命中即结构化拒绝并 return，不触达 `_run_subprocess`）。允许清单为 15 条整命令（`:75-82`，覆盖 GPU/驱动/CUDA、CPU/内存/架构、磁盘、Python 环境、工具链五类）：
 
 - 命令名粒度不成立的实证 —— `nvidia-smi -r`（重置 GPU）、`pip list --outdated`（联网查 index）、`git clone`（下载）三者的 argv[0] 都落在"看起来只读"的命令名里；
 - 参数黑名单 fail-open（漏一个即失效、无法穷举），整条命令允许清单 fail-closed（写错即被拒，代价是一次重试）。
@@ -743,7 +746,7 @@ v2 版本将支持 Docker 容器作为远程执行沙箱，提供更强的隔离
 | 通用解释器 | **需要**（`python -c` / `py_compile`） | **禁止**（清单内无任何解释器执行形态） |
 | cwd | `code_output_dir` | `workspace_dir` |
 | 凭证注入 | 有（`build_credential_env`） | 无（工厂签名不开此口） |
-| 落点 | `core/tools/run_command_tool.py` | `core/tools/env_probe_tool.py`（新增） |
+| 落点 | `core/tools/run_command_tool.py` | `core/tools/env_probe_tool.py:177-251`（S7-06 新增） |
 
 两者**共用同一套执行护栏**、不新造执行通道：`sandbox/local_venv.py::_run_subprocess`（禁 `shell=True`、进程组隔离、超时杀子树、输出字节截断、`OSError` 兜底不逃逸）+ `_require_within_workspace` cwd 校验 + `core/secrets_store.py::mask_value` 脱敏。差异只在"允许跑什么"这一层。**S7-06 不修改 `run_command_tool.py`** —— coding 侧零影响是文件级结构性保证，而非依赖默认参数。
 
@@ -751,9 +754,11 @@ v2 版本将支持 Docker 容器作为远程执行沙箱，提供更强的隔离
 
 **失败即降级不阻断**：命令被拒、超时、本机没有该命令、输出为空，一律走结构化返回（不抛异常），资源探索照常完成、不因此进降级名单；"这台机器没有 GPU"是一条有效探测结论，不是错误。
 
-**探测结论的落点（2026-07-28 增补，Q-S7-10 裁决 / `docs/sprint7/architecture.md` v1.3 §15）**：探到的环境事实落 **`GlobalState.local_env_facts`（`str`，预渲染多行文本，缺省空串）**，由资源探索节点**确定性地从 ReAct 工具调用历史提取**（不要求模型在结构化结果里自报，故不受模型服从度影响），再经计划制定节点的上下文组装函数以**单键增补**方式进入规划实际可见的上下文。**不进 `resource_info`**——该结构与资源探索的模型输出格式定义为集合恒等关系，加字段等于把机器事实降格成模型自觉填写的产物；且它在计划制定侧存在多处按显式键整体重建，新字段会在"用户要求重订计划 / 换仓库"路径上静默丢失。**过程留痕与机器事实分走两条通道**：给人看的探测过程仍走既有检索日志 → 分析备注通道，机器事实只走上述单键——备注通道到不了规划，把结论写进去等于白探。
+**探测结论的落点（Q-S7-10 裁决 / `docs/sprint7/architecture.md` §15）**：探到的环境事实落 **`GlobalState.local_env_facts`（`str`，预渲染多行文本，缺省空串；`core/state.py:296` 定义、`:389` 初始化）**，由资源探索节点**确定性地从 ReAct 工具调用历史提取**（`core/nodes/resource_scout.py:526-531` 非空才写，不要求模型在结构化结果里自报，故不受模型服从度影响），再经计划制定节点的上下文组装函数以**单键增补**方式进入规划实际可见的上下文（`core/nodes/planning.py:308` 第 6 形参、`:357-358` 非空才入 payload、`:723` 实参传入）。**不进 `resource_info`**——该结构与资源探索的模型输出格式定义为集合恒等关系，加字段等于把机器事实降格成模型自觉填写的产物；且它在计划制定侧存在多处按显式键整体重建，新字段会在"用户要求重订计划 / 换仓库"路径上静默丢失。**过程留痕与机器事实分走两条通道**：给人看的探测过程仍走既有检索日志 → 分析备注通道，机器事实只走上述单键——备注通道到不了规划，把结论写进去等于白探。
 
-**探测的执行参数不沿用代码执行阶段的值**：超时与单路输出上限均为探测专用（分别约为代码执行阶段短超时的四分之一、输出上限的更小量级），且**定义在探测工具模块内而非全局配置**——它们是允许清单语义的直接推论（清单里全是秒级、小输出的查询命令），与清单同址才不会漂移。输出上限须**小于**工具返回内容的统一截断阈值：否则超长返回被截断后不再是合法结构化文本，下游提取会静默失败、整条探测结论消失且不报错（该失效形态已有实测验证与专门的守门验收标准）。
+**探测的执行参数不沿用代码执行阶段的值**：超时 `_PROBE_TIMEOUT_SECONDS=30`（`core/tools/env_probe_tool.py:95`，对比 `config.RUN_COMMAND_TIMEOUT=120`）与单路输出上限 `_PROBE_OUTPUT_MAX_BYTES=2500`（`:107`，对比 `config.SANDBOX_OUTPUT_MAX_BYTES=1MiB`）均为探测专用，且**定义在探测工具模块内而非全局配置**（`config.py` 对 S7-06 零改动）——它们是允许清单语义的直接推论（清单里全是秒级、小输出的查询命令），与清单同址才不会漂移。输出上限须**小于**工具返回内容的统一截断阈值 `config.TOOL_RESULT_MAX_LENGTH=8000`（`core/react_base.py` 对所有工具返回串统一施加）：否则超长返回被截断后不再是合法结构化文本，下游提取会静默失败、整条探测结论消失且不报错——该失效形态经实测坐实（600 行 `pip list` 包成 JSON 达 16111 字符 → 截断成残缺 JSON → 解析返回 `None`，全程无异常无日志），2500 的取值正是为抢在 8000 之前生效。
+
+> **已知缺口（当前实现，未修）**：返回端之外，资源探索侧把各条探测结果渲染成 `local_env_facts` 摘要时还有一道**方向相反**的截断——`sandbox/local_venv.py` 的输出截断保留**尾部**（错误栈在末尾），而 `core/nodes/resource_scout.py:57` 的 `_PROBE_OUTPUT_MAX_CHARS=400` 在 `:496` 处按**头部**截断，且 400 小于返回端的 2500 ⇒ 返回端刻意保尾留下的内容会被摘要端重新按头切掉，依赖多的宿主机上 `pip list --format=freeze` 里字母序靠后的 `torch` / `transformers` 仍可能在摘要端丢失。该缺口已登记为 R-S7-25 的渲染端复发（`docs/sprint7/architecture.md` §16.7 / §18.3），修法与取值已裁决但代码未交付，待交付后回填本节。
 
 ---
 
@@ -1106,7 +1111,7 @@ paper_analysis 节点采用 ReAct agent 自主决策阅读策略。system prompt
 
 #### resource_scout 搜索策略
 
-resource_scout 节点采用 ReAct agent 自主组合搜索策略。system prompt 中包含推荐的搜索优先级（deepxiv github_url → web search，Sprint 6 MF-5 后 Papers With Code 通道已移除）作为指导，但 agent 可根据前序搜索结果自主调整策略——例如当已找到高质量官方仓库时可跳过后续搜索，当所有渠道均无结果时自动设置 `resource_strategy = "from_scratch"`。agent 通过 `check_url_reachable` 和 `git_clone_and_analyze` 工具自主验证和评估每个候选仓库。
+resource_scout 节点采用 ReAct agent 自主组合搜索策略。system prompt 中包含推荐的搜索优先级（deepxiv github_url → web search，Sprint 6 MF-5 后 Papers With Code 通道已移除）作为指导，但 agent 可根据前序搜索结果自主调整策略——例如当已找到高质量官方仓库时可跳过后续搜索，当所有渠道均无结果时自动设置 `resource_strategy = "from_scratch"`。agent 通过 `check_url_reachable` 和 `git_clone_and_analyze` 工具自主验证和评估每个候选仓库。**只读环境探测（S7-06 / S7-07）不参与该降级链**：它是给出仓库结论前的一步必做动作（`core/nodes/resource_scout.py:104-109`），探测结果不改变三级搜索链的顺序与判定，探不到也不构成"找不到仓库"、不触发 `from_scratch`。
 
 > **后续版本增强**：引入 GitHub Search API 实现更丰富的仓库搜索与元数据查询（stars、forks、issues 等）。
 
@@ -1226,7 +1231,7 @@ LangGraph SqliteSaver 在每个节点完成后自动保存 checkpoint，错误�
 |------|------------|------------|---------|
 | paper_intake | API 超时/连接失败 | NotFoundError、AuthenticationError | 无降级，致命错误需用户介入 |
 | paper_analysis | LLM 超时/限流、章节读取失败 | LLM 上下文溢出 | 章节降级链 → 全文提取 → 标记缺失 |
-| resource_scout | git clone 失败、websearch 失败 | 零资源 | deepxiv github_url → web search → from_scratch（Sprint 6 MF-5：PwC 通道已移除） |
+| resource_scout | git clone 失败、websearch 失败、**环境探测超时 / 本机无该命令**（S7-06） | 零资源 | deepxiv github_url → web search → from_scratch（Sprint 6 MF-5：PwC 通道已移除）。**环境探测类失败不进降级链**：命令被拒、超时、本机无该命令、输出为空一律走结构化返回（不抛异常、不进 `degraded_nodes`），`local_env_facts` 保持空串即表示"未知"，不造哨兵值、不阻断（`core/tools/env_probe_tool.py:204-251` / `core/nodes/resource_scout.py:526-531`） |
 | planning | LLM 超时/限流 | LLM 不可用 | 用户拒绝不设硬上限（理论上用户不满意就要一直修改），由总 LLM 预算 `MAX_TOTAL_LLM_CALLS = 240` 自然兜底；UI 在 N ≥ 5 时软提示切 code_only 但不锁按钮；提供"终止当前任务"按钮作为主动出口（详见 Sprint 2 PRD AC-S2-06 / AC-S2-13） |
 | coding | LLM 输出格式错误、git clone 失败 | 磁盘满/权限问题 | 经 state 接收 execution 错误反馈，修复回合重新生成代码 |
 | execution | pip install 部分失败 | venv 创建失败、OOM、超时 | 错误分类驱动 coding↔execution 修复循环（上限 20 轮），不可修复则 interrupt#2 |
@@ -1249,10 +1254,19 @@ prepare_venv() 失败
 ```
 依赖安装部分失败
   → 逐包安装（非批量安装）
-  → 单包失败时: 尝试降级版本 → 无版本约束安装 → 标记失败
+  → 单包失败时: 网络瞬态错误按指数退避重试同一条命令 → 仍失败则记入失败包列表（不在沙箱层做版本降级）
   → 安装完成后检查所有 import 是否可用
   → 将失败包列表经 state 反馈给 coding 节点寻找替代方案
+  → 版本调整交由 execution agent 自主判断（见下方说明）
 ```
+
+> **实现口径订正（2026-07-29 核实后改写）**：本块原写「单包失败时: **尝试降级版本 → 无版本约束安装** → 标记失败」，该表述自 2026-05-06 起挂账、**沙箱层从未实现**——`sandbox/local_venv.py:657-672` 的逐包循环在单包 `exit_code != 0` 后直接 `install_failed_packages.append(pkg)`，`_pip_install_with_retry`（`:470`）只对网络瞬态错误重试**同一条命令**、不改版本约束（全仓 `downgrade` 关键词零命中）。
+>
+> **但"版本调整"这件事并非没做，而是换了承担者**：失败包列表经 `core/nodes/execution.py:262-266` / `:870` 进入 execution agent 的可见上下文，其工作纪律第 1 条明写「依赖装不全（`install_failed_packages` 非空）时可用 `run_in_sandbox` 执行 pip install 兜底**或调整版本**」（`:1004`），第 4 条允许「少量有把握的就地修正（如补装缺失包）后重试」。
+>
+> **为何维持这一形态而非补写死的降级规则**（2026-07-29 Maria 拍板）：写死的自动降级比 agent 判断**更危险**——降错版本会产出"代码能跑起来但结果不对"的复现，而这正是本系统最该避免的失败形态（装不上会立刻暴露，跑出错结果不会）。且"该降到哪个版本"这一信息只存在于 pip 的解析错误文本里，规则化解析的成本远超收益。agent 至少能结合真实报错判断。
+>
+> ⚠️ **同块的「逐包安装（非批量）」是真实现**（`local_venv.py:657` `for pkg in requirements or []`），勿连带改动。
 
 #### 代码执行阶段
 
@@ -1358,3 +1372,5 @@ prepare_venv() 失败
 *2026-07-21 更新（Sprint 7 批次 0~2 已上线欠账补齐）：（1）预算全部翻倍（config.py `4dc0a75` 权威）——`MAX_TOTAL_LLM_CALLS` 120→240、`MAX_FIX_LOOP_COUNT` 10→20、`MAX_DEV_LOOP_LLM_CALLS` 60→120、`DEV_LOOP_MIN_CALLS_PER_ROUND` 2→4，各节点 ReAct 轮次同步翻倍（paper_intake 5→10 / paper_analysis 12→24 / resource_scout 10→20 / planning 8→16 / coding 12→24 / execution 10→20），全文正文/表格/注释/风险登记同步；修复循环子预算强约束更新为 120 < 240。（2）S7-02 信息流（coder 看得到真报错）：§3.2.2 coder 修复反馈由旧机制"`_build_coding_context` 读上一轮 execution_result 与错误分类、注入修复反馈 HumanMessage"改为 S7-02 后真实形态——execution 每轮把完整报错日志按"错误优先编排"落盘 `<code_output_dir>/exec_logs/round_{n}.log`（`_persist_round_log`），coder 修复反馈改传日志文件路径 `log_file_path`（由 `code_output_dir` + `fix_round` 确定性推导），`stderr_tail` 从 `logs[-2000:]` 截断产物退化为固定指引串，coder 用现有 `read_code_file` 工具自读完整真报错定位；通信契约段同步。S7-02 只作用于 coding 反馈链路（coder 有 read_code_file），execution 侧 stderr_tail 维持不动。零 state / 零 ExecutionResult 字段新增。依据 docs/sprint7/prd.md §2.3、docs/sprint7/architecture.md §5。*
 
 *2026-07-28 更新（v1.2，Sprint 7 交付后回填 · 欠账修正）：本次**不含 S7-06**——`docs/sprint7/prd.md` v0.5 §2.6「资源探索能实际探测本机环境」尚为草案、Q-S7-7~12 六项待架构裁决、代码零行，按本文档「代码交付后回填」惯例不预写。修正 7 项：（1）§3.2.1 resource_scout 工具列表删 `search_pwc`——Sprint 6 MF-5 已删除 `core/tools/pwc_tools.py`，现工具集恰 5 个（`core/nodes/resource_scout.py` 工具装配处），此前与 §3.1 / §12.5 / §12.9 / §13 的「PwC 通道已移除」表述自相矛盾。（2）§3.4 `_route_after_execution` 的 `fix_loop_count < 10` 订正为 `< MAX_FIX_LOOP_COUNT(20)`（`config.py:32`）——2026-07-21 翻倍回填的漏网（该处写的是裸数字而非常量名，旧值 grep 未命中）。（3）§13 阶段 1 表 paper_intake `max_rounds=5`→10、paper_analysis `max_rounds=12`→24（`config.py:58` / `:59`），同为翻倍回填漏网。（4）补 S7-01（`4dc0a75` 已交付）进正表：**总**重试预算耗尽不再静默降级出报告，与「触顶 / 不可修复 / 子预算耗尽」合流走 interrupt#2 三选一——预算门下沉为修复回边的准入否决条件、新增预算耗尽 reason 分支与面板文案常量（`core/nodes/execution.py`）；§3.3 / §3.4 / §12.6 三处触发条件清单同步补齐。（5）补 S7-01 的 `revise_plan` 预算语义进 §12.7：重置 `retry_budget_remaining = MAX_TOTAL_LLM_CALLS`，但 `_dev_loop_llm_calls` 不重置，240/120 硬顶不破。（6）补 S7-03（同批交付）进 §3.2.1：单回合喂给 execution 内嵌子图的轮次上限入口收窄为 `max(1, min(联动值, MAX_DEV_LOOP_LLM_CALLS - _dev_loop_llm_calls))`，防单轮烧穿子预算。（7）更新日志原「2026-07-18」条日期订正为 2026-07-21——该条描述的批次 0~2 落于 `4dc0a75` / `b5f3e63`（均 2026-07-19），文档改动实际随 `8d37fe9`（2026-07-22）落盘，执行日以 `docs/TODO.md` 记载的 2026-07-20→21 为准；旧日期早于其所述事件且破坏日志时序单调。*
+
+*2026-07-29 更新（v1.3，Sprint 7 收口批量同步 · S7-06 / S7-07 代码交付后回填）：`docs/sprint7/prd.md` 已于 2026-07-28 定稿 v1.0，按本文档「代码交付后回填」制回填两条已 commit 的交付（S7-06 `d7cd8d3` 只读环境探测、S7-07 `8cf95c7` 探测改必做步骤），修订清单详见 `docs/sprint7/global-prd-review.md`。（1）§3.1 resource_scout 职责行：补"给出仓库结论前必做一步只读环境探测"，输出补 `local_env_facts`（`core/nodes/resource_scout.py:526-531`）。（2）§3.2.1 各节点配置表 resource_scout 行：工具 **5→6**（新增 `probe_environment`，装配处 `core/nodes/resource_scout.py:711-717`）、`max_rounds` **20→30**（`config.py:70`，S7-07）、预期消耗 4-7→4-8；表下新增 S7-06 / S7-07 注（工厂闭包绑定 `workspace_dir` 致 `bind_tools` 前缀"破一次"属一次性静态变更；S7-07 删除段内轮次紧张暗示是主因、放大轮次上限是保险）。（3）§5 模块结构树新增 `core/tools/env_probe_tool.py`。（4）§7.5 摘除「设计已裁决 / 代码未交付」状态行，改为「代码已交付」并回填源码行号锚点（允许清单 15 条 `:75-82`、判定 `:85-86` / `:204-210`、工具工厂 `:177-251`、超时 `:95`、返回端上限 `:107`、结论落点 `core/state.py:296` / `:389` 与 `core/nodes/planning.py:308` / `:357-358` / `:723`），并登记一处**已知未修缺口**：摘要渲染端 `_PROBE_OUTPUT_MAX_CHARS=400`（`core/nodes/resource_scout.py:57`，`:496` 按头截断）小于返回端 2500 字节，会把返回端保尾留下的 `torch` / `transformers` 重新按头切掉（R-S7-25 渲染端复发，修法已裁但代码未交付）。（5）§12.5 resource_scout 搜索策略：明确只读环境探测**不参与**三级降级链、探不到不触发 `from_scratch`。（6）§12.9 错误分类全景 resource_scout 行：补环境探测类失败（命令被拒 / 超时 / 本机无该命令 / 输出为空）一律结构化返回、不进 `degraded_nodes`、`local_env_facts` 空串即"未知"不造哨兵值。（7）版本头 v1.2→v1.3、最后更新 07-28→07-29。**本次明确不含 S7-08**（planning 平台感知规划）——其 PRD §10 与架构 §18 已定稿但 `scale_reduced` / `local_fit_note` 全仓 grep 零命中、代码零行，按回填制不预写；待回填清单见 `docs/sprint7/global-prd-review.md`。*
