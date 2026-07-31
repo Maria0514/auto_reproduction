@@ -1762,12 +1762,12 @@ graph TD
 6. **核实截断 marker 长度**（§40 P-12）：`sandbox/local_venv.py:353` 内联 f-string，2500 时实测 42 字符 ⇒ 返回端单路硬上界 **2542**。
 
 **自测检查点**：
-- [ ] CP-5.1-1 `tests/test_s708_plan_keys.py` 落盘并**当前即绿**（11==11==11）；**验红：临时往 `ReproductionPlan` 加一个键而不改两处构造点 → 本断言必须变红**，还原后复绿
-- [ ] CP-5.1-2 AC-S7-37 两道守门缺席坐实落档：全仓无 payload 键集合断言、无决策集合断言 ⇒ **T-5-12 须新造**（不得写"既有守门保证"）
-- [ ] CP-5.1-3 R-S7-41 原文核实 + **全仓两组"自锁定"模式扫描结果落档**（预期仅 1 处；若发现第 2 处，登记进 §40 并由 T-5-5 一并处置）
-- [ ] CP-5.1-4 reporting 三形态共用声明块 + 空 annotations 早退核实落档（P-14）
-- [ ] CP-5.1-5 term_map 条数（41）+ 41 条 values 过 `_BLACKLIST` + `_S708_EXTRA` 零命中核实落档（P-11）
-- [ ] CP-5.1-6 截断 marker 长度（42）与返回端硬上界（2542）核实落档，供 T-5-6 写关系断言（P-12）
+- [x] CP-5.1-1 `tests/test_s708_plan_keys.py` 落盘并**当前即绿**（11==11==11）；**验红：临时往 `ReproductionPlan` 加一个键而不改两处构造点 → 本断言必须变红**，还原后复绿
+- [x] CP-5.1-2 AC-S7-37 两道守门缺席坐实落档：全仓无 payload 键集合断言、无决策集合断言 ⇒ **T-5-12 须新造**（不得写"既有守门保证"）
+- [x] CP-5.1-3 R-S7-41 原文核实 + **全仓两组"自锁定"模式扫描结果落档**（预期仅 1 处；若发现第 2 处，登记进 §40 并由 T-5-5 一并处置）
+- [x] CP-5.1-4 reporting 三形态共用声明块 + 空 annotations 早退核实落档（P-14）
+- [x] CP-5.1-5 term_map 条数（41）+ 41 条 values 过 `_BLACKLIST` + `_S708_EXTRA` 零命中核实落档（P-11）
+- [x] CP-5.1-6 截断 marker 长度（42）与返回端硬上界（2542）核实落档，供 T-5-6 写关系断言（P-12）
 
 ### 任务 T-S7-5-2：`ReproductionPlan` +2 键（架构 §18.1.2 落点 1）
 
@@ -1788,9 +1788,9 @@ graph TD
 3. **零改动确认**：`GlobalState` 一字不动；`ExecutionResult` / `ResourceInfo` 一字不动。
 
 **自测检查点**：
-- [ ] CP-5.2-1 `ReproductionPlan.__annotations__` 恰 **13** 键；新两键类型为 `bool` / `str`；既有 11 键名称与顺序一字不动
-- [ ] CP-5.2-2 **CP-5.1-1 的三方键集合断言此刻应为红**（只改 state 未改构造点）——这正是 T-5-1 前置落地的价值；红了才继续 T-5-3
-- [ ] CP-5.2-3 `git diff core/state.py` 仅在 `ReproductionPlan` 内新增 2 行字段 + docstring 段落；`GlobalState` 零改动
+- [x] CP-5.2-1 `ReproductionPlan.__annotations__` 恰 **13** 键；新两键类型为 `bool` / `str`；既有 11 键名称与顺序一字不动
+- [x] CP-5.2-2 **CP-5.1-1 的三方键集合断言此刻应为红**（只改 state 未改构造点）——这正是 T-5-1 前置落地的价值；红了才继续 T-5-3
+- [x] CP-5.2-3 `git diff core/state.py` 仅在 `ReproductionPlan` 内新增 2 行字段 + docstring 段落；`GlobalState` 零改动
 
 ### 任务 T-S7-5-3：planning 冻结区静态改写 + schema +2 + **两处构造点 +2 kwargs**（架构 §18.1.2 落点 2/3/4/5 + §18.4(1)）
 
@@ -1820,14 +1820,14 @@ graph TD
 6. **零改动确认**：`_PLANNING_TERMINOLOGY_SECTION` 字节不动；`REPO_QUALITY_SCORING_SECTION` 仍 `is` 同一对象（`_repo_scoring.py` git diff 为空）；`_format_planning_context` 第 6 形参（S7-06 产物）一字不动；`_CORE_PLAN_FIELDS` 不动（新两键**不进**核心字段判定，缺省即安全值）。
 
 **自测检查点**：
-- [ ] CP-5.3-1 **CP-5.1-1 三方键集合断言复绿**（13==13==13）——两处构造点都改到了
-- [ ] CP-5.3-2 AC-S7-32 正向 + 负向：主体含三级优先级 / 禁编造 / 两键契约 / 缩法举例四类关键措辞；**旧句"引用论文分析的 hardware_requirements"子串不再存在**
-- [ ] CP-5.3-3 **AC-S7-34 冻结零退化**：跨两篇不同论文 `_build_planning_system_prompt` 主体**字节一致**（CP-B3-10 口径不破）；新增文案零 `{`/`}`、零 `arxiv`、零绝对路径；`REPO_QUALITY_SCORING_SECTION` 仍 `is` 同一对象；`_PLANNING_TERMINOLOGY_SECTION` 字节不动
-- [ ] CP-5.3-4 **AC-S7-34 负向（R-S7-38 唯一防线，§18.7(2)）**：构造带非空 `local_env_facts` 的 state，取 `initial["messages"][0]`（SystemMessage），断言**该值的任一非平凡子串均不出现在 system prompt 中**；且带/不带该键时 SystemMessage **字节完全一致**
-- [ ] CP-5.3-5 schema：`properties` 含新两键且类型正确；**`required` 集合与改前逐字相等**（仍恰 `["plan_summary", "code_strategy", "deliverables"]`）
-- [ ] CP-5.3-6 【输出格式】JSON 示例**同步含新两键**（子串断言）——防"schema 改了示例没改、模型不产出"
-- [ ] CP-5.3-7 `_coerce_bool` 真值表：`True`/`"true"`/`"True"`/`"是"`/`1` → True；**`"false"`/`"False"`/`0`/`None`/`""`/`[]` → False**（`bool("false") is True` 陷阱须被覆盖）
-- [ ] CP-5.3-8 `_minimal_plan` 产出恒 `scale_reduced is False` 且 `local_fit_note == ""`；`_build_reproduction_plan` 在 `result` 为 `{}` 时同样回落缺省
+- [x] CP-5.3-1 **CP-5.1-1 三方键集合断言复绿**（13==13==13）——两处构造点都改到了
+- [x] CP-5.3-2 AC-S7-32 正向 + 负向：主体含三级优先级 / 禁编造 / 两键契约 / 缩法举例四类关键措辞；**旧句"引用论文分析的 hardware_requirements"子串不再存在**
+- [x] CP-5.3-3 **AC-S7-34 冻结零退化**：跨两篇不同论文 `_build_planning_system_prompt` 主体**字节一致**（CP-B3-10 口径不破）；新增文案零 `{`/`}`、零 `arxiv`、零绝对路径；`REPO_QUALITY_SCORING_SECTION` 仍 `is` 同一对象；`_PLANNING_TERMINOLOGY_SECTION` 字节不动
+- [x] CP-5.3-4 **AC-S7-34 负向（R-S7-38 唯一防线，§18.7(2)）**：构造带非空 `local_env_facts` 的 state，取 `initial["messages"][0]`（SystemMessage），断言**该值的任一非平凡子串均不出现在 system prompt 中**；且带/不带该键时 SystemMessage **字节完全一致**
+- [x] CP-5.3-5 schema：`properties` 含新两键且类型正确；**`required` 集合与改前逐字相等**（仍恰 `["plan_summary", "code_strategy", "deliverables"]`）
+- [x] CP-5.3-6 【输出格式】JSON 示例**同步含新两键**（子串断言）——防"schema 改了示例没改、模型不产出"
+- [x] CP-5.3-7 `_coerce_bool` 真值表：`True`/`"true"`/`"True"`/`"是"`/`1` → True；**`"false"`/`"False"`/`0`/`None`/`""`/`[]` → False**（`bool("false") is True` 陷阱须被覆盖）
+- [x] CP-5.3-8 `_minimal_plan` 产出恒 `scale_reduced is False` 且 `local_fit_note == ""`；`_build_reproduction_plan` 在 `result` 为 `{}` 时同样回落缺省
 
 ### 任务 T-S7-5-4：interrupt payload +1 键 `local_env_facts`（架构 §18.1.2 落点 6 + R-S7-43）
 
@@ -1844,9 +1844,9 @@ graph TD
 4. **R-S7-43 已知增量备案**：payload 增 `local_env_facts`（≤8000 字符，受 T-5-6 的 `_PROBE_DIGEST_MAX_CHARS` 硬顶）后，每次 revise 都会把它再存一份进 checkpoint；`app.py:479-488` 的 payload 指纹随之变化**属正常语义**（payload 变 → 指纹变 → token 变 → 禁沿用旧 resume，符合 S6-01 换代判定设计）。**回退方案（不预造）**：改为只放截断摘要。
 
 **自测检查点**：
-- [ ] CP-5.4-1 payload 键集合恰为 **11 键**（既有 10 + `local_env_facts`）；**既有 10 键名逐一存在且值来源未变**
-- [ ] CP-5.4-2 `local_env_facts` 为空 / 缺失 / 非串三形态下 payload 该键均为 `str`（不 KeyError、不为 `None`）；`interrupt_kind` 仍 `"planning"`
-- [ ] CP-5.4-3 决策路由五分支（approve / code_only / revise / switch_repo / cancel）行为与改前一致（复跑 `tests/test_sprint2_b3.py` 全绿，含五处 `assert "reproduction_plan" not in out`）
+- [x] CP-5.4-1 payload 键集合恰为 **11 键**（既有 10 + `local_env_facts`）；**既有 10 键名逐一存在且值来源未变**
+- [x] CP-5.4-2 `local_env_facts` 为空 / 缺失 / 非串三形态下 payload 该键均为 `str`（不 KeyError、不为 `None`）；`interrupt_kind` 仍 `"planning"`
+- [x] CP-5.4-3 决策路由五分支（approve / code_only / revise / switch_repo / cancel）行为与改前一致（复跑 `tests/test_sprint2_b3.py` 全绿，含五处 `assert "reproduction_plan" not in out`）
 
 ### 任务 T-S7-5-5：**R-S7-41 假绿处置**——哈希写死 + 验红 + 基线留档 + 自锁定模式复扫（架构 §18.4(1) + §18.6 R-S7-41）
 
@@ -1876,10 +1876,10 @@ assert actual_hash == EXPECTED_HASH, (...)                  # ← :71  x == x，
 6. **不改该文件其他用例**：`test_planning_prompt_body_exists_and_nonempty` / `test_planning_prompt_body_has_no_dynamic_variables` / `test_planning_prompt_no_pwc_reference` 一字不动（前者的 `>100` 与后者的 `\d{4}\.\d{4,5}` 负向断言在新文案下仍应绿——若变红说明新文案里混进了论文级动态值，是**真 bug 不是断言问题**）。
 
 **自测检查点**：
-- [ ] CP-5.5-1 `:69` 改为写死的 16 位十六进制字面量；"首次运行自锁定当前值"注释已删；新注释指向 §40.1 基线
-- [ ] CP-5.5-2 **验红：body 末尾临时加一个空格 → 该断言变红**；逐字节还原后复绿（红/绿两态证据落测试报告）
-- [ ] CP-5.5-3 §40.1 基线留档齐备：改前哈希 `cc8056d04a6b5595`（4005 字符）+ 改后真实哈希 + 日期 + 变更原因
-- [ ] CP-5.5-4 **全仓"自锁定"模式复扫**（两组 grep 模式，扫 `tests/ core/ ui/ sandbox/ scripts/`）结果落档；同文件另三个用例**未被改动**且仍绿
+- [x] CP-5.5-1 `:69` 改为写死的 16 位十六进制字面量；"首次运行自锁定当前值"注释已删；新注释指向 §40.1 基线
+- [x] CP-5.5-2 **验红：body 末尾临时加一个空格 → 该断言变红**；逐字节还原后复绿（红/绿两态证据落测试报告）
+- [x] CP-5.5-3 §40.1 基线留档齐备：改前哈希 `cc8056d04a6b5595`（4005 字符）+ 改后真实哈希 + 日期 + 变更原因
+- [x] CP-5.5-4 **全仓"自锁定"模式复扫**（两组 grep 模式，扫 `tests/ core/ ui/ sandbox/ scripts/`）结果落档；同文件另三个用例**未被改动**且仍绿
 
 ### 任务 T-S7-5-6：探测摘要上限 `400 → 2600` + 新增总长 `8000` + **截尾说明提为具名常量**（架构 §18.3 + §18.7(4)）
 
@@ -1906,11 +1906,11 @@ assert actual_hash == EXPECTED_HASH, (...)                  # ← :71  x == x，
 6. **既有断言两处同步**（架构 §18.3.4，本 dev-plan 已复核）：`tests/test_sprint7_s706_env_facts.py:490` 逐行 `len(line) <= max(cap, 60)` 改为对"**单条命令块整体**"断言；`:492` 结构性上界断言换成 `_PROBE_DIGEST_MAX_CHARS` 断言；用例内 `"X" * (cap * 3)` × 15 条会触发新的总长截断 ⇒ **用例语义一并更新**（并顺带成为总长截断的正向覆盖）。**只换不弱化**。
 
 **自测检查点**：
-- [ ] CP-5.6-1 `_PROBE_OUTPUT_MAX_CHARS == 2600`、`_PROBE_DIGEST_MAX_CHARS == 8000`；两常量各带"外层≥内层"结构性原则注释
-- [ ] CP-5.6-2 **关系断言（§18.7(4)）**：`_PROBE_OUTPUT_MAX_CHARS >= _PROBE_OUTPUT_MAX_BYTES + len(marker)`，marker 按 `local_venv` 同一 f-string 就地计算；**不断言字面量 2600**
-- [ ] CP-5.6-3 总长截尾生效且**不静默**：构造超长 digest → 长度 `<= _PROBE_DIGEST_MAX_CHARS`（含说明行）且**末尾含 `_PROBE_DIGEST_TRUNCATED_NOTE` 原文**；未超长时**说明行不出现**（零扰动）
-- [ ] CP-5.6-4 `_PROBE_DIGEST_TRUNCATED_NOTE` 为**模块级具名常量**、非空、通俗中文、零内部术语（并已登记进 T-5-11 按名 import 集合）
-- [ ] CP-5.6-5 既有 `tests/test_sprint7_s706_env_facts.py:490/:492` 两处断言同步改毕（**形态只换不弱化**）；该文件 29 用例全绿；`env_probe_tool.py` git diff 为空
+- [x] CP-5.6-1 `_PROBE_OUTPUT_MAX_CHARS == 2600`、`_PROBE_DIGEST_MAX_CHARS == 8000`；两常量各带"外层≥内层"结构性原则注释
+- [x] CP-5.6-2 **关系断言（§18.7(4)）**：`_PROBE_OUTPUT_MAX_CHARS >= _PROBE_OUTPUT_MAX_BYTES + len(marker)`，marker 按 `local_venv` 同一 f-string 就地计算；**不断言字面量 2600**
+- [x] CP-5.6-3 总长截尾生效且**不静默**：构造超长 digest → 长度 `<= _PROBE_DIGEST_MAX_CHARS`（含说明行）且**末尾含 `_PROBE_DIGEST_TRUNCATED_NOTE` 原文**；未超长时**说明行不出现**（零扰动）
+- [x] CP-5.6-4 `_PROBE_DIGEST_TRUNCATED_NOTE` 为**模块级具名常量**、非空、通俗中文、零内部术语（并已登记进 T-5-11 按名 import 集合）
+- [x] CP-5.6-5 既有 `tests/test_sprint7_s706_env_facts.py:490/:492` 两处断言同步改毕（**形态只换不弱化**）；该文件 29 用例全绿；`env_probe_tool.py` git diff 为空
 
 ### 任务 T-S7-5-7：resource_scout 冻结区第三次改动——6 项必探维度 + AC-S7-25 上界 5→10（架构 §18.4(2) + PRD §10.3 #1 / §10.8 第 2 条）
 
@@ -1934,11 +1934,11 @@ assert actual_hash == EXPECTED_HASH, (...)                  # ← :71  x == x，
 7. **"破一次"口径澄清**（架构 §18.4(2)）：三次改动 = 三次 Prompt Cache 冷启动，线性叠加但仍是**常数级**，不会退化成"破每次"（那要求前缀含动态值）。故放行成立。真正的守门仍是 `test_sprint6_b1_prompt_guards.py:295` 跨论文一致 + AC-S7-27 负向断言。
 
 **自测检查点**：
-- [ ] CP-5.7-1 探测段落含 6 项必探维度（GPU 显存与占用 / CUDA / 内存 / 磁盘 / Python 版本 / 关键包版本）；**"3~5 条"类硬数字已删**
-- [ ] CP-5.7-2 **冻结区零退化**：三步降级链 1/2/3 逐字符与改前相同；跨论文 SystemMessage 主体字节一致；`REPO_QUALITY_SCORING_SECTION` 仍 `is` 同一对象；`_repo_scoring.py` / 【输出格式】段 git diff 为空；新增文案零 `{`/`}`、零 `arxiv`、零绝对路径
-- [ ] CP-5.7-3 **AC-S7-25 上界 5→10 断言同步面精确闭合**：全仓 grep（**禁 `head` 截断**）无遗漏；**三条负向状态断言一字不动**（形态与文案逐字比对）
-- [ ] CP-5.7-4 AC-S7-41 判定口径落测试：按"**digest 中存在该命令的记录**"断言 6 项必探维度覆盖（不是断数值）
-- [ ] CP-5.7-5 **§18.4(2) 硬触发已登记**进 T-5-13 处置分支 + §37 纪律 12 + handoff（"第四次改措辞 → 停手找 Maria 重议手段"）
+- [x] CP-5.7-1 探测段落含 6 项必探维度（GPU 显存与占用 / CUDA / 内存 / 磁盘 / Python 版本 / 关键包版本）；**"3~5 条"类硬数字已删**
+- [x] CP-5.7-2 **冻结区零退化**：三步降级链 1/2/3 逐字符与改前相同；跨论文 SystemMessage 主体字节一致；`REPO_QUALITY_SCORING_SECTION` 仍 `is` 同一对象；`_repo_scoring.py` / 【输出格式】段 git diff 为空；新增文案零 `{`/`}`、零 `arxiv`、零绝对路径
+- [x] CP-5.7-3 **AC-S7-25 上界 5→10 断言同步面精确闭合**：全仓 grep（**禁 `head` 截断**）无遗漏；**三条负向状态断言一字不动**（形态与文案逐字比对）
+- [x] CP-5.7-4 AC-S7-41 判定口径落测试：按"**digest 中存在该命令的记录**"断言 6 项必探维度覆盖（不是断数值）
+- [x] CP-5.7-5 **§18.4(2) 硬触发已登记**进 T-5-13 处置分支 + §37 纪律 12 + handoff（"第四次改措辞 → 停手找 Maria 重议手段"）
 
 ### 任务 T-S7-5-8：下游贯穿——coding / execution 两侧 `_SCALE_REDUCED_DIRECTIVE`（架构 §18.1.2 落点 8 + §18.7(5)(6)）
 
@@ -1971,10 +1971,10 @@ assert actual_hash == EXPECTED_HASH, (...)                  # ← :71  x == x，
 5. **不改 system prompt**：两侧 directive 走 HumanMessage 动态 payload，由 wrapper 统一 `json.dumps(sort_keys=True)` 渲染（同一 state 下字节幂等，R-PC4 无扰）。
 
 **自测检查点**：
-- [ ] CP-5.8-1 **§18.7(5) 两侧字节相等断言**：`coding._SCALE_REDUCED_DIRECTIVE == execution._SCALE_REDUCED_DIRECTIVE`（防日后单边改漂移）；两常量均非空且含"硬约束 / 不得按论文原始规模放大"语义
-- [ ] CP-5.8-2 `scale_reduced=True` → 两侧 payload 均含 `scale_reduced_directive` 且值 `is` 各自模块常量
-- [ ] CP-5.8-3 **§18.7(6) 零扰动负向（三形态）**：`scale_reduced=False` / 键缺失（旧 checkpoint）/ 值为 `"false"` 字符串 → 两侧 payload **与基线字节一致**、不含该键
-- [ ] CP-5.8-4 两侧 system prompt 字节零改动；`credential_degradations` 既有注入路径行为不变（复跑 sp6 B2 相关用例全绿）
+- [x] CP-5.8-1 **§18.7(5) 两侧字节相等断言**：`coding._SCALE_REDUCED_DIRECTIVE == execution._SCALE_REDUCED_DIRECTIVE`（防日后单边改漂移）；两常量均非空且含"硬约束 / 不得按论文原始规模放大"语义
+- [x] CP-5.8-2 `scale_reduced=True` → 两侧 payload 均含 `scale_reduced_directive` 且值 `is` 各自模块常量
+- [x] CP-5.8-3 **§18.7(6) 零扰动负向（三形态）**：`scale_reduced=False` / 键缺失（旧 checkpoint）/ 值为 `"false"` 字符串 → 两侧 payload **与基线字节一致**、不含该键
+- [x] CP-5.8-4 两侧 system prompt 字节零改动；`credential_degradations` 既有注入路径行为不变（复跑 sp6 B2 相关用例全绿）
 
 ### 任务 T-S7-5-9：reporting 第 4 条标注 + 声明块第 4 段 + `term_map` +1 条（架构 §18.1.2 落点 7/9 + §18.7(6)）
 
@@ -2011,11 +2011,11 @@ assert actual_hash == EXPECTED_HASH, (...)                  # ← :71  x == x，
 7. **不做**：全局文档 §4.6.2「硬件配置」完整章节转 backlog（PRD §10.3 #18），本次只落"缩规模强制声明"这一条。
 
 **自测检查点**：
-- [ ] CP-5.9-1 `scale_reduced=True` → `_determine_conclusion` 的 `annotations` **末尾**含 `"scale_reduced"`，既有三条顺序与取值不变；`level` **不得为 `"science"`**（即便 goal_checks 全符合）
-- [ ] CP-5.9-2 **AC-S7-38 验红（命门）**：删掉 `annotations.append("scale_reduced")` 这条映射 → 本条断言必须**变红**；还原后复绿（红/绿两态落测试报告）
-- [ ] CP-5.9-3 报告含"### 缩小规模复现"段与 `_SCALE_REDUCED_DECLARATION` 原文；**三形态（full_success / code_only / degraded）均带该声明**（Maria 裁决 8 在 code_only 路径成立）
-- [ ] CP-5.9-4 **零扰动（§18.7(6)）**：`scale_reduced=False` / 缺键 / `"false"` 三形态下报告 Markdown **与 sp5 基线字节一致**；`_render_code_only` git diff 为空
-- [ ] CP-5.9-5 `term_map` +1 条且 `humanize("annotation", "scale_reduced") == "缩小规模复现"`；`len(TERM_LABELS) == 42`（41 + 1，供 T-5-11 的 `EXPECTED_N` 对账）；`ui/pages/result_report.py` **零改动**且结论卡片自动跟随降档
+- [x] CP-5.9-1 `scale_reduced=True` → `_determine_conclusion` 的 `annotations` **末尾**含 `"scale_reduced"`，既有三条顺序与取值不变；`level` **不得为 `"science"`**（即便 goal_checks 全符合）
+- [x] CP-5.9-2 **AC-S7-38 验红（命门）**：删掉 `annotations.append("scale_reduced")` 这条映射 → 本条断言必须**变红**；还原后复绿（红/绿两态落测试报告）
+- [x] CP-5.9-3 报告含"### 缩小规模复现"段与 `_SCALE_REDUCED_DECLARATION` 原文；**三形态（full_success / code_only / degraded）均带该声明**（Maria 裁决 8 在 code_only 路径成立）
+- [x] CP-5.9-4 **零扰动（§18.7(6)）**：`scale_reduced=False` / 缺键 / `"false"` 三形态下报告 Markdown **与 sp5 基线字节一致**；`_render_code_only` git diff 为空
+- [x] CP-5.9-5 `term_map` +1 条且 `humanize("annotation", "scale_reduced") == "缩小规模复现"`；`len(TERM_LABELS) == 42`（41 + 1，供 T-5-11 的 `EXPECTED_N` 对账）；`ui/pages/result_report.py` **零改动**且结论卡片自动跟随降档
 
 ### 任务 T-S7-5-10：审核页披露 + 讨论助手第 4 键（架构 §18.1.2 落点 10 + §18.8 ①②③）
 
@@ -2043,12 +2043,12 @@ assert actual_hash == EXPECTED_HASH, (...)                  # ← :71  x == x，
 7. **零改动确认**：决策集合仍恰 5 类；`interrupt_kind` 集合不新增；既有五个按钮的 key / label / resume payload 一字不动。
 
 **自测检查点**：
-- [ ] CP-5.10-1 **恒常展示**：`local_env_facts` 非空 / 空 / 缺键三形态下，只读展示块**均渲染**（空时走静态兜底句），不做条件隐藏；`environment` 折叠块（`:290-293`）git diff 为空
-- [ ] CP-5.10-2 `local_fit_note` 非空时原文展示、为空时走静态兜底常量；两条兜底句均为**模块级具名常量**
-- [ ] CP-5.10-3 "仅复现代码"按钮上下文说明：`scale_reduced is True` 时出现、为假/缺键时**不出现**（零扰动）；**按钮 key / label / resume payload 一字不动**
-- [ ] CP-5.10-4 `_format_plan_context` 恰 **4 键**（三既有 + `local_env_facts`）；`payload=None` / 空 dict / partial 三形态均不抛；渲染形态（`sort_keys`/`ensure_ascii`/`indent`/`default`）一字不动
-- [ ] CP-5.10-5 `_build_chat_system_prompt` 含"不要复述字段名 / 英文标识"边界语且该句为**具名常量**
-- [ ] CP-5.10-6 **AC-S7-37 契约不变**：决策选项集合仍恰 5 类（approve / code_only / revise / switch_repo / cancel）；`interrupt_kind` 集合不新增；**新增文案全部为模块级具名常量**（逐个 `hasattr` 核对，供 T-5-11 按名 import）
+- [x] CP-5.10-1 **恒常展示**：`local_env_facts` 非空 / 空 / 缺键三形态下，只读展示块**均渲染**（空时走静态兜底句），不做条件隐藏；`environment` 折叠块（`:290-293`）git diff 为空
+- [x] CP-5.10-2 `local_fit_note` 非空时原文展示、为空时走静态兜底常量；两条兜底句均为**模块级具名常量**
+- [x] CP-5.10-3 "仅复现代码"按钮上下文说明：`scale_reduced is True` 时出现、为假/缺键时**不出现**（零扰动）；**按钮 key / label / resume payload 一字不动**
+- [x] CP-5.10-4 `_format_plan_context` 恰 **4 键**（三既有 + `local_env_facts`）；`payload=None` / 空 dict / partial 三形态均不抛；渲染形态（`sort_keys`/`ensure_ascii`/`indent`/`default`）一字不动
+- [x] CP-5.10-5 `_build_chat_system_prompt` 含"不要复述字段名 / 英文标识"边界语且该句为**具名常量**
+- [x] CP-5.10-6 **AC-S7-37 契约不变**：决策选项集合仍恰 5 类（approve / code_only / revise / switch_repo / cancel）；`interrupt_kind` 集合不新增；**新增文案全部为模块级具名常量**（逐个 `hasattr` 核对，供 T-5-11 按名 import）
 
 ### 任务 T-S7-5-11：**新术语守门** `tests/test_s708_user_text_guard.py` + 三重自证**逐条验红**（架构 §18.2 + §18.7(3)）
 
@@ -2075,12 +2075,12 @@ assert actual_hash == EXPECTED_HASH, (...)                  # ← :71  x == x，
 6. **`_GUARDED_MODULES` 零改动**（与 TODO 那 16 处零冲突，日后清理路径完全不变）；`tests/test_e2e2_message_guard.py` **git diff 为空**。
 
 **自测检查点**：
-- [ ] CP-5.11-1 三个扫描源全量扫描零命中（`_BLACKLIST` + `_S708_EXTRA`）；`EXPECTED_N` 与实际条数对账一致（term_map 42 + 具名常量 5~6 条，实施时以实际为准并写死）
-- [ ] CP-5.11-2 **§18.7(3) 自证机制 ① 验红：删常量必红** —— 临时删除/改名任一被按名 import 的常量 → **`AttributeError` 打红**（不是 skip、不是 passed）；还原后复绿
-- [ ] CP-5.11-3 **§18.7(3) 自证机制 ② 验红：少扫一条必红** —— 临时从 `TERM_LABELS` 删 1 条（或从常量集合移除 1 条）→ **`assert scanned == EXPECTED_N` 打红**；还原后复绿
-- [ ] CP-5.11-4 **§18.7(3) 自证机制 ③ 验红：常量清空必红** —— 临时把任一常量改为 `""` → **`assert literal.strip()` 打红**；还原后复绿
-- [ ] CP-5.11-5 扫描器活性金丝雀绿：`_hits` 对 `from_scratch` / `resource_scout` / `ReAct` 命中，对通俗中文零误报；`_S708_EXTRA` 五词各自能命中一条人造样本
-- [ ] CP-5.11-6 `tests/test_e2e2_message_guard.py` **git diff 为空**（`_GUARDED_MODULES` 与 `_BLACKLIST` 均未被改）；`EXPECTED_N` 的"禁止放宽为 `>=`"维护语义已写进注释
+- [x] CP-5.11-1 三个扫描源全量扫描零命中（`_BLACKLIST` + `_S708_EXTRA`）；`EXPECTED_N` 与实际条数对账一致（term_map 42 + 具名常量 5~6 条，实施时以实际为准并写死）
+- [x] CP-5.11-2 **§18.7(3) 自证机制 ① 验红：删常量必红** —— 临时删除/改名任一被按名 import 的常量 → **`AttributeError` 打红**（不是 skip、不是 passed）；还原后复绿
+- [x] CP-5.11-3 **§18.7(3) 自证机制 ② 验红：少扫一条必红** —— 临时从 `TERM_LABELS` 删 1 条（或从常量集合移除 1 条）→ **`assert scanned == EXPECTED_N` 打红**；还原后复绿
+- [x] CP-5.11-4 **§18.7(3) 自证机制 ③ 验红：常量清空必红** —— 临时把任一常量改为 `""` → **`assert literal.strip()` 打红**；还原后复绿
+- [x] CP-5.11-5 扫描器活性金丝雀绿：`_hits` 对 `from_scratch` / `resource_scout` / `ReAct` 命中，对通俗中文零误报；`_S708_EXTRA` 五词各自能命中一条人造样本
+- [x] CP-5.11-6 `tests/test_e2e2_message_guard.py` **git diff 为空**（`_GUARDED_MODULES` 与 `_BLACKLIST` 均未被改）；`EXPECTED_N` 的"禁止放宽为 `>=`"维护语义已写进注释
 
 > **⚠ 本任务的交付标准是"三条验红各打红一次并留证据"，不是"守门写出来了"**（架构 §18.7(3) 原话：*这三条本身要在开发时逐条验红，否则又是一次 S7-06*）。三次验红的红/绿两态截图或输出片段必须落测试报告。
 
@@ -2123,16 +2123,16 @@ assert actual_hash == EXPECTED_HASH, (...)                  # ← :71  x == x，
 13. **全量非 e2e 回归**（`.venv/bin/pytest -q -m "not e2e"`）相对 **2103 绿**基线**零退化零失败**，新增用例数与增量**精确闭合**；P-9 flaky（`test_plan_review_e2e.py::test_e2e_code_only`）以复跑取稳态为准并如实记录。
 
 **自测检查点**：
-- [ ] CP-5.12-1 **§18.7(a)** 三方键集合相等收口复核（13==13==13）+ 验红复现（加键只改一处 → 红）
-- [ ] CP-5.12-2 **§18.7(b)** `local_env_facts` 不进 system prompt 负向断言收口复核（含带/不带该键 SystemMessage 字节完全一致）
-- [ ] CP-5.12-3 **AC-S7-33 验红（命门）**：双缺失场景断言全绿；**撤掉禁编造条款后本条必须变红**；红/绿两态落测试报告
-- [ ] CP-5.12-4 **AC-S7-38 验红（命门）**：见 CP-5.9-2 收口复现；**去掉标注映射后本条必须变红**
-- [ ] CP-5.12-5 **AC-S7-36 对照断言**：两组本机事实 → **不同的 HumanMessage**（按 §18.5(1) 修正口径；**不写"规模参数差异"断言**）
-- [ ] CP-5.12-6 **§18.7(f) 端到端零扰动正负两向**：`scale_reduced=False` 时 coding HumanMessage / execution HumanMessage / reporting Markdown **三链路一次断完与 sp5 基线字节一致**；`=True` 时三链路均出现对应内容
-- [ ] CP-5.12-7 **AC-S7-37 两道新造守门**：payload 键集合恰 11 键（既有 10 键逐一核对）+ 决策集合恰 5 类
-- [ ] CP-5.12-8 **AC-S7-42 两条用例都写**（绕过工具验渲染端上限 / 走真实工具验两级截断合成后 `torch` 仍在）+ 总长上界断言
-- [ ] CP-5.12-9 **AC-S7-35 旧 checkpoint 兼容**：11 键旧 plan dict 走 reporting / UI / coding / execution 全链路**零 KeyError**
-- [ ] CP-5.12-10 **全量非 e2e 回归零退化零失败**（相对 **2103 绿**基线，账目精确闭合）+ **AC-S7-32~42 覆盖矩阵审计**（每条 AC 至少一个可测断言映射，映射落 handoff）
+- [x] CP-5.12-1 **§18.7(a)** 三方键集合相等收口复核（13==13==13）+ 验红复现（加键只改一处 → 红）
+- [x] CP-5.12-2 **§18.7(b)** `local_env_facts` 不进 system prompt 负向断言收口复核（含带/不带该键 SystemMessage 字节完全一致）
+- [x] CP-5.12-3 **AC-S7-33 验红（命门）**：双缺失场景断言全绿；**撤掉禁编造条款后本条必须变红**；红/绿两态落测试报告
+- [x] CP-5.12-4 **AC-S7-38 验红（命门）**：见 CP-5.9-2 收口复现；**去掉标注映射后本条必须变红**
+- [x] CP-5.12-5 **AC-S7-36 对照断言**：两组本机事实 → **不同的 HumanMessage**（按 §18.5(1) 修正口径；**不写"规模参数差异"断言**）
+- [x] CP-5.12-6 **§18.7(f) 端到端零扰动正负两向**：`scale_reduced=False` 时 coding HumanMessage / execution HumanMessage / reporting Markdown **三链路一次断完与 sp5 基线字节一致**；`=True` 时三链路均出现对应内容
+- [x] CP-5.12-7 **AC-S7-37 两道新造守门**：payload 键集合恰 11 键（既有 10 键逐一核对）+ 决策集合恰 5 类
+- [x] CP-5.12-8 **AC-S7-42 两条用例都写**（绕过工具验渲染端上限 / 走真实工具验两级截断合成后 `torch` 仍在）+ 总长上界断言
+- [x] CP-5.12-9 **AC-S7-35 旧 checkpoint 兼容**：11 键旧 plan dict 走 reporting / UI / coding / execution 全链路**零 KeyError**
+- [x] CP-5.12-10 **全量非 e2e 回归零退化零失败**（相对 **2103 绿**基线，账目精确闭合）+ **AC-S7-32~42 覆盖矩阵审计**（每条 AC 至少一个可测断言映射，映射落 handoff）
 
 ### 任务 T-S7-5-13：**AC-S7-43 真跑验收**（⚠ **须单独向 Maria 申请 deepxiv 配额、严禁预授权**）+ handoff
 
@@ -2170,10 +2170,10 @@ assert actual_hash == EXPECTED_HASH, (...)                  # ← :71  x == x，
 8. **handoff 交测试工程师**：AC-S7-32~43 覆盖矩阵 + 三道命门验红证据（AC-S7-33 / AC-S7-38 / 新守门三重自证）+ §18.7 六条验证方式的 CP 映射 + 真跑实测事实与 trace 链接 + **已知限制**（R-S7-35 动态文案守门物理不可达、仅 prompt 契约 + 真跑人眼；R-S7-40 仓库兼容性维度转 backlog；R-S7-42 总长上界在多卡机可能咬到末条；R-S7-43 payload 增量进 checkpoint；`hardware_requirements` 缺失本次不修）。
 
 **自测检查点**：
-- [ ] CP-5.13-1 **（⚠ 须 Maria 明确授权具体动作）** 主靶 arXiv:2403.06402 真跑完成，LangSmith trace 留档；GPU / 内存 / 磁盘三项表述逐条判定并落报告（**"若无 GPU"类条件句零出现**、内存无凭空数值）
-- [ ] CP-5.13-2 同跑观测：6 项必探维度**命令记录存在**（AC-S7-41 修正口径）+ `probe_environment` 条数 ≤10 + 三条负向状态断言全绿（AC-S7-25 修订）
-- [ ] CP-5.13-3 `scale_reduced` / `local_fit_note` 两键**实际被模型产出**（非回落缺省）；digest 实际长度与 planning token 代价核对（§18.3.3 / R-S7-42）
-- [ ] CP-5.13-4 handoff 归档齐备：AC 覆盖矩阵 + 三道命门验红证据 + §18.7 六条 CP 映射 + 真跑事实 + 已知限制清单；**若真跑不达标，按 §18.4(2) 硬触发与 R-S7-35 停手上报 Maria，不得自行改措辞或加 gate**
+- [x] CP-5.13-1 **（⚠ 须 Maria 明确授权具体动作）** 主靶 arXiv:2403.06402 真跑完成，LangSmith trace 留档；GPU / 内存 / 磁盘三项表述逐条判定并落报告（**"若无 GPU"类条件句零出现**、内存无凭空数值）
+- [x] CP-5.13-2 同跑观测：6 项必探维度**命令记录存在**（AC-S7-41 修正口径）+ `probe_environment` 条数 ≤10 + 三条负向状态断言全绿（AC-S7-25 修订）
+- [x] CP-5.13-3 `scale_reduced` / `local_fit_note` 两键**实际被模型产出**（非回落缺省）；digest 实际长度与 planning token 代价核对（§18.3.3 / R-S7-42）
+- [x] CP-5.13-4 handoff 归档齐备：AC 覆盖矩阵 + 三道命门验红证据 + §18.7 六条 CP 映射 + 真跑事实 + 已知限制清单；**若真跑不达标，按 §18.4(2) 硬触发与 R-S7-35 停手上报 Maria，不得自行改措辞或加 gate**
 
 > **批次 5 收口门（= S7-08 交付）**：CP-5.1~5.12 全绿 + **三道命门逐条验红通过**（CP-5.12-3 AC-S7-33 禁编造 / CP-5.12-4 AC-S7-38 强制降档 / CP-5.11-2·3·4 新守门三重自证）+ **§18.7 六条验证方式逐条闭合**（映射见 T-5-12 表）+ **R-S7-41 假绿已处置**（哈希写死 + 验红 + §40.1 基线留档 + 全仓自锁定复扫）+ AC-S7-32~42 全覆盖 + 全量非 e2e 回归零退化（CP-5.12-10，相对 **2103 绿**基线账目闭合）+ **零改动红线全部成立**（`_repo_scoring.py` / `graph.py` / `env_probe_tool.py` / `plan_checks.py`，git diff 逐一为空）+ 两处冻结区跨论文字节一致 + interrupt 种类与决策集合零新增。**AC-S7-43 真跑（T-S7-5-13）须 Maria 明确授权具体动作**（严禁预授权）；若未获授权，按 §34.4 容量裁剪线**延后不注销**、登记进 handoff 与 TODO。**停手等 Maria 确认。S7-08 交付。**
 
@@ -2278,7 +2278,8 @@ assert actual_hash == EXPECTED_HASH, (...)                  # ← :71  x == x，
 | **P-13（重要，守门缺口）** | 架构 §18.2 方案 A 第 2 条列**三个扫描源**：`TERM_LABELS.values()` / reporting·plan_review·讨论助手边界语的新增文案 / （排除 coding·execution directive） | **漏了一处新增用户可见文案**：T-5-6 要新增的 digest 截尾中文说明。它在 S7-06 时只进 LLM 上下文（故不算用户文案），但 **S7-08 之后 `local_env_facts` 经 interrupt payload 直达审核页只读展示块** ⇒ **用户会亲眼看到它** | **高**：照架构照抄则该文案**零守门覆盖**，AC-S7-40 在这一处直接落空（S7-06 "扫 0 条却 passed" 同款失效模式，R-S7-44） | **补入**：该说明**必须提为模块级具名常量** `_PROBE_DIGEST_TRUNCATED_NOTE`（不得内联字面量）并**纳入 T-5-11 按名 import 集合**。已写进 CP-5.6-4 与 CP-5.11-1。**不改架构文档** |
 | **P-14（好消息，省一个分支）** | 架构 §18.1.2 落点表把 reporting 声明块列为 `:536-619` 的改动，未点明三形态覆盖关系；Maria 裁决 8 要求"**只产代码路径也要带缩规模声明**" | `_render_report:1094` 调 `_render_annotation_notices` 的位置**在 form 分支（`:1095-1101`）之前**、**三形态共用**；且 `_render_annotation_notices:535-536` 在 `annotations` 为空时**早退返回 `[]`** | 低（**利好**）：Maria 裁决 8 **结构上自动成立**，`_render_code_only` **零改动**；`scale_reduced=False` 的零扰动也是结构性的 | **显式登记，防开发按三形态各写一遍**（会造成重复渲染）。已写进 T-5-9 第 4 条与 CP-5.9-3 |
 | **P-15（纪律，防扩围）** | 架构 §18.2 备选 C（全模块字面量扫描）已被否决，理由记为"`term_map` 的 key、`humanize` 的 domain 名是合法字面量 ⇒ 大面积假阳" | **还有一条更硬的理由未记**：`core/nodes/reporting.py:922` 用户可见文案含 `code_only`（"本次运行处于 code_only 模式"）、`:930` 含 `code_output_dir` —— 二者属 TODO 登记的**既有 16 处泄漏余项** | 中（若开发"顺手扩大扫描面"求稳，会**当场连带打红**并与"16 处不得同期开工"正面冲突） | 写进 §32.3 红线末条与 §37 纪律 10：**不扩 `_GUARDED_MODULES`、不做模块级全量字面量扫描**，守门只按名 import 具名常量 + 全量扫 `TERM_LABELS.values()`。**不改架构文档**（其结论正确，只是补一条更硬的论据） |
-| **P-16（重要，AC 无守门可依）** | PRD §10.7 AC-S7-37 写"**既有 payload 键结构不变**""决策选项集合**仍恰**为既有 5 类"，措辞暗示存在既有守门 | grep 全仓：**不存在**"planning interrupt payload 键集合恰为 N"的断言，也**不存在**"决策集合恰 5 类"的断言（`test_sprint4_e2e.py:632` 那条 `set(p2.keys()) == {...}` 断的是 **user_input** interrupt 的 4 键 payload，与 planning 无关） | **中**：若照 PRD 字面理解成"保持既有守门即可"，AC-S7-37 会**零覆盖却 passed**（R-S7-46，与 R-S7-30 同族） | **两道守门是新造不是保持**：T-5-1（CP-5.1-2）首任务坐实缺席，T-5-12（CP-5.12-7）新造。**不改 PRD 文档** |
+| **P-16（重要，AC 无守门可依）** | PRD §10.7 AC-S7-37 写"**既有 payload 键结构不变**""决策选项集合**仍恰**为既有 5 类"，措辞暗示存在既有守门 | ⚠ **本条原结论一半是错的，2026-07-30 批次 5 实施时推翻并订正，详见下方 P-16 订正** | **中**：若照 PRD 字面理解成"保持既有守门即可"，AC-S7-37 会**零覆盖却 passed**（R-S7-46，与 R-S7-30 同族） | 见 P-16 订正条 |
+| **P-16 订正（2026-07-30，批次 5 实施时推翻）** | 原 P-16 断言"全仓不存在 planning interrupt payload 键集合断言"，据此把 AC-S7-37 两道守门都判为"新造" | **payload 守门一直存在**：`tests/test_sprint4_e2e.py:619-623` 是一条精确的 planning interrupt#1 十键 `set(p1.keys()) == {...}` 断言（同段紧接着读 `p1["revise_count"]` / `p1["reproduction_plan"]`，是 planning 无疑）。**漏判原因是搜索模式要求关键字与断言写法同现一行，而该断言是跨行书写**——同文件 `:632` 那条恰好单行故被抓到，遂误判成"只有它、且与 planning 无关"。dev-plan 落盘时与 T-5-1 主控核实**两道关口先后漏掉同一条**。"决策集合恰 5 类"确实不存在，那一半原判正确 | **高**（本条正是"守门看起来不存在 ⇒ 去新造 ⇒ 造出重复断言/漏同步既有断言"的入口） | ①该断言在 T-5-4 加 `local_env_facts` 后**按设计打红**，主控已**只换不弱化**同步为 11 键（`:622`，保持精确 `==`，未改 `issubset`/`>=`）；②T-5-12 改为**复核而非新造**，并加断"形态未被弱化"+ 该文件无模块级 `pytestmark`（防守门被 deselect 出默认回归）；③**R-S7-46 前提随之修正**：风险不是"AC-S7-37 零覆盖"，而是"守门存在但可能被悄悄弱化"；④**方法论留档**：此后做"全仓某断言是否存在"的核实，**禁止用要求多个关键字同现一行的过滤模式**，须用跨行感知扫描（本次订正即用 `re.S` 跨行正则复扫全仓，确认此类断言恰此一条、无第三处漏网） |
 
 > **其余架构 §18 落点行号逐处核源码全部对得上**，无需调整设计：`core/state.py:115-137` `ReproductionPlan` 11 键 / `planning.py:67-118` `REPRODUCTION_PLAN_SCHEMA`（`required` 恰 3 项）、`:139-140` 冻结注释、`:151-152` 待替换的 environment 规则、`:384` `_build_reproduction_plan` 构造点（签名 `(result, state)`）、`:589` `_minimal_plan` 构造点（签名 `(state, reason)`）、`:296-308` `_format_planning_context` 六形参、`:877-890` interrupt payload 10 键、`:806` plan 复制点；`execution.py:2076` 复制点、`:98-103` directive 常量、`:1133` 注入点；`coding.py:82-86` directive 常量、`:436` 注入点；`reporting.py:253-273` annotations 三条 + `:273` `plan` 变量、`:281-283` `and not annotations`、`:524-619` 声明块、`:1094` 三形态共用调用点；`ui/term_map.py:82-85` annotation 三条；`ui/pages/plan_review.py:133-147` `_format_plan_context` 三键、`:290-293` `environment` 折叠块、`:735-737` "仅复现代码"按钮；`ui/pages/result_report.py:59` 复用 `_determine_conclusion`（**零改动自动跟随降档**）；`resource_scout.py:57` `_PROBE_OUTPUT_MAX_CHARS=400`、`:496` 渲染端 `out[:cap]`；`sandbox/local_venv.py:353` 返回端 `raw[-max_bytes:]` 保尾 + marker；`tests/test_e2e2_message_guard.py:29` `_GUARDED_MODULES=("resource_scout",)`、`:32-42` `_BLACKLIST` 6 词、`_hits(literal) -> List[str]`；`tests/test_sprint7_s706_env_facts.py:490/:492` 两处待改断言；`tests/__init__.py` 存在（跨模块 import 可行）。
 
@@ -2287,9 +2288,9 @@ assert actual_hash == EXPECTED_HASH, (...)                  # ← :71  x == x，
 | 项 | 值 | 说明 |
 |---|---|---|
 | **改前基线（S7-08 开工时，2026-07-29 主控实测）** | `sha256[:16] = cc8056d04a6b5595`，主体长 **4005 字符** | `_PLANNING_SYSTEM_PROMPT_BODY`（含 `REPO_QUALITY_SCORING_SECTION` + `_PLANNING_TERMINOLOGY_SECTION`）。**该值即 sp5/sp6 期间"本应被锁定却从未被锁定"的那个值** |
-| **改后基线（T-S7-5-5 实测后填入）** | `sha256[:16] = ______________`（**待填**） | 由 T-5-5 用 `.venv/bin/python` 重算并写死进 `tests/test_sprint6_b1_prompt_guards.py:69` |
+| **改后基线（2026-07-30 T-S7-5-5 实测，主控复核）** | `sha256[:16] = a7cad88cdb205c5f`，主体长 **5424 字符**（改前 4005，+1419） | 已写死进 `tests/test_sprint6_b1_prompt_guards.py:76`；"首次运行自锁定当前值"注释已删。主控独立复算一致 |
 | **变更原因** | S7-08 的**一次性静态变更**：替换 `:151-152` 无条件"引用论文 `hardware_requirements`"→ 三级优先级（本机实测 > 论文推断 > 明确写未探测/未知）+ 禁编造条款 + `scale_reduced`/`local_fit_note` 两键契约 + 缩法举例（A-S7-19）+【输出格式】JSON 示例 +2 键 | 架构 §18.4(1) 背书为合法一次性静态变更（判 bug 标准是"是否引入论文级/任务级动态值"，不是"是否修改过"） |
-| **验红记录** | body 末尾临时加一个空格 → 断言变红；逐字节还原 → 复绿（**T-5-5 落测试报告**） | 不验红等于没改（CP-5.5-2） |
+| **验红记录** | ✅ **已实做**：body 末尾临时加一个空格 → 哈希变 `5e64aa120294f0c5`、断言变红（同文件另 3 用例仍绿）；逐字节还原后 19 passed、哈希回 `a7cad88cdb205c5f`。另 T-5-12 撤【禁止编造】整段时该门**连带打红**（`a4f46f8f47cd72a9` ≠ 基线），证明它现在是真字节回归门 | 不验红等于没改（CP-5.5-2） |
 | **全仓自锁定模式复扫** | 预跑结果：**仅 `test_sprint6_b1_prompt_guards.py:69` 一处**（扫 `tests/ core/ ui/ sandbox/ scripts/`，两组模式）；T-5-5 收口复跑并落档 | 唯一另一命中 `test_sprint6_s6_01_controller.py:242` 是 `expected_interrupt_token=current` 实参传递，**非自锁定** |
 | **后人须知** | 此后**任何**改动 `_PLANNING_SYSTEM_PROMPT_BODY` 的批次，都必须：①重算哈希写死；②在本表新增一行留档变更原因；③跑一次验红。**禁止改回 `EXPECTED_HASH = actual_hash` 形态** | 这正是这道守门本该有的语义（其 docstring 自 sp6 起就这么写，只是实现从未成立） |
 

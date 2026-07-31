@@ -111,6 +111,12 @@ REPRODUCTION_PLAN_SCHEMA: Dict[str, Any] = {
         "estimated_time": {"type": "string"},
         # 最低交付基准线（PRD §2.3）：无论 execution_mode 都必填。
         "deliverables": {"type": "array", "items": {"type": "string"}},
+        # S7-08（架构 sp7 §18.1 裁决 2/3）：本机适配结论两键。判断的唯一持有者是模型
+        # （无确定性提取通道）故必须进输出契约；但**刻意不进 required**——react_base
+        # finalize 对 required 缺失会再跑一次 with_structured_output（多烧一次 LLM 调用），
+        # 而漏写时回落缺省 False / "" 已是安全值。
+        "scale_reduced": {"type": "boolean"},
+        "local_fit_note": {"type": "string"},
     },
     # approved / user_feedback 由 planning 节点根据 resume payload 写入，不强制 LLM 产出。
     "required": ["plan_summary", "code_strategy", "deliverables"],
@@ -138,6 +144,12 @@ _PLANNING_TERMINOLOGY_SECTION = """
 # HumanMessage 通道注入。自测断言不同论文输入下本主体字节级一致（CP-B3-10）。
 # sp5 批次 1（P7~P9，架构 sp5 §9.1）为一次性静态变更：第 6 节定性化改写 + 凭证声明
 # 指令 + 尾部术语约束段，合入后 sp5 内前缀冻结。
+# sp7 S7-08（架构 sp7 §18.4(1) 背书，T-S7-5-3）为又一次**一次性静态变更**：第 2 节改为
+# 本机实测 > 论文推断 > 明确写"未探测/未知"的三级优先级 + 禁编造条款、新增本机适配结论
+# 两键契约段、【输出格式】示例同步 +2 键。判 bug 的标准是"是否引入论文级/任务级动态值"
+# 而不是"是否修改过"——**本机实测事实（local_env_facts）的值绝不写进本主体**（R-S7-38），
+# 它只走 HumanMessage 通道。改动后字节基线见 dev-plan §40.1，并由
+# tests/test_sprint6_b1_prompt_guards.py 的写死哈希守门。
 _PLANNING_SYSTEM_PROMPT_BODY = """你是论文复现规划专家。任务是综合论文方法、资源信息与用户反馈（可能为空），产出结构化的复现计划。
 
 可用工具：
@@ -148,8 +160,20 @@ _PLANNING_SYSTEM_PROMPT_BODY = """你是论文复现规划专家。任务是综�
 
 【计划必含 6 章节，对齐 product-design-spec §4.3.1】
 1. plan_summary（中文叙述）：用一段中文概述复现思路与关键步骤。
-2. environment（硬件 / 软件 / 预估时间）：引用论文分析的 hardware_requirements 中文主字段，
-   列出 GPU / 内存 / Python 与关键依赖版本。
+2. environment（硬件 / 软件 / 预估时间）：列出显卡与显存 / 内存 / 磁盘 / CUDA /
+   Python 与关键依赖版本。**信息来源按三级优先级取用，高一级压过低一级**：
+   - 第一级（最高）本机实测事实：上下文 local_env_facts 是资源探索阶段在这台机器上
+     实际执行只读命令探到的结果；凡它覆盖到的维度，一律以它为准；
+   - 第二级 论文推断（可能缺失）：论文分析给出的硬件条件，只用于本机实测未覆盖、
+     且确实需要说明"论文原始规模需要什么"的地方，并注明这是论文侧的说法；
+   - 第三级（兜底）明确写"未探测 / 未知"：两级信息都没有的维度就照实这么写。
+   【禁止编造】硬约束，违反即为错误输出：
+   - 本机探测未覆盖的维度**不得给出任何具体数值**，不得写"建议 XX GB 内存"这类
+     没有依据的数字，一律写"未探测 / 未知"；
+   - 本机实测已经确定的事实**不得降级回条件句**：已实测到有显卡还写"若无显卡则…"、
+     已实测到显存容量还写"假设显存足够"，都是反面样本，照实写结论即可；
+   - 上下文中没有 local_env_facts 这一项时（资源探索阶段未成功探测），整个硬件部分
+     一律写"未探测 / 未知"，**不要**拿论文数字或常识数字顶替。
 3. data_preparation（步骤列表）：数据集获取与预处理步骤；数据集名保留英文（PRD §4.7.5）。
 4. code_strategy：基于 resource_info.selected_repo 判定——
    - 有高质量官方仓库 -> "use_repo"（说明需要适配的点）；
@@ -182,6 +206,28 @@ _PLANNING_SYSTEM_PROMPT_BODY = """你是论文复现规划专家。任务是综�
    - deliverables（最低交付基准线，**必填，无论是否完整复现都要给**）：至少含
      README.md / requirements.txt / 入口脚本 / 核心实现文件 / `py_compile` 通过。
 
+【本机适配结论：scale_reduced 与 local_fit_note 两个判断字段】
+资源探索阶段已在这台机器上实测过环境。你必须在计划里明确回答"这台机器跑不跑得动"，
+并把结论写进以下两个字段：
+- scale_reduced（真 / 假）：本计划是否已按这台机器跑得动的规模缩过。照论文原始规模写、
+  一处未减时为假；只要为适配本机缩过任意一处就为真。
+- local_fit_note（一段通俗中文）：写清四件事——够不够（本机能否按论文原始规模跑）、
+  缺口是什么（哪一项不够、差多少，只写从实测事实得出的差距）、按什么方式缩的
+  （没缩就写没缩）、本次预计占用（预计用几张显卡、大约多少显存、磁盘增量大约多少、
+  预计跑多久）。
+判断与写法约束：
+- **本机不够时，首轮产出的就是这台机器跑得动的那一版计划**：execution_steps 里的规模
+  参数直接按缩过之后的值写，**不要**先出一版理想规模的计划、等用户挑了降级选项再重写；
+- 缩规模的常见做法（**举例，不是可选项清单**）：换更小的模型、只取数据的一个子集、
+  减少实验组数量、缩短训练轮数等；按论文与本机实际情况自行判断怎么缩，
+  **不要**套用固定比例或固定档位；
+- **只披露不自判**：预计占用照实写进 local_fit_note 交用户判断，不要自己设阈值、
+  不要因为"占用看起来偏大"就擅自降级或放弃某个步骤；
+- 本机实测事实缺席时，local_fit_note 里明确写"本机环境未探测"，scale_reduced 照实
+  写为假，**不要**假装已做过本机适配；
+- 两个字段都是给用户看的判断结论，local_fit_note 一律用通俗中文，不要写内部字段名、
+  不要自创英文缩写。
+
 【输出格式】
 - 完成规划后，必须在 <result>...</result> 标签内输出严格 JSON，字段如下：
   {
@@ -193,9 +239,13 @@ _PLANNING_SYSTEM_PROMPT_BODY = """你是论文复现规划专家。任务是综�
     "expected_results": [ {"description": str, "trend": {"metric": str, "greater": str, "lesser": str} | null}, ... ],
     "required_credentials": [ {"purpose_key": str, "purpose": str}, ... ],
     "estimated_time": str,
-    "deliverables": [str, ...]
+    "deliverables": [str, ...],
+    "scale_reduced": true | false,
+    "local_fit_note": str
   }
 - deliverables 字段无论 code_strategy 取值都必须填写（最低交付基准线）。
+- scale_reduced 与 local_fit_note 两个字段必须输出：漏写会被当作"没做过本机适配"，
+  用户在审核页就看不到这台机器够不够、本次预计占用多少。
 - 不要在 <result> 之外再夹杂任何其它 JSON 块。
 
 【用户提供的仓库（来自修改意见 / 切换仓库）】
@@ -219,6 +269,27 @@ def _coerce_str(value: Any) -> str:
     if isinstance(value, str):
         return value
     return str(value)
+
+
+# S7-08：LLM 输出的"真"可能是 bool / 数字 / 各种字符串写法，白名单逐个列出。
+# 只列"真"侧——凡不在白名单里的一律判假（"没缩规模"是安全默认，架构 sp7 §18.1 裁决 4）。
+_TRUE_TOKENS = frozenset({"true", "1", "yes", "y", "是", "真"})
+
+
+def _coerce_bool(value: Any) -> bool:
+    """把 LLM 输出的真假值规整为 bool（宽松取值，但绝不把假误判成真）。
+
+    ⚠ 陷阱（架构 sp7 §18.1.2 明标）：``bool("false") is True``——非空字符串一律为真，
+    直接 ``bool(x)`` 会把字符串 "false" / "0" 判成真。故字符串走白名单精确匹配，
+    **不走真值判断**。
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in _TRUE_TOKENS
+    return False
 
 
 def _coerce_str_list(value: Any) -> List[str]:
@@ -394,6 +465,10 @@ def _build_reproduction_plan(
         deliverables=_coerce_str_list(result.get("deliverables")),
         user_feedback=state.get("_planning_user_feedback"),
         approved=False,
+        # S7-08（架构 sp7 §18.1.2 落点 3）：本机适配结论两键。不进 schema required，
+        # 模型漏写时回落缺省 False / ""——"没做本机适配"是安全默认。
+        scale_reduced=_coerce_bool(result.get("scale_reduced")),
+        local_fit_note=_coerce_str(result.get("local_fit_note")),
     )
 
 
@@ -604,6 +679,10 @@ def _minimal_plan(state: GlobalState, reason: str) -> ReproductionPlan:
         ],
         user_feedback=state.get("_planning_user_feedback"),
         approved=False,
+        # S7-08（架构 sp7 §18.1.2 落点 4）：降级路径恒为"未做本机适配"——最简版计划
+        # 根本没读过本机实测事实，不得冒充"已按本机规模缩过"。
+        scale_reduced=False,
+        local_fit_note="",
     )
 
 
@@ -887,6 +966,14 @@ def planning(state: GlobalState) -> dict:
         "soft_hint_threshold": PLANNING_SOFT_HINT_THRESHOLD,   # =5；UI 软提示判定
         "max_total_llm_calls": MAX_TOTAL_LLM_CALLS,            # =240；总预算参考
         "switch_repo_failed": bool(switch_repo_failed),        # S2-13：UI 强制重填标记
+        # S7-08（架构 sp7 §18.1.2 落点 6）：资源探索阶段实测的本机环境事实原文，
+        # 供审核页只读展示块**恒常**呈现（用户要能核对计划里的硬件说法有无出处）。
+        # 为空时给 "" 而非缺键——UI 恒常展示需要一个确定存在的键；这与规划上下文
+        # "为空则不写键"（_format_planning_context）的语义**刻意不同**：
+        # 前者是给人看的展示位，后者是给模型看的上下文（不造哨兵值）。
+        # 外层再套 _coerce_str：旧 checkpoint 里若存进非字符串值，展示位仍恒为 str
+        # （UI 侧不必再做类型判断）。
+        "local_env_facts": _coerce_str(state.get("local_env_facts") or ""),
     }
     decision = interrupt(payload)
 

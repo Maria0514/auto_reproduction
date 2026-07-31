@@ -316,7 +316,11 @@ def _plan_review_mod():
 
 # --- 纯函数：_format_plan_context（满 / 空 / partial payload 不抛）------------- #
 def test_format_plan_context_full_payload():
-    """完整 payload → 返回字符串含三类 grounding 字段名，可被 json 解析。"""
+    """完整 payload → 返回字符串含四类 grounding 字段名，可被 json 解析。
+
+    S7-08 T-S7-5-10：新增第 4 键（本机实测事实）。**期望集合保持精确相等**——
+    弱化成 issubset / 只断包含，"上下文悄悄多长出键"就再也看不见了。
+    """
     import json as _json
 
     mod = _plan_review_mod()
@@ -324,7 +328,8 @@ def test_format_plan_context_full_payload():
     assert isinstance(text, str)
     parsed = _json.loads(text)
     assert set(parsed.keys()) == {
-        "reproduction_plan", "paper_analysis_summary", "resource_info"
+        "reproduction_plan", "paper_analysis_summary", "resource_info",
+        "local_env_facts",
     }
     # grounding 子串：计划摘要 / 候选仓库 URL 应出现在序列化文本里。
     assert "复现 HippoRAG" in text
@@ -340,7 +345,8 @@ def test_format_plan_context_none_and_partial_no_raise():
         text = mod._format_plan_context(payload)
         parsed = _json.loads(text)
         assert set(parsed.keys()) == {
-            "reproduction_plan", "paper_analysis_summary", "resource_info"
+            "reproduction_plan", "paper_analysis_summary", "resource_info",
+            "local_env_facts",
         }
 
 
@@ -1140,3 +1146,294 @@ def test_cp_1_4_3_approve_button_still_available_despite_warnings():
     assert not getattr(btn, "disabled", False), (
         "警示不阻断审批，approve 按钮不应被 disabled"
     )
+
+
+# =========================================================================== #
+# S7-08 T-S7-5-10：审核页本机情况披露 + 讨论助手第 4 键
+# CP-5.10-1 ~ CP-5.10-6（架构 sp7 §18.1.2 落点 10 + §18.8 ①②③；PRD sp7 §10.6）
+# =========================================================================== #
+
+# 本任务新增的全部用户可见静态文案常量名。T-S7-5-11 的新术语守门按名 import 这批常量，
+# 故此处先做一道"名字必须在、内容必须非空"的本地自证（删/改名 → AttributeError → 红）。
+_S708_UI_TEXT_CONSTANT_NAMES = (
+    "_LOCAL_ENV_BLOCK_TITLE",
+    "_LOCAL_ENV_FACTS_HEADING",
+    "_LOCAL_FIT_HEADING",
+    "_LOCAL_ENV_FACTS_FALLBACK",
+    "_LOCAL_FIT_NOTE_FALLBACK",
+    "_CODE_ONLY_SCALE_REDUCED_NOTE",
+    "_CHAT_NO_FIELD_NAME_RULE",
+)
+
+# 决策选项集合（AC-S7-37 契约：仍恰 5 类，不新增第 6 类）。
+# 其中 4 类经 resume_with({"decision": ...}) 恢复图执行；第 5 类"取消"走
+# controller.cancel_task(thread_id) 另一条路径（无 decision 字面量），故分两处断。
+_EXPECTED_RESUME_DECISIONS = {"approve", "code_only", "revise", "switch_repo"}
+_EXPECTED_DECISION_COUNT = 5
+
+_ABSENT = object()
+
+
+def _make_s708_payload(
+    local_env_facts=_ABSENT,
+    scale_reduced=_ABSENT,
+    local_fit_note=_ABSENT,
+) -> Dict:
+    """在完整 payload 基础上按需注入 S7-08 新键；传 _ABSENT 表示"该键不存在"（旧 checkpoint）。"""
+    payload = _make_payload()
+    if local_env_facts is not _ABSENT:
+        payload["local_env_facts"] = local_env_facts
+    plan = payload["reproduction_plan"]
+    if scale_reduced is not _ABSENT:
+        plan["scale_reduced"] = scale_reduced
+    if local_fit_note is not _ABSENT:
+        plan["local_fit_note"] = local_fit_note
+    return payload
+
+
+def _plan_review_source() -> str:
+    """读取 plan_review.py 源码（用于"一字不动"类断言，避免只靠肉眼）。"""
+    import pathlib
+
+    mod = _plan_review_mod()
+    return pathlib.Path(mod.__file__).read_text(encoding="utf-8")
+
+
+# --- CP-5.10-1：恒常展示（非空 / 空串 / 缺键三形态均渲染，不做条件隐藏）----------- #
+def test_cp_5_10_1_local_env_block_always_rendered():
+    """本机实测记录 非空 / 空串 / 缺键 三形态下只读披露块**均渲染**，且绝不留白块。"""
+    mod = _plan_review_mod()
+    facts = "显卡：一张 24GB 显存的卡\n磁盘可用：300GB"
+
+    cases = {
+        "非空": _make_s708_payload(local_env_facts=facts),
+        "空串": _make_s708_payload(local_env_facts=""),
+        "缺键": _make_s708_payload(),  # 旧 checkpoint 形态
+    }
+    for name, payload in cases.items():
+        at = _run(_make_controller_mock(payload=payload))
+        assert not at.exception, f"[{name}] 页面崩溃：{at.exception}"
+        text = _collect_text(at)
+        # 标题与两段小标题恒常出现（非条件渲染、非折叠）。
+        assert mod._LOCAL_ENV_BLOCK_TITLE in text, f"[{name}] 披露块标题缺失"
+        assert mod._LOCAL_ENV_FACTS_HEADING in text, f"[{name}] 实测小标题缺失"
+        assert mod._LOCAL_FIT_HEADING in text, f"[{name}] 适配小标题缺失"
+        # 内容位永不为空：要么原文、要么静态兜底句。
+        if name == "非空":
+            assert facts in text, "[非空] 实测记录原文未展示"
+            assert mod._LOCAL_ENV_FACTS_FALLBACK not in text, "[非空] 不该走兜底句"
+        else:
+            assert mod._LOCAL_ENV_FACTS_FALLBACK in text, f"[{name}] 未走静态兜底句"
+
+
+def test_cp_5_10_1_local_env_facts_text_degrades_gracefully():
+    """纯函数：None / 空 dict / 空串 / 纯空白 / 非串脏值 一律优雅退化到静态兜底常量，不抛。"""
+    mod = _plan_review_mod()
+    for payload in (None, {}, {"local_env_facts": ""}, {"local_env_facts": "   \n "},
+                    {"local_env_facts": None}):
+        assert mod._local_env_facts_text(payload) == mod._LOCAL_ENV_FACTS_FALLBACK
+    # 历史脏数据：非字符串值也不抛，转串后原样展示。
+    assert mod._local_env_facts_text({"local_env_facts": 123}) == "123"
+    # 正常值：strip 后原样返回。
+    assert mod._local_env_facts_text({"local_env_facts": " 显存 24GB \n"}) == "显存 24GB"
+
+
+def test_cp_5_10_1_environment_expander_untouched():
+    """既有 environment 折叠块（"环境依赖"）保持原样——新披露块与它并存、不替代、不搬家。"""
+    src = _plan_review_source()
+    assert 'with st.expander("环境依赖", expanded=False):' in src
+    assert "st.json(environment)" in src
+
+
+# --- CP-5.10-2：适配说明原文 / 兜底句，两条兜底句均为模块级具名常量 --------------- #
+def test_cp_5_10_2_local_fit_note_text_and_fallbacks():
+    """local_fit_note 非空 → 原文；缺键 / 空 / 空白 / 非 dict 计划 → 静态兜底常量。"""
+    mod = _plan_review_mod()
+    note = "这台机器只有一张卡，本次把训练轮数和数据量都缩小了，预计占用一张卡约 3 小时。"
+    assert mod._local_fit_note_text(
+        _make_s708_payload(local_fit_note=note)
+    ) == note
+    for payload in (None, {}, _make_s708_payload(),
+                    _make_s708_payload(local_fit_note=""),
+                    _make_s708_payload(local_fit_note="  \n "),
+                    {"reproduction_plan": "不是字典"}):
+        assert mod._local_fit_note_text(payload) == mod._LOCAL_FIT_NOTE_FALLBACK
+    # 两条兜底句都是模块级具名常量、非空、且不是同一句（各自承载不同披露内容）。
+    assert isinstance(mod._LOCAL_ENV_FACTS_FALLBACK, str)
+    assert isinstance(mod._LOCAL_FIT_NOTE_FALLBACK, str)
+    assert mod._LOCAL_ENV_FACTS_FALLBACK.strip()
+    assert mod._LOCAL_FIT_NOTE_FALLBACK.strip()
+    assert mod._LOCAL_ENV_FACTS_FALLBACK != mod._LOCAL_FIT_NOTE_FALLBACK
+
+
+def test_cp_5_10_2_local_fit_note_rendered_in_page():
+    """AppTest：适配说明原文出现在页面上；计划没写时展示静态兜底句。"""
+    mod = _plan_review_mod()
+    note = "这台机器跑得动完整规模，预计占用一张卡约 5 小时、磁盘约 40GB。"
+    at = _run(_make_controller_mock(payload=_make_s708_payload(local_fit_note=note)))
+    assert not at.exception, f"页面崩溃：{at.exception}"
+    text = _collect_text(at)
+    assert note in text
+    assert mod._LOCAL_FIT_NOTE_FALLBACK not in text
+
+    at2 = _run(_make_controller_mock(payload=_make_s708_payload()))
+    assert not at2.exception, f"页面崩溃：{at2.exception}"
+    assert mod._LOCAL_FIT_NOTE_FALLBACK in _collect_text(at2)
+
+
+# --- CP-5.10-3："仅复现代码"按钮上下文说明：真时出现、假/缺键零扰动 --------------- #
+def test_cp_5_10_3_code_only_note_only_when_scale_reduced():
+    """缩规模为真 → 出现按钮上下文说明；为假 / 字符串 "false" / 缺键 → 一律不出现。"""
+    mod = _plan_review_mod()
+
+    at = _run(_make_controller_mock(payload=_make_s708_payload(scale_reduced=True)))
+    assert not at.exception, f"页面崩溃：{at.exception}"
+    assert mod._CODE_ONLY_SCALE_REDUCED_NOTE in _collect_text(at)
+
+    for bad in (False, "false", "", 0, None, _ABSENT):
+        payload = _make_s708_payload(scale_reduced=bad)
+        at2 = _run(_make_controller_mock(payload=payload))
+        assert not at2.exception, f"[{bad!r}] 页面崩溃：{at2.exception}"
+        assert mod._CODE_ONLY_SCALE_REDUCED_NOTE not in _collect_text(at2), (
+            f"scale_reduced={bad!r} 不该出现按钮上下文说明（零扰动）"
+        )
+
+
+def test_cp_5_10_3_is_scale_reduced_uses_identity_not_truthiness():
+    """`is True` 而非真值判断：字符串 "false" 在 Python 里为真，真值判断会误判。"""
+    mod = _plan_review_mod()
+    assert mod._is_scale_reduced({"reproduction_plan": {"scale_reduced": True}}) is True
+    for bad in (False, "false", "true", "是", 1, 0, None, [], "x"):
+        assert mod._is_scale_reduced(
+            {"reproduction_plan": {"scale_reduced": bad}}
+        ) is False, f"{bad!r} 不应判为已缩规模"
+    # None / 空 / 非 dict 计划均不抛。
+    for payload in (None, {}, {"reproduction_plan": None}, {"reproduction_plan": "x"}):
+        assert mod._is_scale_reduced(payload) is False
+
+
+def test_cp_5_10_3_code_only_button_contract_untouched():
+    """按钮 key / label / resume payload 一字不动（只加说明文字，不改按钮本身）。"""
+    src = _plan_review_source()
+    assert 'ui.button("📄 仅复现代码", key="btn_code_only", variant="outline")' in src
+    assert 'controller.resume_with(thread_id, {"decision": "code_only"})' in src
+
+
+# --- CP-5.10-4：_format_plan_context 恰 4 键 + 渲染形态一字不动 ------------------ #
+def test_cp_5_10_4_format_plan_context_exactly_four_keys():
+    """恰 4 键（三既有 + 本机实测事实）；None / 空 dict / partial 三形态均不抛。"""
+    import json as _json
+
+    mod = _plan_review_mod()
+    expected_keys = {
+        "reproduction_plan", "paper_analysis_summary", "resource_info",
+        "local_env_facts",
+    }
+    for payload in (None, {}, {"reproduction_plan": {"plan_summary": "x"}},
+                    _make_s708_payload(local_env_facts="显存 24GB")):
+        parsed = _json.loads(mod._format_plan_context(payload))
+        assert set(parsed.keys()) == expected_keys
+    # 本机实测事实确实进了讨论助手上下文（架构 sp7 §18.8 ②）。
+    ctx = mod._format_plan_context(_make_s708_payload(local_env_facts="这台机器没有独立显卡"))
+    assert "这台机器没有独立显卡" in ctx
+    # 缺键 / None → 空串（不造哨兵值）。
+    assert _json.loads(mod._format_plan_context({}))["local_env_facts"] == ""
+
+
+def test_cp_5_10_4_format_plan_context_render_form_unchanged():
+    """渲染形态一字不动：sort_keys=True / ensure_ascii=False / indent=2 / default=str。"""
+    import json as _json
+
+    mod = _plan_review_mod()
+    payload = _make_s708_payload(local_env_facts="显存 24GB")
+    expected = _json.dumps(
+        {
+            "reproduction_plan": payload["reproduction_plan"],
+            "paper_analysis_summary": payload["paper_analysis_summary"],
+            "resource_info": payload["resource_info"],
+            "local_env_facts": "显存 24GB",
+        },
+        ensure_ascii=False, sort_keys=True, indent=2, default=str,
+    )
+    assert mod._format_plan_context(payload) == expected
+    # ensure_ascii=False：中文不被转义成 \uXXXX。
+    assert "\\u" not in mod._format_plan_context(payload)
+
+
+# --- CP-5.10-5：讨论助手边界语补句为具名常量且已注入 ---------------------------- #
+def test_cp_5_10_5_chat_system_prompt_no_field_name_rule():
+    """system prompt 含"不要复述字段名 / 英文标识"边界语，且该句为模块级具名常量。"""
+    mod = _plan_review_mod()
+    rule = mod._CHAT_NO_FIELD_NAME_RULE
+    assert isinstance(rule, str) and rule.strip()
+    assert "不要复述" in rule
+    assert "字段名" in rule
+    assert "英文标识" in rule
+    for payload in (None, {}, _make_s708_payload(local_env_facts="显存 24GB")):
+        sp = mod._build_chat_system_prompt(payload)
+        assert rule in sp, "边界语补句未注入 system prompt"
+    # 既有三条边界语与角色设定不退化（只增不改）。
+    sp = mod._build_chat_system_prompt(_make_payload())
+    assert "讨论助手" in sp
+    assert "不要现在就重写完整复现计划" in sp
+    assert "当前计划上下文" in sp
+
+
+# --- CP-5.10-6：AC-S7-37 契约不变 + 新增文案全部为模块级具名常量 ----------------- #
+def test_cp_5_10_6_decision_set_still_exactly_five():
+    """决策选项集合仍**恰** 5 类：4 类 resume 决策字面量精确相等 + 取消走 cancel_task。"""
+    import ast
+    import pathlib
+
+    mod = _plan_review_mod()
+    src = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    found = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        for key, value in zip(node.keys, node.values):
+            if (
+                isinstance(key, ast.Constant) and key.value == "decision"
+                and isinstance(value, ast.Constant) and isinstance(value.value, str)
+            ):
+                found.add(value.value)
+    assert found == _EXPECTED_RESUME_DECISIONS, (
+        f"resume 决策应恰 4 类，实际：{sorted(found)}"
+    )
+    # 第 5 类"取消"：不走 decision 字面量，走 controller.cancel_task。
+    assert "controller.cancel_task(thread_id)" in src
+    assert len(found) + 1 == _EXPECTED_DECISION_COUNT
+
+
+def test_cp_5_10_6_no_new_interrupt_kind_in_ui():
+    """审核页不产出任何 interrupt 种类（只消费 payload）——interrupt_kind 集合不新增。"""
+    src = _plan_review_source()
+    assert '"interrupt_kind":' not in src
+    assert "interrupt(" not in src
+
+
+def test_cp_5_10_6_all_new_user_texts_are_named_module_constants():
+    """新增文案逐个 hasattr 核对（供 T-S7-5-11 按名 import）+ 非空 + 零英文标识。"""
+    import re
+
+    mod = _plan_review_mod()
+    for name in _S708_UI_TEXT_CONSTANT_NAMES:
+        assert hasattr(mod, name), f"模块级常量 {name} 缺失（守门将按名 import 它）"
+        value = getattr(mod, name)
+        assert isinstance(value, str), f"{name} 应为 str"
+        assert value.strip(), f"{name} 不得为空串"
+        # 用户可见文案红线：一律通俗中文，零内部枚举 / 字段名 / 英文缩写。
+        # 本任务新增文案实测零 ASCII 字母，故这里直接按"不得出现字母串"硬断。
+        letters = re.findall(r"[A-Za-z]+", value)
+        assert not letters, f"{name} 出现英文标识 {letters}，违反用户可见文案零术语红线"
+
+
+def test_cp_5_10_6_no_remote_machine_offer_in_new_texts():
+    """新增文案不得出现"提供其他远程机器"或任何暗示由系统远程执行的选项（本次不做）。"""
+    mod = _plan_review_mod()
+    banned = ("远程", "云端", "云主机", "帮你找", "替你跑", "服务器集群")
+    for name in _S708_UI_TEXT_CONSTANT_NAMES:
+        value = getattr(mod, name)
+        for word in banned:
+            assert word not in value, f"{name} 含被禁措辞「{word}」"

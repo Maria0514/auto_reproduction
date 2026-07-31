@@ -43,6 +43,17 @@ sp5 渲染改造（T-S5-3-4，S5-04/05/06/10，架构 §7.4/§7.5/§7.6/§7.10�
     - **嵌套降维（AC-S5-20）**：dict/list 指标值逐键行降维渲染（``_flatten_entries``），
       禁 ``str()`` 整塞单元格；执行概况节 key_packages 逐包渲染。
 
+sp7 渲染增量（S7-08，T-S7-5-9，架构 sp7 §18.1.2 落点 7/9 + §18.7(6)）：
+    - **第 4 条正交标注 ``scale_reduced``**（``_determine_conclusion`` **末尾追加**）
+      ← ``reproduction_plan.scale_reduced is True``。经既有 ``and not annotations``
+      通道**强制不得评为科学复现**（AC-S7-38）；``ui/pages/result_report.py`` 复用
+      同一判定函数，结论卡片**零改动**自动跟随降档。
+    - **声明块第 4 段**「缩小规模复现」：静态文案 ``_SCALE_REDUCED_DECLARATION`` +
+      ``local_fit_note`` 原文（非空才附）。声明块在三形态分支**之前**渲染、三形态
+      共用 ⇒ 只产代码路径同样带该声明（Maria 裁决 8，``_render_code_only`` 零改动）。
+    - **零扰动**：标记为假 / 缺键 / 取值为字符串 ``"false"`` 时，annotations 与报告
+      Markdown 与 sp5 基线**字节一致**。
+
 **红线（CP-C2-5，sp5 T-S5-3-2 显式扩展）**：reporting 是终点消费者，只读不改——
 返回 dict **仅含** ``report_path``、``current_step`` 和 ``honesty_audit``（S5-03
 诚实性审计结果，单值 last-write-wins，架构 §1 / §10.1 R-7），绝不返回 / 覆盖
@@ -244,13 +255,21 @@ def _determine_conclusion(
         - ``credential_degraded`` ← exec_result.degraded_credentials 快照非空；
         - ``incomplete_execution`` ← step_reconciliation 存在未执行步骤 ∨
           budget_truncated（attribution_unavailable **不触发**——R-2 保守语义下
-          其成立时 unexecuted_steps 已置空，"无法归属 ≠ 未执行"）。
+          其成立时 unexecuted_steps 已置空，"无法归属 ≠ 未执行"）；
+        - ``scale_reduced`` ← ``reproduction_plan.scale_reduced is True``（S7-08，
+          架构 sp7 §18.1 裁决 7 + §18.1.2 落点 7）。**第 4 条，末尾追加**：既有
+          三条的顺序与取值一字不动 ⇒ 标记为假时全链路零扰动（AC-S7-38）。
+          标注值与 plan 键 1:1 同名，省掉一张映射表。
     exec_result 新键一律 ``.get()`` 防御读（旧 checkpoint 7 键快照兼容，R-6）。
     """
     result = exec_result if isinstance(exec_result, dict) else {}
     success = result.get("success") is True
 
     annotations: List[str] = []
+
+    # S7-08：plan 上移到 annotations 判定之前（原在 goal_checks 处才取），供第 4 条
+    # 标注复用，**不新增读取**（架构 sp7 §18.1.2 落点 7）。
+    plan = state.get("reproduction_plan")
 
     notice = state.get("simulation_notice")
     has_notice = notice is not None and bool(str(notice).strip())
@@ -270,7 +289,13 @@ def _determine_conclusion(
     if bool(unexecuted) or result.get("budget_truncated") is True:
         annotations.append("incomplete_execution")
 
-    plan = state.get("reproduction_plan")
+    # S7-08 第 4 条标注（**末尾追加**）：计划自报"已按本机可跑规模缩过" → 强制不得
+    # 评为科学复现（下方 ``and not annotations`` 即该降档通道，AC-S7-38 / Maria 裁决 6）。
+    # 旧 checkpoint 无该键时 ``.get()`` 返回 None；用 ``is True`` 而非真值判断，
+    # 使字符串 ``"false"`` 判 False（``bool("false") is True`` 陷阱）。
+    if isinstance(plan, dict) and plan.get("scale_reduced") is True:
+        annotations.append("scale_reduced")
+
     expected_results = plan.get("expected_results") if isinstance(plan, dict) else None
     goal_checks = _verify_expected_results(expected_results, result)
 
@@ -500,6 +525,18 @@ _AUDIT_RULE_LABELS: Dict[str, str] = {
     "constant_outcome": "常量结局（评估函数恒返回常量）",
 }
 
+#: S7-08 缩小规模复现声明（架构 sp7 §18.1.2 落点 9）。**静态中文常量，受 S7-08 新术语
+#: 守门按名 import 覆盖**（`tests/test_s708_user_text_guard.py`）——通俗中文、零内部
+#: 字段名/英文缩写；改动此文案须同步守门。
+_SCALE_REDUCED_DECLARATION: str = (
+    "> ⚠️ **本次复现是按这台机器实际跑得动的规模缩小后做的**：可能换用了更小的模型、"
+    "只取了部分数据、或减少了实验组数量。因此这里得到的数字**不能用来支持或否定"
+    "论文按原始规模做出的实验结论**，只能说明这套代码在缩小规模下确实跑得通。"
+)
+
+#: 缩规模适配说明的引出语（模型自述原文的前导句，同受新术语守门覆盖）。
+_SCALE_REDUCED_NOTE_LEAD: str = "本次是怎么缩的、这台机器够不够（计划阶段的说明原文）："
+
 
 def _credential_purpose_map(state: GlobalState) -> Dict[str, str]:
     """从 plan.required_credentials 建 purpose_key → purpose 中文说明映射（S5-01）。
@@ -532,6 +569,10 @@ def _render_annotation_notices(
     ``audit["hits"]`` 证据（snippet 已脱敏）；credential_degraded ←
     ``exec_result["degraded_credentials"]``（purpose 中文说明查 plan）；
     incomplete_execution ← ``exec_result["step_reconciliation"]`` + ``budget_truncated``。
+
+    S7-08 第 4 段（架构 sp7 §18.1.2 落点 9）：scale_reduced ←
+    ``reproduction_plan["local_fit_note"]``（非空则原样附上，缺键 ≡ ""）。
+    ``annotations`` 为空时本函数早退返回 ``[]`` ⇒ 标记为假时报告字节零扰动。
     """
     annotations = list((conclusion or {}).get("annotations") or [])
     if not annotations:
@@ -615,6 +656,23 @@ def _render_annotation_notices(
             lines.append(">")
             lines.append("> 本次执行因轮次预算耗尽被提前截断，其后的计划步骤未执行。")
         lines.append("")
+
+    # S7-08 第 4 段（末尾追加，架构 sp7 §18.1.2 落点 9）：本函数在 ``_render_report``
+    # 中位于三形态分支**之前**、三形态共用 ⇒ 只产代码路径也自动带该声明
+    # （Maria 裁决 8，`_render_code_only` 零改动，§40 P-14）；**不得按三形态各写一遍**。
+    if "scale_reduced" in annotations:
+        lines.append("### 缩小规模复现")
+        lines.append("")
+        lines.append(_SCALE_REDUCED_DECLARATION)
+        lines.append("")
+        plan = state.get("reproduction_plan")
+        fit_note = plan.get("local_fit_note") if isinstance(plan, dict) else None
+        if fit_note is not None and str(fit_note).strip():
+            lines.append(_SCALE_REDUCED_NOTE_LEAD)
+            lines.append("")
+            for raw in str(fit_note).splitlines():
+                lines.append(f"> {raw}")
+            lines.append("")
 
     return lines
 

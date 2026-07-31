@@ -69,6 +69,49 @@ _KEY_AWAIT_BASELINE = "_review_await_baseline"
 _AWAIT_RETURN_KINDS = ("revise", "switch_repo")
 
 
+# =========================================================================== #
+# S7-08（T-S7-5-10）：本机情况披露 —— 全部用户可见静态文案的模块级具名常量
+#
+# 为什么必须是具名常量而不是内联字面量：新术语守门（tests/test_s708_user_text_guard.py）
+# 按名 import 逐条扫描这些串，内联写法守门根本扫不到，AC-S7-40 会"扫 0 条却 passed"。
+# 文案红线（PRD sp7 §10.6 / AC-S7-40）：一律通俗中文；零内部枚举 / 字段名 / 节点名 /
+# 工具名 / 自创英文缩写；不出现任何暗示"换台远程机器替你跑"的选项；未覆盖的维度写
+# "未探测"，不写数字、不写"建议多少"。
+# =========================================================================== #
+
+# 只读披露块的标题与两段小标题。
+_LOCAL_ENV_BLOCK_TITLE = "### 🖥️ 这台机器的实测情况与计划适配说明"
+_LOCAL_ENV_FACTS_HEADING = "**这台机器实测到什么**（下面是原样记录，供你核对计划里的硬件说法有无出处）"
+_LOCAL_FIT_HEADING = "**这份计划在这台机器上怎么跑**（能不能完整跑、预计占用多少、有没有缩小规模）"
+
+# 取不到本机实测记录时的静态兜底句（恒常展示，绝不留白块）。
+_LOCAL_ENV_FACTS_FALLBACK = (
+    "本次没有取得这台机器的实测记录：显卡、显存、内存、磁盘、软件版本等维度均**未探测**。"
+    "计划里若出现硬件相关的说法，都没有这台机器的实测依据，请你自行核对。"
+)
+
+# 计划没写本机适配说明时的静态兜底句。
+_LOCAL_FIT_NOTE_FALLBACK = (
+    "这份计划没有给出针对这台机器的适配说明：够不够完整跑、大概要占用多少、有没有缩小规模，"
+    "都**未说明**。请结合上面这台机器的实测记录自行判断，或先在「修改计划」里与规划助手讨论一轮。"
+)
+
+# 「仅复现代码」按钮的上下文说明：仅在计划自报已缩小规模时补充展示（其余情形零扰动）。
+# 措辞刻意只说"之后拿到合适的机器再跑"——本次不做远程执行、也不代用户张罗机器。
+_CODE_ONLY_SCALE_REDUCED_NOTE = (
+    "这台机器跑不动论文原本的完整规模，上面这份计划是缩小规模后的版本。"
+    "如果你不想在这台机器上缩着跑，可以选择「仅复现代码」——本次只产出可运行的代码与说明、"
+    "不在这台机器上真跑，之后拿到合适的机器再跑完整规模。"
+)
+
+# 讨论助手的边界语补句（架构 sp7 §18.8 ③ 的缓解办法）：计划上下文是原样 JSON 注入的，
+# 里面全是英文键名，不加这句助手会在中文回复里直接复述字段名。
+_CHAT_NO_FIELD_NAME_RULE = (
+    "4. 回复一律用通俗中文，**不要复述上下文里的字段名、英文标识或英文缩写**——"
+    "那些是系统内部名称，用户看不懂，请改用平实的中文说法。"
+)
+
+
 def _safe_int(value: object, default: int = -1) -> int:
     """容错转 int（payload.revise_count 可能缺失/非数）。"""
     try:
@@ -136,12 +179,17 @@ def _format_plan_context(payload: Optional[Dict]) -> str:
     取 planning 重规划同款的三类字段（reproduction_plan / paper_analysis_summary /
     resource_info），用 ``json.dumps(..., sort_keys=True, ensure_ascii=False)`` 稳定渲染。
     防御式 .get：满 / 空 / partial payload 均不抛（payload 为 None 视作空 dict）。
+
+    S7-08（T-S7-5-10，架构 sp7 §18.8 ② / Maria 裁决 9）：**第 4 键 = 本机实测事实**。
+    用户讨论"换一种缩法"时，助手若看不到这台机器的实测情况，会建议这台机器根本跑不动
+    的方案。既有三键与渲染形态一字不动，只在字典里多一项。
     """
     payload = payload or {}
     context = {
         "reproduction_plan": payload.get("reproduction_plan") or {},
         "paper_analysis_summary": payload.get("paper_analysis_summary") or {},
         "resource_info": payload.get("resource_info") or {},
+        "local_env_facts": payload.get("local_env_facts") or "",
     }
     # default=str 兜底不可序列化对象；sort_keys 保证同一 payload 渲染稳定（便于直测）。
     return json.dumps(context, ensure_ascii=False, sort_keys=True, indent=2, default=str)
@@ -152,6 +200,9 @@ def _build_chat_system_prompt(payload: Optional[Dict]) -> str:
 
     边界语（硬约束，对应 PRD §2.12「对话不直接落计划」）：帮用户澄清 / 敲定修改方向、
     用中文简洁讨论，**不要现在就重写完整计划或输出大段 JSON / 代码**——敲定后系统另行重规划。
+
+    S7-08（T-S7-5-10，架构 sp7 §18.8 ③）：再补第 4 条边界语 ``_CHAT_NO_FIELD_NAME_RULE``
+    ——上下文是整份计划的原样 JSON，里面全是英文键名，不禁止助手就会在中文回复里复述它们。
     """
     return (
         "你是论文复现计划的「修改方向讨论助手」。当前一份复现计划已生成并等待用户审核，"
@@ -160,7 +211,8 @@ def _build_chat_system_prompt(payload: Optional[Dict]) -> str:
         "1. 帮用户澄清意图、敲定本轮要修改的方向，用中文简洁地与用户讨论；\n"
         "2. 每次回复聚焦讨论与建议，**不要现在就重写完整复现计划、不要输出大段 JSON 或代码**；\n"
         "3. 真正的完整重规划由系统在用户点击「确定方案并重新生成计划」后另行触发——"
-        "你现在只负责把方向讨论清楚，不要越俎代庖直接产出最终计划。\n\n"
+        "你现在只负责把方向讨论清楚，不要越俎代庖直接产出最终计划；\n"
+        f"{_CHAT_NO_FIELD_NAME_RULE}\n\n"
         "以下是当前复现计划与相关上下文（供你理解现状，不要原样复述）：\n"
         "--- 当前计划上下文 ---\n"
         f"{_format_plan_context(payload)}\n"
@@ -322,6 +374,72 @@ def _render_plan(plan: Dict) -> None:
             st.markdown("**交付物**")
             for d in deliverables:
                 st.markdown(f"- {d}")
+
+
+# =========================================================================== #
+# S7-08（T-S7-5-10）：这台机器的实测情况与计划适配说明 —— 恒常展示的只读披露块
+#
+# 背景（PRD sp7 §10.6）：本机实测事实此前只进模型上下文、用户完全看不到，是"计划里
+# 凭空写出一个硬件数字"这类 bug 长期无人察觉的根因之一。故本块**恒常展示、不折叠、
+# 不做条件隐藏**——取不到就展示静态兜底句，绝不渲染空白块。
+#
+# 边界：整块只读，不含任何输入控件与按钮；不新增中断种类、不新增决策类型、不新增按钮。
+# 既有 environment 折叠块（"环境依赖"）保持原样不动，本块与它并存互不替代。
+# =========================================================================== #
+
+
+def _plan_of(payload: Optional[Dict]) -> Dict:
+    """从 payload 取复现计划字典（None / 非 dict / 缺键一律退化为空 dict，纯函数）。"""
+    plan = (payload or {}).get("reproduction_plan")
+    return plan if isinstance(plan, dict) else {}
+
+
+def _local_env_facts_text(payload: Optional[Dict]) -> str:
+    """本机实测事实的展示文本：原文优先，缺键 / 空串 / 空白一律走静态兜底常量（纯函数）。
+
+    旧 checkpoint 没有这个键、或值不是字符串（历史脏数据）时同样优雅退化，不抛不留白。
+    """
+    raw = (payload or {}).get("local_env_facts")
+    text = "" if raw is None else str(raw).strip()
+    return text or _LOCAL_ENV_FACTS_FALLBACK
+
+
+def _local_fit_note_text(payload: Optional[Dict]) -> str:
+    """本机适配说明的展示文本：计划里的原文优先，缺键 / 空串 / 空白走静态兜底常量（纯函数）。
+
+    这一段同时承载"能不能完整跑 / 预计占用多少 / 缩了什么怎么缩的"三项披露内容
+    （PRD sp7 §10.6 的第 2~4 点），由规划模型以整段通俗中文给出，此处原样展示。
+    """
+    raw = _plan_of(payload).get("local_fit_note")
+    text = "" if raw is None else str(raw).strip()
+    return text or _LOCAL_FIT_NOTE_FALLBACK
+
+
+def _is_scale_reduced(payload: Optional[Dict]) -> bool:
+    """计划是否自报"已按这台机器缩小规模"（纯函数）。
+
+    刻意用 ``is True`` 而非真值判断：历史 / 脏数据里的字符串 "false" 在 Python 里为真，
+    真值判断会把"没缩规模"误判成"缩了规模"（规划节点侧已做归一化，此处不重复兜底）。
+    """
+    return _plan_of(payload).get("scale_reduced") is True
+
+
+def _render_local_env_block(payload: Optional[Dict]) -> None:
+    """渲染"这台机器的实测情况与计划适配说明"只读块（恒常展示，无条件隐藏分支）。"""
+    with st.container(border=True):
+        st.markdown(_LOCAL_ENV_BLOCK_TITLE)
+
+        st.markdown(_LOCAL_ENV_FACTS_HEADING)
+        facts = _local_env_facts_text(payload)
+        if facts == _LOCAL_ENV_FACTS_FALLBACK:
+            # 兜底句是给人读的整句中文，用普通正文渲染；只有真实实测记录才进等宽块。
+            st.markdown(facts)
+        else:
+            # 实测记录是多行原始文本，用等宽块原样呈现（只读、不做任何再加工）。
+            st.code(facts, language=None)
+
+        st.markdown(_LOCAL_FIT_HEADING)
+        st.markdown(_local_fit_note_text(payload))
 
 
 def _render_repos(resource_info: Dict) -> None:
@@ -737,6 +855,12 @@ def _render_decision_buttons(
             _begin_awaiting("code_only", payload)
             st.rerun()
 
+    # S7-08（T-S7-5-10）：本机跑不动完整规模时，给上面这个既有按钮补一句上下文说明。
+    # 只加说明文字：按钮的 key / label / resume payload 一字不动，不新增按钮、不新增决策
+    # 类型（决策仍恰 5 类）。计划未自报缩规模时不渲染 —— 对既有界面零扰动。
+    if _is_scale_reduced(payload):
+        st.caption(_CODE_ONLY_SCALE_REDUCED_NOTE)
+
     # --- 修改计划：S2-12 多轮对话面板（替换原一次性 textarea）---
     # 对话敲定方向 → 模型总结「修改方向纪要」作 user_feedback → 复用 revise awaiting 落定。
     _render_revise_chat(controller, thread_id, payload, llm_config_set)
@@ -871,6 +995,9 @@ def render() -> None:
         return
 
     _render_plan(payload.get("reproduction_plan") or {})
+    st.divider()
+    # S7-08 T-S7-5-10：这台机器的实测情况与计划适配说明（恒常展示的只读披露块）。
+    _render_local_env_block(payload)
     st.divider()
     _render_repos(payload.get("resource_info") or {})
     st.divider()

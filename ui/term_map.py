@@ -20,6 +20,8 @@
     - report_form（报告三形态）← reporting.py::_determine_report_form；
     - conclusion_level / annotation / audit_rule ← T-S5-3-4 文案定稿清单
       **逐字入表**（AC-S5-07 措辞红线：engineering 禁"复现成功"字样）；
+      annotation 第 4 值 ``scale_reduced`` 为 Sprint 7（S7-08）新增，源
+      ``reporting.py::_determine_conclusion``（架构 sp7 §18.1.2）；
     - user_fix_decision ← execution.py::_route_user_fix_decision 三决策值
       （interrupt#2 resume 契约）。
 
@@ -79,10 +81,11 @@ TERM_LABELS: Dict[str, str] = {
     "conclusion_level:science": "复现成功（科学复现）",
     "conclusion_level:engineering": "代码跑通（工程复现），论文实验结论未验证",
     "conclusion_level:none": "未成功复现（降级）",
-    # --- annotation（正交标注三值，T-S5-3-4 文案定稿）---
+    # --- annotation（正交标注四值：三值为 T-S5-3-4 文案定稿，第 4 值为 S7-08 新增）---
     "annotation:simulation": "模拟/未验证内容",
     "annotation:credential_degraded": "凭证降级",
     "annotation:incomplete_execution": "执行不完整",
+    "annotation:scale_reduced": "缩小规模复现",
     # --- audit_rule（honesty_audit 三规则，T-S5-3-4 文案定稿）---
     "audit_rule:answer_leakage": "答案泄漏（非评估代码直接读取答案字段）",
     "audit_rule:hardcoded_score": "硬编码分数（评分结果由字面量写死）",

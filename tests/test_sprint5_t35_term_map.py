@@ -98,6 +98,8 @@ def test_cp351_humanize_hits_every_table_entry():
         ("annotation:simulation", "模拟/未验证内容"),
         ("annotation:credential_degraded", "凭证降级"),
         ("annotation:incomplete_execution", "执行不完整"),
+        # S7-08 新增第 4 条标注文案（T-S7-5-9，架构 sp7 §18.1.2）。
+        ("annotation:scale_reduced", "缩小规模复现"),
         ("audit_rule:answer_leakage", "答案泄漏（非评估代码直接读取答案字段）"),
         ("audit_rule:hardcoded_score", "硬编码分数（评分结果由字面量写死）"),
         ("audit_rule:constant_outcome", "常量结局（评估函数恒返回常量）"),
@@ -172,8 +174,10 @@ def test_cp351_covers_report_forms_conclusions_annotations_audit_decisions():
     """报告三形态 / 两级档位 / 三标注 / 三审计规则 / 三决策值——各 domain 值域精确对齐。"""
     assert _domain_values("report_form") == {"full_success", "code_only", "degraded"}
     assert _domain_values("conclusion_level") == {"science", "engineering", "none"}
+    # annotation 第 4 值 scale_reduced 为 S7-08 新增（reporting._determine_conclusion
+    # 末尾追加）——集合等式**只加一项、不放宽形态**（仍是 ``==`` 精确对齐）。
     assert _domain_values("annotation") == {
-        "simulation", "credential_degraded", "incomplete_execution",
+        "simulation", "credential_degraded", "incomplete_execution", "scale_reduced",
     }
     assert _domain_values("audit_rule") == {
         "answer_leakage", "hardcoded_score", "constant_outcome",

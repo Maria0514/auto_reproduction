@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 import logging
 import re
@@ -470,8 +471,22 @@ def test_probe_tool_name_is_single_source_of_truth(tmp_path, monkeypatch):
 
 
 def test_digest_render_rules_order_dedup_and_cap():
-    """渲染规则：首次出现顺序 + 同命令保留最后一次 + 单条截断到上限 + 结构性封顶。"""
+    """渲染规则：首次出现顺序 + 同命令保留最后一次 + 单条截断到上限 + 总长封顶。
+
+    S7-08（T-S7-5-6，架构 §18.3.4 / dev-plan §32.4 第 11 条）**只换不弱化**地同步
+    两处既有断言，并顺带成为新的总长截断的正向覆盖：
+
+    1. 原"逐行 ``len(line) <= max(cap, 60)``"在 cap 400 -> 2600 后会退化成"几乎
+       不可能失败"⇒ 改为对**单条命令块整体**断言（形态更严，不是放宽）；
+    2. 原结构性上界"清单条数 × 单条上限"依赖"清单恰 15 条"这个分母，S7-09 放开
+       允许清单后该分母消失 ⇒ 换成显式总长常量 ``_PROBE_DIGEST_MAX_CHARS`` 断言；
+    3. 本用例的 15 条 × ``cap * 3`` 恰好触顶总长上限，故一并断言"截尾 + 追加说明
+       行"（**不静默**，架构 §18.3.2 / R-S7-42）。
+    """
     cap = resource_scout_module._PROBE_OUTPUT_MAX_CHARS
+    digest_cap = resource_scout_module._PROBE_DIGEST_MAX_CHARS
+    note = resource_scout_module._PROBE_DIGEST_TRUNCATED_NOTE
+
     history = [
         _probe_msg("lscpu", 0, stdout="CPU-FIRST"),
         _probe_msg("free -h", 1, stdout="MEM"),
@@ -486,10 +501,19 @@ def test_digest_render_rules_order_dedup_and_cap():
         for i, cmd in enumerate(ept._PROBE_COMMANDS)
     ]
     long_digest = _digest_env_probe(long_history)
-    for line in long_digest.splitlines():
-        assert len(line) <= max(cap, 60), f"单条输出未截断到 {cap}: {len(line)}"
-    # 结构性上界 = 清单条数 × 单条上限 + 命令行与段首开销
-    assert len(long_digest) <= len(ept._PROBE_COMMANDS) * (cap + 60) + 200
+
+    # 总长确定性上界（AC-S7-42 后半句）+ 触顶不静默
+    assert len(long_digest) <= digest_cap, f"digest 总长未封顶：{len(long_digest)}"
+    assert long_digest.endswith(note), "触顶截尾必须在末尾追加说明行（禁止静默截断）"
+    assert long_digest.startswith("本机环境实测"), "截尾保头：抬头行必须留下"
+
+    # 单条命令块整体（剥掉尾部说明行后）不得超过单条上限
+    body = long_digest[: -len(note)].rstrip("\n")
+    blocks = body.split("\n$ ")
+    assert len(blocks) >= 2, "digest 应含段首行 + 至少一条命令块"
+    for block in blocks[1:]:
+        out = block.split("\n", 1)[1] if "\n" in block else ""
+        assert len(out) <= cap, f"单条命令块输出未截断到 {cap}: {len(out)}"
 
 
 def test_digest_failure_fallbacks_never_block_node(caplog):
@@ -691,7 +715,10 @@ def _new_prompt_text() -> str:
         if not ln.startswith("- "):
             break
         section.append(ln)
-    assert len(section) == 6, f"环境探测段落应为标题 + 5 条要点，实得 {len(section)}"
+    # S7-08（T-S7-5-7）：探测段落改写为 6 项必探维度后由"标题 + 5 条"变为
+    # "标题 + 11 条"（1 条总起 + 6 条必探维度 + 1 条节制 + 3 条既有约束）。
+    # **只换不弱化**：仍是精确 `==`，不改成范围/下界断言。
+    assert len(section) == 12, f"环境探测段落应为标题 + 11 条要点，实得 {len(section)}"
     return "\n".join(tool_lines + section)
 
 
@@ -733,3 +760,124 @@ def test_s7_07_round_budget_raised_to_30():
     AC-S7-20 的其余分句（跨论文 SystemMessage 字节一致、新增文案无插值痕迹）不受影响。
     """
     assert config.REACT_MAX_ROUNDS_RESOURCE_SCOUT == 30
+
+
+# ===========================================================================
+# S7-08（T-S7-5-6 / T-S7-5-7）：探测摘要上限与 6 项必探维度
+#   —— CP-5.6-2 / CP-5.6-3 / CP-5.6-4 / CP-5.7-1 / CP-5.7-4
+# ===========================================================================
+
+
+def test_s708_probe_output_cap_covers_return_side_hard_bound():
+    """CP-5.6-2（架构 §18.7(4) + dev-plan §40 P-12）：**关系断言，不断言字面量 2600**。
+
+    返回端 ``sandbox/local_venv.py`` 截断后**前置一行 marker**，故真实硬上界是
+    ``_PROBE_OUTPUT_MAX_BYTES + len(marker)``（2542）而非 2500 —— 按架构原文字面写
+    ``>= 2500`` 时把渲染端上限调到 2520 仍能过、而关键包已可能被切（R-S7-45）。
+    marker **无具名常量**（内联 f-string），故在测试内按 ``local_venv`` 同一 f-string
+    **就地计算**（不新增生产常量）：S7-09 改返回端字节数时本断言自动跟随；marker
+    本身被改写时，下面那条"f-string 仍在源码里"的断言会发现。
+    """
+    max_bytes = ept._PROBE_OUTPUT_MAX_BYTES
+    marker = f"... [truncated, kept last {max_bytes} bytes] ...\n"
+
+    src = inspect.getsource(lv._truncate_output)
+    assert "[truncated, kept last {max_bytes} bytes]" in src, (
+        "sandbox/local_venv.py 的截断 marker 已被改写——本关系断言里就地计算的 "
+        "marker 长度已失真，须同步更新（dev-plan §40 P-12）"
+    )
+
+    assert resource_scout_module._PROBE_OUTPUT_MAX_CHARS >= max_bytes + len(marker), (
+        "渲染端单条上限必须覆盖返回端单路硬上界（外层上限 >= 内层上限），"
+        "否则返回端刻意保尾留下的 torch / transformers 被渲染端取头原样作废"
+    )
+    # 同一条结构性原则再上一层：整份总长上限是单条上限的外层。
+    assert (
+        resource_scout_module._PROBE_DIGEST_MAX_CHARS
+        >= resource_scout_module._PROBE_OUTPUT_MAX_CHARS
+    ), "整份总长上限必须 >= 单条上限（外层 >= 内层）"
+
+
+def test_s708_digest_truncated_note_is_named_user_facing_constant():
+    """CP-5.6-3 负向 + CP-5.6-4（dev-plan §40 P-13）：截尾说明是**模块级具名常量**的
+    用户可见文案；未触顶时说明行不出现（零扰动）。
+
+    S7-08 起 ``local_env_facts`` 经计划审核中断 payload 直达审核页只读展示块，
+    用户会亲眼看到这句话 ⇒ 它是新增用户可见文案，必须具名（守门按名 import）
+    且零内部术语。
+    """
+    note = resource_scout_module._PROBE_DIGEST_TRUNCATED_NOTE
+    assert isinstance(note, str) and note.strip(), "截尾说明不得为空（清空即失去说明力）"
+
+    # 复用既有守门口径 + 本节点内部标识：零内部术语泄漏
+    assert _hits(note) == [], f"截尾说明泄漏内部枚举 / 节点名 / 技术术语：{_hits(note)}"
+    for forbidden in (PROBE_TOOL_NAME, NODE_NAME, "digest", "probe",
+                      "_PROBE_DIGEST_MAX_CHARS", "字节", "truncate"):
+        assert forbidden.lower() not in note.lower(), forbidden
+    assert not re.search(r"\d", note), "说明行不得写死字节数 / 阈值这类内部数字"
+
+    # 未触顶：说明行不出现（零扰动）
+    short = _digest_env_probe([_probe_msg("nvidia-smi -L", 0, stdout=_GPU_FACT)])
+    assert short, "正常路径 digest 不应为空"
+    assert note not in short, "未触顶时不得追加截尾说明（零扰动）"
+    assert len(short) <= resource_scout_module._PROBE_DIGEST_MAX_CHARS
+
+
+_SIX_REQUIRED_PROBE_COMMANDS = (
+    "nvidia-smi",                 # GPU / 显存与占用
+    "nvcc --version",             # CUDA
+    "free -h",                    # 内存
+    "df -h .",                    # 磁盘
+    "python3 --version",          # Python 版本
+    "pip list --format=freeze",   # 关键包版本
+)
+
+
+def test_s708_probe_section_lists_six_required_dimensions():
+    """CP-5.7-1（AC-S7-41 / PRD §10.8 第 2 条）：探测段落列全 6 项必探维度，
+    且"3~5 条"这类硬数字已删。
+
+    背景：真跑实证只探到 GPU / CUDA / 磁盘三项，因为原段落只点名了这三项；
+    而"一般探 3~5 条即可"与 AC-S7-25 原上界 ``≤5`` 是本次编造内存的共犯。
+
+    **AC-S7-25 同步登记**：其上界已修订为 ``≤10``（PRD §10.8 第 2 条 / AC-S7-41），
+    三条负向状态断言（未 force_finish / 未进 ``degraded_nodes`` / ``resource_strategy``
+    未被改写为从零实现）**一字不动**。该 AC 是**真跑观测项**，代码侧无断言承载
+    （S7-06 由主控用临时计数包装脚本执行），故本次代码侧无同步动作。
+    """
+    section = _new_prompt_text()
+    for cmd in _SIX_REQUIRED_PROBE_COMMANDS:
+        assert cmd in section, f"必探维度对应命令未写进探测段落：{cmd}"
+
+    for token in ("3~5", "3-5", "3～5", "3 ~ 5"):
+        assert token not in _SCOUT_BODY, f"探测节制不得再写成硬数字：{token}"
+
+    # prompt 里点名的命令必须逐字在允许清单内，否则模型照做会被工具整条拒绝。
+    for cmd in _SIX_REQUIRED_PROBE_COMMANDS:
+        assert cmd in ept._PROBE_COMMANDS, f"{cmd} 不在允许清单内（照 prompt 发必被拒）"
+
+
+def test_s708_ac_s7_41_digest_records_command_even_when_unavailable():
+    """CP-5.7-4（架构 §18.5(2)）：AC-S7-41 判定口径 = **digest 中存在该命令的记录**，
+    而非"出现该维度的数值"。
+
+    本机缺 ``free`` 时 digest 只会写"该命令在本机不可用"——按数值判定则该 AC
+    **永远不过且无法修**（``env_probe_tool.py`` 已被 S7-08 零改动红线冻结）。
+    """
+    history = [
+        _probe_msg("nvidia-smi", 0, stdout=_GPU_FACT),
+        _probe_msg("nvcc --version", 1, stdout="Cuda compilation tools, release 12.1"),
+        # 本机缺 free：命令记录仍须在，只是输出归一为"该命令在本机不可用"
+        _probe_msg("free -h", 2, exit_code=-1,
+                   stderr="subprocess start failed: no such file"),
+        _probe_msg("df -h .", 3, stdout="Filesystem  Size  Avail\nsda1  278G  241G"),
+        _probe_msg("python3 --version", 4, stdout="Python 3.11.9"),
+        _probe_msg("pip list --format=freeze", 5,
+                   stdout="torch==2.3.0\ntransformers==4.41.0"),
+    ]
+    digest = _digest_env_probe(history)
+    for cmd in _SIX_REQUIRED_PROBE_COMMANDS:
+        assert f"$ {cmd}" in digest, f"必探维度 {cmd} 的命令记录未进 digest"
+    assert "该命令在本机不可用" in digest, (
+        "命令不可用时仍须留下记录（这正是判定口径不能按数值断的原因）"
+    )

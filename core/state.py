@@ -123,6 +123,22 @@ class ReproductionPlan(TypedDict):
         - required_credentials: 新增。planning ReAct 产出 + map 回填默认 []；
           每条恰含 purpose_key / purpose 两键（Dict[str, str]），供 coding gate 与
           计划审核页只读展示消费。**绝不存凭证值本身**（值走 .secrets / 会话覆盖层）。
+
+    Sprint 7 变更（S7-08，架构 sp7 §18.1 裁决 1/4 + §18.1.2）：新增两个**扁平顶层键**，
+    承载"本机能不能跑得动 / 跑不动是怎么缩的"这一判断结果：
+        - scale_reduced: 计划是否已按本机可跑规模缩过（更小的模型 / 数据子集 /
+          减少实验组等）。缺省 False，**缺键 ≡ False**（"没缩规模"是安全默认）。
+        - local_fit_note: 给用户看的一段通俗中文说明——本机够不够、缺口是什么、
+          按什么方式缩的、本次预计占用（GPU 张数 / 显存 / 磁盘增量 / 预计时长）。
+          缺省 ""，**缺键 ≡ ""**。
+    纪律三条（与 sp5 新键同款，另加一条 S7-08 特有的）：
+        1. 下游消费一律 `.get()` 防御读——旧 checkpoint 无这两键时不 KeyError、
+           不造哨兵值（架构 §18.1 裁决 4）；
+        2. 两键**不进** planning 输出契约的 `required`（缺省已是安全值，进 required
+           会触发 react_base finalize 多烧一次 LLM 调用，架构 §18.1 裁决 3）；
+        3. **scale_reduced 是模型自报的判断结果，不是系统算出的"计划与实测偏离"标记**
+           （Maria 裁决 7：不留偏离痕）。系统不产出任何机器可读的偏离信号，
+           两者语义不可混同。
     """
     plan_summary: str
     environment: Dict[str, Any]
@@ -135,6 +151,9 @@ class ReproductionPlan(TypedDict):
     user_feedback: Optional[str]
     approved: bool
     required_credentials: List[Dict[str, str]]
+    # === Sprint 7 新增（S7-08，架构 sp7 §18.1.2）===
+    scale_reduced: bool
+    local_fit_note: str
 
 
 class ExecutionResult(TypedDict):

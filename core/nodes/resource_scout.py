@@ -53,8 +53,40 @@ _VALID_STRATEGIES = ("use_repo", "hybrid", "from_scratch")
 # 沿 coding.py:78 _FIX_NOTE_MAX_CHARS 范式。与 env_probe_tool 的
 # _PROBE_OUTPUT_MAX_BYTES=2500（工具**返回端**字节上限）**职责不同、两者并存
 # 不合并**（架构 §17.3 明裁：合并会让"给模型看的"和"给规划看的"两个上限互相绑架）。
-# 体量结构性封顶 = 清单 15 条 × 400 ≈ 6KB，典型 3~6 条约 1.5KB。
-_PROBE_OUTPUT_MAX_CHARS: int = 400
+#
+# S7-08（T-S7-5-6，架构 §18.3.1）：400 -> 2600。**值是推导出来的，不是拍的**——
+# 返回端 sandbox/local_venv.py:353 是 raw[-max_bytes:] **保留尾部**（错误信息在
+# 末尾）并前置一行 42 字符的截断说明，而本端 _digest_env_probe 是 out[:cap]
+# **保留头部** ⇒ **两级截断方向相反**：返回端刻意保尾留下的 torch / transformers
+# 被本端取头原样作废（R-S7-25 在渲染端原样复发）。2600 >= 2500 + 42 = 2542，
+# 覆盖返回端单路硬上界 ⇒ AC-S7-42 由"调大点碰运气"变成**结构上必然成立**。
+# 调到 800 / 1200 这类中间值是错的——仍低于 2500，关键包进不进 digest 取决于
+# 该机 venv 的包数，用例会退化成运气测试。
+#
+# ⚠ **结构性原则（架构 §18.3.1 新立，改本常量前必读）：
+#    外层上限必须 >= 内层上限，否则内层的截断方向选择被外层作废。**
+_PROBE_OUTPUT_MAX_CHARS: int = 2600
+
+# S7-08（T-S7-5-6，架构 §18.3.2）：整份 digest 的**总长**上限（字符）。
+# 单条抬到 2600 后，原先靠"清单 15 条 × 400 ≈ 6KB"得到的结构性上界会变成
+# ≈39KB（过松）；更关键的是 **S7-09 一旦放开允许清单，"清单条数 = 15"这个分母
+# 直接消失**、结构性上界不复存在 ⇒ 本常量既是 AC-S7-42 要求的确定性总长上界，
+# 也是 S7-09 的**前置防波堤**（不是多一层抽象）。取 8000：6 项必探维度典型合计
+# 约 5.2KB，留约 50% 余量，正常路径不咬。
+# 触顶时**截尾**（抬头行与靠前的必探维度更重要）并追加一行
+# _PROBE_DIGEST_TRUNCATED_NOTE 说明 —— **不静默**（架构 §18.3.2 / R-S7-42）。
+# 同受上面那条"外层上限 >= 内层上限"的结构性原则约束：
+# _PROBE_DIGEST_MAX_CHARS 是 _PROBE_OUTPUT_MAX_CHARS 的外层，必须 >= 后者。
+_PROBE_DIGEST_MAX_CHARS: int = 8000
+
+# S7-08（T-S7-5-6，dev-plan §40 P-13）：整份 digest 触顶截尾时追加的说明行。
+# **这是一条用户可见文案**——S7-08 起 local_env_facts 经计划审核中断 payload
+# 直达审核页只读展示块，用户会亲眼看到这句话（S7-06 时它只进 LLM 上下文，
+# 故当时不算用户文案）。因此两条硬要求：
+#   ① 必须是**模块级具名常量**，不得写成内联字面量 —— 术语守门按名 import 它，
+#      常量不存在则该处文案零守门覆盖（S7-06"扫 0 条却 passed"同款失效模式）；
+#   ② 通俗中文、零内部术语（不出现工具名 / 节点名 / 常量名 / 字节数这类表述）。
+_PROBE_DIGEST_TRUNCATED_NOTE: str = "环境探测摘要过长，后续内容已省略。"
 
 
 RESOURCE_SCOUT_SCHEMA: Dict[str, Any] = {
@@ -102,9 +134,15 @@ _RESOURCE_SCOUT_SYSTEM_PROMPT_BODY = """你是资源搜集与评估专家。任�
 3. 全部失败 -- 在 <result> 中输出 resource_strategy = "from_scratch"，repos = []，selected_repo = null。
 
 【环境探测（必做步骤）】
-- 在给出仓库结论之前，必须先探测本机环境：至少确认有没有 GPU、CUDA 版本，以及磁盘可用空间。
+- 在给出仓库结论之前，必须先探测本机环境。下面 6 项是必探维度，每项至少各探一条命令，缺一项都算没探完：
+- 1）显卡与显存占用：nvidia-smi（想先看有几张卡可以用 nvidia-smi -L）；
+- 2）CUDA 版本：nvcc --version；
+- 3）内存：free -h；
+- 4）磁盘可用空间：df -h .；
+- 5）Python 版本：python3 --version（这条不行再试 python --version）；
+- 6）已装的关键包与版本：pip list --format=freeze。
+- 这 6 项尽量集中在一轮里一次性给出；探完这 6 项就够了，不必再发散去探清单里的其它命令。
 - 探测结果不改变上面三步的顺序与判定，任何探测结果都不构成"找不到仓库"。
-- 一般探 3~5 条即可，尽量集中在一轮里一次性给出。
 - 命令必须与清单逐字一致。被拒绝时照返回里的清单换一条。
 - 探不到、命令在这台机器上不存在、没有 GPU，都是有效结论；照常继续，不要因此改成从零实现。
 
@@ -440,6 +478,9 @@ def _digest_env_probe(react_messages: Optional[Any]) -> str:
       规划上下文之外——规划 LLM 写出的 plan_summary 是**用户可见**的，任何进它
       上下文的英文内部串都有被原样引用的风险（AC-S7-19 精神）；
     - 单条截断到 _PROBE_OUTPUT_MAX_CHARS；
+    - 整份再按 _PROBE_DIGEST_MAX_CHARS **截尾**（保头，抬头行与靠前的必探维度更
+      重要），触顶时末尾追加一行 _PROBE_DIGEST_TRUNCATED_NOTE —— **不静默**
+      （S7-08 / 架构 §18.3.2，R-S7-42）；未触顶时该说明行不出现（零扰动）；
     - **禁止任何非确定性成分**（不写时间戳 / 耗时 / uuid），否则 checkpoint 重放
       与 revise 重入会字节抖动，Prompt Cache 的"破一次"退化成"破每次"。
 
@@ -514,7 +555,14 @@ def _digest_env_probe(react_messages: Optional[Any]) -> str:
         for command in order:
             lines.append(f"$ {command}")
             lines.append(rendered[command])
-        return "\n".join(lines)
+        text = "\n".join(lines)
+
+        # 整份总长封顶（S7-08 / 架构 §18.3.2）：截尾保头 + 显式说明行，不静默。
+        # 说明行本身计入上限，故最终长度恒 <= _PROBE_DIGEST_MAX_CHARS。
+        if len(text) > _PROBE_DIGEST_MAX_CHARS:
+            keep = _PROBE_DIGEST_MAX_CHARS - len(_PROBE_DIGEST_TRUNCATED_NOTE) - 1
+            text = text[:max(keep, 0)].rstrip() + "\n" + _PROBE_DIGEST_TRUNCATED_NOTE
+        return text
     except Exception as exc:  # noqa: BLE001 — 渲染异常一律兜底为 ""，不阻断节点
         logger.warning(
             "[%s] env probe digest failed, fallback to empty: %s", NODE_NAME, exc

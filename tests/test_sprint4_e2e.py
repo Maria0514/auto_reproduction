@@ -616,10 +616,14 @@ def test_cp_g2_1_three_interrupts_serial_same_thread(monkeypatch, tmp_path):
     assert "__interrupt__" in obs["pause1_out"]
     assert obs["pause1_next"] == ("planning",)
     p1 = obs["pause1_ivs"][0]
+    # [S7-08] 第 11 键 local_env_facts（本机实测事实，供审核面板恒常展示）。
+    # 既有 10 键一字不动；此处只增不改，且**必须保持精确相等**——
+    # 弱化成 issubset / >= 会让"payload 悄悄多长出键"重新变得不可见。
     assert set(p1.keys()) == {
         "interrupt_kind", "reproduction_plan", "resource_info",
         "paper_analysis_summary", "degraded_nodes", "node_errors", "revise_count",
         "soft_hint_threshold", "max_total_llm_calls", "switch_repo_failed",
+        "local_env_facts",
     }, f"interrupt#1 payload 键集不符: {sorted(p1.keys())}"
     assert p1["revise_count"] == 0
     plan = p1["reproduction_plan"]

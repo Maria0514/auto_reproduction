@@ -85,6 +85,17 @@ _CREDENTIAL_DEGRADATIONS_DIRECTIVE: str = (
     "所有涉及该凭证的功能必须走模拟/mock 路径，并在报告中如实声明模拟范围。"
 )
 
+# S7-08（T-S7-5-8，架构 §18.1.2 落点 8 + §18.7(5)）：缩规模复现通用指令常量
+# （coding/execution 两侧值必须逐字节相同，由测试断言锁死防单边漂移）。
+# 计划 scale_reduced 为真时注入 HumanMessage payload，告知 agent 按缩小后的规模写代码。
+# 给模型看的指令文案（非用户可见 UI 文案），故不入 §18.2 用户文案守门。
+_SCALE_REDUCED_DIRECTIVE: str = (
+    "重要：本次复现计划已按本机实际可跑的规模缩小。"
+    "计划中的规模参数（模型大小 / 数据子集 / 实验组数 / 训练步数等）是硬约束，"
+    "不得按论文原始规模放大，也不得自行恢复被裁掉的实验组；"
+    "并在产出中如实体现这是缩小规模的复现。"
+)
+
 
 CODING_OUTPUT_SCHEMA: Dict[str, Any] = {
     # title 字段是 langchain_openai.with_structured_output 的强制要求（函数名）。
@@ -434,6 +445,18 @@ def _build_coding_context(state: GlobalState) -> Dict[str, Any]:
             str(k): str(v) for k, v in degradations.items()
         }
         payload["credential_degradations_directive"] = _CREDENTIAL_DEGRADATIONS_DIRECTIVE
+
+    # S7-08（T-S7-5-8，架构 §18.1.2 落点 8 + §18.7(5)(6)）：缩规模指令下游贯穿——
+    # 规划已按本机可跑规模缩过时，把"规模参数是硬约束"这层约束显式送给 coder，
+    # 防其按论文原始规模放大回去。沿 credential_degradations 同款"非空才注入"范式：
+    #   - 用 `is True` 而非真值判断——旧 checkpoint 里该键若为 "false" 字符串，
+    #     bool("false") is True 会误注入（架构 §18.7(6) 点名的下游对称面）；
+    #   - 假 / 缺键 / "false" 三形态下 payload 与 sp5 基线字节一致（零扰动）；
+    #   - 走 HumanMessage 动态通道，由 wrapper 统一 json.dumps(sort_keys=True) 渲染，
+    #     同一 state 下字节幂等（R-PC4 无扰），system prompt 零改动。
+    # plan 取自本函数开头同一处 state.get("reproduction_plan")，不新增读取。
+    if isinstance(plan, dict) and plan.get("scale_reduced") is True:
+        payload["scale_reduced_directive"] = _SCALE_REDUCED_DIRECTIVE
 
     # === 修复回合：只保留反馈裁剪（code_output_dir 已上移无条件注入）===
     exec_result = state.get("execution_result")

@@ -54,23 +54,30 @@ class TestCP151PlanningPromptGuard:
         )
 
     def test_planning_prompt_body_byte_snapshot(self):
-        """planning 主体字节哈希快照守门（批次 1 收口基线）。
+        """planning 主体字节哈希快照守门（字节级回归门）。
 
-        若后续批次意外改动主体前缀，此断言报红（字节级回归门）。
+        若后续批次意外改动主体前缀，此断言报红。
         若有合理改动（如批次收口确认后），在 dev-plan 记录改动原因后更新此快照。
+
+        ⚠ R-S7-41 修复留痕（S7-08 / T-S7-5-5）：本断言在 sp6~sp7 期间一直写成
+        ``EXPECTED_HASH = actual_hash``（"首次运行自锁定当前值"），即 ``x == x``
+        恒真，**零守门能力**——docstring 自称的"字节级回归门"从来就不存在。
+        现已把基线写死为真实字面量。**禁止改回自锁定形态。**
         """
         import hashlib
         body = self._get_planning_body()
         body_bytes = body.encode("utf-8")
         actual_hash = hashlib.sha256(body_bytes).hexdigest()[:16]
 
-        # 快照：批次 1 收口时拍下（第一次运行此测试时记录当前值作为基线）
-        # 注：若需更新快照，在 dev-plan 中记录原因，然后替换下方 EXPECTED_HASH
-        EXPECTED_HASH = actual_hash  # 首次运行自锁定当前值
+        # 基线值见 dev-plan §40.1（R-S7-41 planning prompt 主体字节基线留档表）。
+        # 改动 _PLANNING_SYSTEM_PROMPT_BODY 必须：①重算并同步更新此字面量；
+        # ②在 dev-plan §40.1 新增一行留档变更原因；③跑一次验红（临时改 body → 变红）。
+        # 当前基线：S7-08 一次性静态变更后（主体长 5424 字符，2026-07-30）。
+        EXPECTED_HASH = "a7cad88cdb205c5f"
 
         assert actual_hash == EXPECTED_HASH, (
             f"planning prompt 主体字节已变更（当前：{actual_hash}，基线：{EXPECTED_HASH}）"
-            "——请确认是合规的前缀变更，若是则更新测试快照并在 dev-plan 留档"
+            "——请确认是合规的前缀变更，若是则更新测试快照并在 dev-plan §40.1 留档"
         )
 
     def test_planning_prompt_no_pwc_reference(self):
