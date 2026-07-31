@@ -10,15 +10,33 @@ langchain-core>=0.2.0
 # deepxiv-sdk>=0.2.5  -- 从本地安装: pip install -e ./deepxiv_sdk
 requests>=2.31.0
 pydantic>=2.0.0
+# python-dotenv：app.py:59 生产入口与 tests/conftest.py:22 均 load_dotenv 读 .env。
+# 补声明于 2026-07-30——此前一直漏声明，干净环境按本文件安装后 app.py 起不来。
+python-dotenv>=1.0.0
 
 # ---- 可选依赖 ----
 tiktoken>=0.5.0
 
 # ---- 开发与测试依赖 ----
 pytest>=8.0
+# mypy：静态类型检查，配置见仓库根 mypy.ini（跑法：.venv/bin/mypy）。
+# 仅开发期使用，不参与运行时；接入基线 2026-07-30 实测 mypy 2.3.0。
+mypy>=1.11
+# playwright：tests/test_*_e2e.py 三个浏览器套件（marker: browser）依赖它。
+# 补声明于 2026-07-30——此前一直漏声明。注意除 pip 安装外还需 `playwright install chromium`。
+playwright>=1.40
 
 # ---- Sprint 2 新增依赖（UI 层，任务 D1/D2）----
 # streamlit：venv 实测已装 1.58.0（D1 阶段安装），developing-with-streamlit skill 需 >=1.57，
 # 故声明下界 >=1.57（与现状/skill 对齐，高于 dev-plan 初稿 >=1.28.0）。
 streamlit>=1.57
 streamlit-autorefresh>=1.0.0
+# streamlit-shadcn-ui：ui/pages/ 四个页面（paper_input / analysis_progress /
+# plan_review / execution_monitor）均在**模块顶层** `import streamlit_shadcn_ui as ui`。
+# 补声明于 2026-07-30——此前一直漏声明，干净环境装完整个界面直接 ImportError。
+# 下界取 venv 实测已装版本 0.1.19。
+streamlit-shadcn-ui>=0.1.19
+# pandas：ui/pages/{analysis_progress,plan_review}.py 顶层 import（plan_review.py:365
+# 用 pd.DataFrame 渲染步骤表）。虽是 streamlit 的传递依赖、实际总能装上，但**直接
+# import 就应直接声明**——否则 streamlit 哪天不再依赖它，这里会无声崩掉。
+pandas>=2.0.0

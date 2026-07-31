@@ -200,14 +200,34 @@ def _click_in_main(pg, text: str, timeout: float = 15.0) -> bool:
     return False
 
 
+def _scroll_to_load_lazy_frames(pg) -> None:
+    """整页下滚，触发 Chromium 对视口外 iframe 的懒加载（见 _click_in_frame）。"""
+    try:
+        pg.mouse.wheel(0, 20000)
+    except Exception:  # noqa: BLE001 — 滚动失败不该让点击整体失败
+        pass
+
+
 def _click_in_frame(pg, text: str, timeout: float = 15.0) -> bool:
     """遍历 page.frames 找 inner_text 含 text 的 iframe，点其中含该文案的元素。
 
     注意：必须跳过 main_frame——streamlit 页面顶部的 st.caption 指引文案里含
     「仅复现代码」「终止任务」等子串，会误命中主文档导致点到 caption 而非 iframe 按钮。
     shadcn 决策按钮一律渲染在独立 component iframe 里。
+
+    ⚠ **必须先滚动**（P-9 根因，2026-07-30 定位）：Chromium 对折叠线以下的
+    ``stCustomComponentV1`` iframe 做**懒加载**——未进入视口就从不 attach，
+    于是 ``pg.frames`` 里**根本没有它**，本函数遍历到超时也找不到，报
+    「未找到/点不到按钮」，看起来像功能坏了，实则是 harness 等错了东西。
+
+    为什么只有部分用例中招：``test_e2e_switch_repo`` 先调 ``_expand_streamlit_expander``，
+    click 会自动把目标滚进视口、顺带触发懒加载；而 ``test_e2e_code_only`` 在此之前
+    什么都不点 ⇒ 页面越长越容易复现（S7-08 给审核页加了本机实测披露块后长度 +401px，
+    间歇失败频率随之上升——但 A/B 验证过：把该页还原到改动前**同样失败**，
+    故非功能退化）。
     """
     deadline = time.time() + timeout
+    _scroll_to_load_lazy_frames(pg)
     while time.time() < deadline:
         for fr in pg.frames:
             if fr is pg.main_frame:
@@ -222,6 +242,8 @@ def _click_in_frame(pg, text: str, timeout: float = 15.0) -> bool:
                     return True
                 except Exception:
                     continue
+        # 每轮再滚一次：覆盖「首轮滚动时目标区块尚未渲染出来」的时序
+        _scroll_to_load_lazy_frames(pg)
         time.sleep(0.5)
     return False
 

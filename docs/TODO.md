@@ -27,20 +27,22 @@
 - agent 动态决定环境形态（Docker/conda 容器隔离）—— 路线图候选，非欠账
 
 **D. 文档与工程化欠账**
-- 用户文档 / 开发者文档（仓库根**无 README**）
-- 接入 mypy 静态类型检查配置（类型标注本身已到位，缺检查器）—— P3
+- ✅ ⟦2026-07-30 已交付⟧ ~~用户文档 / 开发者文档（仓库根**无 README**）~~ → `README.md` 已落盘（204 行，中文，面向面试速览：定位 + 流水线图 + 架构亮点 7 条 + 工程方法论 + 快速开始 + 已知限制）。主控核实：两种方式扫描**零密钥泄漏**、抽查数字与磁盘一致、无编造徽章
+- ✅ ⟦2026-07-30 已交付⟧ ~~接入 mypy 静态类型检查配置~~ → `mypy.ini` 已落盘（20 section，两层设计：11 个有债文件按**实际触发的 error code** 逐条豁免、其余照拦；12 个干净模块进 strict 档），`.venv/bin/mypy` **零错误**。生产代码**零改动**
+- ⟦2026-07-30 新增·由 mypy 接入挖出⟧ **7 个真实类型缺陷待定夺是否修**（当前均由 mypy.ini 豁免登记，非静默忽略）：**D-2 `core/nodes/paper_analysis.py:520`**（`state["paper_meta"]["arxiv_id"]` 而 `paper_meta` 声明为 `PaperMeta | None` ⇒ **潜在 None 下标 TypeError**，靠流水线顺序隐式保证，**严重度最高**）；D-1 `llm_client.py:50` api_key 可能为 None 传进 ChatOpenAI（docstring 称属已知设计）；D-3 `graph.py:164` 返回标注 `"CompiledGraph"` 是**全仓不存在的名字**（靠 noqa 苟住，`get_type_hints` 会 NameError）；D-4 `honesty_audit.py:441`；D-5 `planning.py:749` 重复带标注赋值（连带 6 条假错，改 L720 加标注可一次消 7 条）；D-6 `git_tools.py:283/286` 返回标注过宽。另有 6 处缺返回标注（补齐即可让 `react_base.py` 等 4 模块并入 strict 档）
+- ✅ ⟦2026-07-30 已交付⟧ **requirements.txt 补齐 4 个漏声明依赖**——`streamlit-shadcn-ui`（4 个 UI 页面顶层 import，**不装则界面直接 ImportError**）/ `python-dotenv`（`app.py:59` 生产入口）/ `pandas`（2 个页面顶层 import，此前靠 streamlit 传递依赖苟住）/ `playwright`（3 个浏览器套件）。**此前干净环境按 requirements 装完根本跑不起来**。已用 AST 全量扫描生产代码顶层 import 复验**零遗漏**、且逐包核对已装版本满足下界
 - CLI 入口（现有 `scripts/run_paper.py` 只覆盖前 2 节点）
 - 全局架构文档两处「超前承诺」（pip 降级版本回退 / LLM 调用前 token 估算）—— ⟦2026-07-29 更新⟧ **两条均已上磁盘核实为「文档写了、代码确实没有」**（pip 降级：全仓 `downgrade` 零命中；token 估算：`estimate_tokens`/`check_context_limit` 生产侧真实消费点 0 个，预算按调用次数计）。**仍待 Maria 拍板补实现 vs 标注"规划未实现"**，另同批挖出 3 条同类口径问题 ⇒ 详见「Sprint 7 三次验证发现」节的「全局文档同步挖出的 5 条口径问题」条目
 
 **E. 测试与技术债（均非阻断）**
-- `tests/test_paper_intake.py` 标准化（pytest 收集为 0，永久游离回归网外）
+- ✅ ⟦2026-07-30 已交付⟧ ~~`tests/test_paper_intake.py` 标准化（pytest 收集为 0，永久游离回归网外）~~ → 根因查明：它是 Sprint 1 的**独立自测脚本**（用例名 `case_*` + 自带 `main()` 与手写 SimpleMonkey），pytest 只收 `test_*` ⇒ 8 个用例**从未随任何一次回归跑过**。直跑实测 8/8 通过 ⇒ 用例有效、缺的只是接入。已加**薄包装层**（既有用例逻辑与 `main()` 一行未改，原直跑方式仍可用），现 pytest 收集 8 条全绿。⚠ 包装内**必须显式 `assert report.all_passed()`**——每个 case 内部把异常吞进 Report 而不抛出，不显式断言则失败会被吞成绿（换个姿势继续假绿）
 - planning 维度 Prompt Cache **e2e 层**字节断言（单测层早已覆盖，原条目前提有误）—— P3
 - 混沌测试（随机注入异常）
 - `_classify_error` 未分类 4xx 是否归 Permanent
 - Prompt Cache 跨 provider AB 实验（切 DeepSeek 验证脱离 NVIDIA 网关）—— 自 sp1 挂账至今
 - 其余 16 处同族术语泄漏清理 —— 见「E2E-2」节，Maria 已决定暂不动
 - §11(d) 三个产品口径问题待拍板
-- ⟦2026-07-30 新增⟧ **修 `tests/test_plan_review_e2e.py::_click_in_frame` 的 iframe 等待（P-9 根因已定位）**：`test_e2e_code_only` 间歇失败**不是功能缺陷、非 S7-08 引入**——主控做过 A/B 独立验证（把 `ui/pages/plan_review.py` 临时还原到 HEAD 版，同样失败）。根因 = Chromium 懒加载折叠线以下的 `stCustomComponentV1` iframe、从未 attach，而 `_click_in_frame` 只遍历 `pg.frames` 且从不滚动/不触发 layout；邻近的 `test_e2e_switch_repo` 能过是因为它前面先调 `_expand_streamlit_expander`（click 自动滚动把 iframe 顶进视口）。**已验证修法**：进入 `_click_in_frame` 前加一句滚动 → 3/3 稳定通过。实测形态 = 全量回归里**间歇**红（主控连跑两轮：一轮红一轮绿），非"必现"。dev-plan §31 P-9 要求不在批内顺手改 harness，故留此条
+- ✅ ⟦2026-07-30 当日新增当日修复⟧ ~~**修 `tests/test_plan_review_e2e.py::_click_in_frame` 的 iframe 等待（P-9 根因已定位）**~~ → 已加 `_scroll_to_load_lazy_frames` 并在遍历前 + 每轮各触发一次；**连跑 3 次全过，耗时 21s → 6.6s**（不再空等超时），`-m browser` 全组 12 条全绿。根因与修法详见下方原始记录：：`test_e2e_code_only` 间歇失败**不是功能缺陷、非 S7-08 引入**——主控做过 A/B 独立验证（把 `ui/pages/plan_review.py` 临时还原到 HEAD 版，同样失败）。根因 = Chromium 懒加载折叠线以下的 `stCustomComponentV1` iframe、从未 attach，而 `_click_in_frame` 只遍历 `pg.frames` 且从不滚动/不触发 layout；邻近的 `test_e2e_switch_repo` 能过是因为它前面先调 `_expand_streamlit_expander`（click 自动滚动把 iframe 顶进视口）。**已验证修法**：进入 `_click_in_frame` 前加一句滚动 → 3/3 稳定通过。实测形态 = 全量回归里**间歇**红（主控连跑两轮：一轮红一轮绿），非"必现"。dev-plan §31 P-9 要求不在批内顺手改 harness，故留此条
 - ⟦2026-07-30 新增⟧ **LangSmith 月度 trace 额度已耗尽**（跑测试时刷 `429 Monthly unique traces usage limit exceeded`）。生产代码侧确实零接入（与文档记录一致），但 `.env` 配了 `LANGSMITH_API_KEY/PROJECT/TRACING` 三项，LangChain 自动上报。**影响面**：S7-07 判定"探测有没有真触发"靠的就是翻 LangSmith trace（`config.py:69` 注释留有"LangSmith trace 实证"），而 **CP-5.13-1 明文要求"真跑完成 + LangSmith trace 留档"** ⇒ 真跑前需先定取证方式（换自埋计数 + 落盘原始输出，或等额度重置 / 换 project）
 
 ---

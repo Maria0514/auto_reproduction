@@ -629,7 +629,79 @@ class _ListHandler(_logging.Handler):
             pass
 
 
-# ---------- 主入口 ----------
+# ---------- pytest 适配层（让这 8 个用例真正进回归网） ----------
+#
+# 本文件原是 Sprint 1 的独立自测脚本：用例名为 ``case_*``、自带 ``main()`` 与手写的
+# ``SimpleMonkey``。而 pytest 只收集 ``test_*`` ⇒ 这 8 个用例长期 **collect 为 0**——
+# 文件躺在 tests/ 下、看起来有覆盖，实际**从未随任何一次回归跑过**
+# （TODO 登记的"永久游离回归网外"）。直接跑 ``python tests/test_paper_intake.py``
+# 是 8/8 通过的，所以用例本身有效，缺的只是接入。
+#
+# 下面只加一层**薄包装**，既有用例逻辑与 ``main()`` **一行未改**：逐条对应 ``main()``
+# 的原编排（每个 case 独立 SimpleMonkey 周期 + ToolScripts 复位，避免用例间串味）。
+#
+# ⚠ 每个 ``case_*`` 内部用 try/except 把异常记进 ``Report`` 而**不抛出**，所以包装
+# 必须显式 ``assert report.all_passed()``——否则用例失败会被吞成绿，等于换个姿势
+# 继续假绿。
+
+
+def _run_case(case_fn, *, with_monkey: bool = True, with_caplog: bool = False) -> None:
+    """按 main() 的原编排跑单个 case，并把 Report 结果转成 pytest 断言。"""
+    report = Report()
+    if not with_monkey:
+        case_fn(report)
+        assert report.all_passed(), "\n" + report.summary()
+        return
+
+    monkey = SimpleMonkey()
+    # 与 main() 一致：每个 case 前复位工具脚本
+    ToolScripts.brief = None
+    ToolScripts.head = None
+    ToolScripts.search = None
+    try:
+        if with_caplog:
+            # case 内部自行安装 _ListHandler 往这个 list 里写日志
+            case_fn(monkey, report, [])
+        else:
+            case_fn(monkey, report)
+    finally:
+        monkey.undo()
+    assert report.all_passed(), "\n" + report.summary()
+
+
+def test_cp1_paper_intake_is_react_wrapper_callable() -> None:
+    _run_case(case_callable, with_monkey=False)
+
+
+def test_cp2_react_wrapper_maps_user_input_to_human_message() -> None:
+    _run_case(case_context_mapping)
+
+
+def test_cp3_agent_fetches_paper_meta_via_tool_calls() -> None:
+    _run_case(case_tool_call_path)
+
+
+def test_cp4_full_path_fills_all_paper_meta_fields() -> None:
+    _run_case(case_full_path)
+
+
+def test_cp5_head_failure_degrades_to_brief_only_without_abort() -> None:
+    _run_case(case_head_fail)
+
+
+def test_cp6_non_cs_paper_is_flagged_in_result_and_warning_log() -> None:
+    _run_case(case_non_cs_warning, with_caplog=True)
+
+
+def test_cp7_paper_not_found_returns_error_and_node_errors() -> None:
+    _run_case(case_paper_not_found)
+
+
+def test_cp8_full_url_input_is_cleaned_to_arxiv_id() -> None:
+    _run_case(case_url_cleanup)
+
+
+# ---------- 主入口（保留：仍支持 `python tests/test_paper_intake.py` 直接跑） ----------
 
 
 def main() -> int:
