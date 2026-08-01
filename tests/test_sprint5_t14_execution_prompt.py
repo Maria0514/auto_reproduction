@@ -189,6 +189,51 @@ def test_cp_1_4_1_step_index_usage_line_exists():
 
 
 # ===========================================================================
+# CP-6.2-1（S7-10 / T-S7-6-2）：execution prompt 主体字节基线守门 —— **新建**
+# ===========================================================================
+
+
+def test_cp_6_2_1_execution_prompt_body_byte_baseline():
+    """execution 主体字节哈希基线守门（字节级回归门）。
+
+    ⚠ 本门是 S7-10 / T-S7-6-2 **新建**的，不是"保持既有"（dev-plan §48 P-27）：
+    在此之前 ``_EXECUTION_SYSTEM_PROMPT_BODY`` **没有任何 sha256 基线**——同文件
+    ``test_cp_1_4_1_system_message_byte_identical_across_tasks`` 里那句
+    ``assert head == execution_module._EXECUTION_SYSTEM_PROMPT_BODY`` 是把「渲染出的
+    SystemMessage 头部」和「常量自己」比，能证组装没串味，但**常量本身被改成什么样
+    它都恒绿**，与 planning 侧已治理的 R-S7-41（``EXPECTED_HASH = actual_hash``
+    自锁定形态）同族。``tests/test_sprint4_e2.py:292`` 同款。
+
+    ⚠ **禁止改回 ``EXPECTED_HASH = actual_hash`` 自锁定形态**（R-S7-41 的教训）：
+    那种写法是 ``x == x`` 恒真、零守门能力，docstring 自称的"字节级回归门"从来
+    就不存在。基线必须写死为真实字面量。
+
+    改动 ``_EXECUTION_SYSTEM_PROMPT_BODY`` 必须三件套：
+      ①重算并同步更新此字面量；
+      ②在 dev-plan §48.1（execution prompt 主体字节基线留档表）新增一行变更原因；
+      ③跑一次验红（临时改 body → 本断言变红、同文件其余用例仍绿，还原后复绿）。
+    """
+    import hashlib
+
+    body = execution_module._EXECUTION_SYSTEM_PROMPT_BODY
+    actual_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+
+    # 基线值见 dev-plan §48.1（execution prompt 主体字节基线留档表）。
+    # 当前基线：S7-10 约束 C 提示词收窄**之后**（主体长 1698 字符，2026-07-31）。
+    # 变更内容 = 工具说明补「本工具不用于写代码 + 行内 -c 只用于简短探针」形态表述
+    # （Q-S7-22：**刻意不写阈值数字**，避免与 _INLINE_PY_MAX_CHARS 形成无绑定双源真相）
+    # + 工作纪律第 4 条删「修正相对路径」授权口、补「不得写入或修改任何代码文件」。
+    # 前一基线 0dbe4143dc836e91（1560 字符）——那是 sp4~sp7 期间"本应被锁定却从未
+    # 被锁定"的值，本门建立于 S7-10 / T-S7-6-2，改 prompt 时当场红（CP-6.4-1 活体证明）。
+    EXPECTED_HASH = "f82f3938cf31f882"
+
+    assert actual_hash == EXPECTED_HASH, (
+        f"execution prompt 主体字节已变更（当前：{actual_hash}，基线：{EXPECTED_HASH}）"
+        "——请确认是合规的前缀变更，若是则更新此基线并在 dev-plan §48.1 留档"
+    )
+
+
+# ===========================================================================
 # CP-1.4-2 run_in_sandbox docstring 字节稳定 + step_index 缺省 -1 向后兼容（P5）
 # ===========================================================================
 

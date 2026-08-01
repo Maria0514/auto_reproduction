@@ -103,21 +103,25 @@ _GUARDED_CONSTANTS: Tuple[Tuple[str, str], ...] = (
     ("ui.pages.plan_review", "_LOCAL_FIT_NOTE_FALLBACK"),
     ("ui.pages.plan_review", "_CODE_ONLY_SCALE_REDUCED_NOTE"),
     ("ui.pages.plan_review", "_CHAT_NO_FIELD_NAME_RULE"),
+    # S7-10 / T-S7-6-5：计划期两条确定性告警的文案，经 plan_review 的 st.warning 直达用户。
+    ("core.plan_checks", "_W4_MESSAGE"),
+    ("core.plan_checks", "_W5_MESSAGE"),
 )
 
 # --------------------------------------------------------------------------- #
-# EXPECTED_N 对账（2026-07-30 上磁盘实测）：
+# EXPECTED_N 对账（2026-07-31 上磁盘实测，S7-10 / T-S7-6-5 后）：
 #   - ui/term_map.py::TERM_LABELS 全量值 …………………………… 42 条
 #     （dev-plan §32.4 事实 9 记 41 条为 T-5-9 加 `annotation:scale_reduced` 之前的值）
-#   - 上表具名常量 ………………………………………………………… 10 条
+#   - 上表具名常量 ………………………………………………………… 12 条
+#     （S7-08 收口时 10 条；S7-10 加 core.plan_checks 的 W4 / W5 两条 message）
 #                                                     ------
-#   合计 EXPECTED_N …………………………………………………… 52 条
+#   合计 EXPECTED_N …………………………………………………… 54 条
 #
 # ⚠ 三个数字必须 `==`，**禁止改成 `>=`**（理由见模块 docstring）。
 # --------------------------------------------------------------------------- #
 EXPECTED_TERM_LABELS_N: int = 42
-EXPECTED_CONSTANTS_N: int = 10
-EXPECTED_N: int = EXPECTED_TERM_LABELS_N + EXPECTED_CONSTANTS_N  # == 52
+EXPECTED_CONSTANTS_N: int = 12
+EXPECTED_N: int = EXPECTED_TERM_LABELS_N + EXPECTED_CONSTANTS_N  # == 54
 
 # 既有守门黑名单的核心词（只做"没被掏空"的下界校验，
 # 不写成相等——日后清理那 16 处时 `_BLACKLIST` 可能合法扩充）。

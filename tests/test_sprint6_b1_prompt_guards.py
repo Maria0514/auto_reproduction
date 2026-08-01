@@ -72,8 +72,11 @@ class TestCP151PlanningPromptGuard:
         # 基线值见 dev-plan §40.1（R-S7-41 planning prompt 主体字节基线留档表）。
         # 改动 _PLANNING_SYSTEM_PROMPT_BODY 必须：①重算并同步更新此字面量；
         # ②在 dev-plan §40.1 新增一行留档变更原因；③跑一次验红（临时改 body → 变红）。
-        # 当前基线：S7-08 一次性静态变更后（主体长 5424 字符，2026-07-30）。
-        EXPECTED_HASH = "a7cad88cdb205c5f"
+        # 当前基线：S7-10 落点对齐一次性静态变更后（主体长 5900 字符，2026-07-31）。
+        # 变更内容 = 第 5 节删「或 cd <子目录>（仅限工作区内）」半句授权（约束 A）
+        # + 新增【执行落点】与【计划只规定"跑什么"】两段（约束 A 正面口径 + 约束 B
+        # + 产出目录 outputs/ 口径）。前一基线 a7cad88cdb205c5f（5424 字符，S7-08）。
+        EXPECTED_HASH = "ef6d267030fd2a0c"
 
         assert actual_hash == EXPECTED_HASH, (
             f"planning prompt 主体字节已变更（当前：{actual_hash}，基线：{EXPECTED_HASH}）"

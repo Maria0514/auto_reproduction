@@ -60,6 +60,7 @@ from config import (
 )
 from core.errors import SandboxCreationError, make_node_error
 from core.llm_client import create_llm, resolve_llm_config
+from core.plan_checks import is_inline_code_write
 from core.react_base import _repair_truncated_json_prefix, create_react_subgraph
 from core.secrets_store import build_credential_env, load_all_secrets, mask_value
 from core.state import ExecutionResult, FixLoopRecord, GlobalState
@@ -765,6 +766,20 @@ def _run_step_subcommands(
 _PREPARE_TOOL_NAME: str = "prepare_environment"
 _RUN_TOOL_NAME: str = "run_in_sandbox"
 
+# S7-10 约束 C：内联写码被工具层拒绝时返回给 agent 的结构化说明。
+# 这是**给模型看的**文本（不是给用户看的 UI 文案）⇒ 不入 tests/test_s708_user_text_guard.py
+# 守门面，判定口径与 _SCALE_REDUCED_DIRECTIVE 一致。
+# ⚠ 必须**明确指路**（PRD §12.5.3）：误伤可恢复、agent 下一轮能自行合规，否则会空转（R-S7-58）。
+_INLINE_CODE_WRITE_REJECTION: str = (
+    "本工具不用于写代码：这条命令把成段代码字面量直接放在了命令行里，已被拒绝执行。"
+    "需要写或修改代码文件时请如实收尾，编排层会交回代码生成环节修复；"
+    "只是想探一下环境的话，请把行内命令拆得更短（只做导入检查、打印版本或数据形状），"
+    "或者先把逻辑落成脚本文件再运行该脚本。"
+)
+
+# 拒绝日志里回显的命令前缀长度（脱敏后截断，避免把超长载荷整段刷进日志）。
+_REJECT_LOG_COMMAND_CHARS: int = 120
+
 # 工具执行失败 ToolMessage 的典型前缀（react_base tool_executor 兜底写入），
 # messages 回读时过滤（BUG-S1-03 范式：仅回填成功结果）。
 _FAILED_TOOL_MESSAGE_PREFIXES: Tuple[str, ...] = ("Error in ", "tool ", "unknown tool")
@@ -952,6 +967,23 @@ def make_run_in_sandbox_tool(
                     "沙箱环境尚未准备，请先调用 prepare_environment 创建 venv",
                     exit_code=-1, results=[], timed_out=False,
                 )
+            # S7-10 约束 C 的**唯一硬防线**（Q-S7-21，dev-plan T-S7-6-6）：
+            # 命令串里以字面量携带成段代码载荷 ⇒ 命中即拒。
+            # ⚠ 早退位置是硬要求——必须在 `_resolve_python_exe()` 之后、
+            # `_run_step_subcommands` 之前：这样被拒命令**不进 collector.run_results、
+            # 不进 collector.step_ledger**（两者都在下方 `:978` 之后才写），
+            # 因而不污染 exit_ok、不被步骤对账当成"完成"（否则这条硬防线会自己
+            # 制造 R-S7-49 那类假绿）。判定对象是命令字符串本身而非文件系统副作用 ⇒
+            # 跑一个既有脚本写出多少结果文件与图**永远合规**（零误伤正常复现）。
+            if is_inline_code_write(command):
+                logger.warning(
+                    "[%s] %s 工具拒绝内联写码命令（约束 C 硬拦截）：%s",
+                    NODE_NAME, _RUN_TOOL_NAME,
+                    mask_value(command[:_REJECT_LOG_COMMAND_CHARS]) or "",
+                )
+                return _tool_error_json(
+                    _INLINE_CODE_WRITE_REJECTION, exit_code=-1, results=[], timed_out=False,
+                )
             results, session["current_dir"] = _run_step_subcommands(
                 {"command": command},
                 python_exe,
@@ -1008,14 +1040,14 @@ _EXECUTION_SYSTEM_PROMPT_BODY = """你是复现执行工程师，负责在隔离
 
 可用工具：
 - prepare_environment(): 在工作目录下创建隔离 venv 并安装复现计划声明的依赖。任何 run_in_sandbox 之前必须先调用一次。
-- run_in_sandbox(command, step_index): 在沙箱 venv 中执行一条命令，返回真实 exit_code 与 stdout/stderr 尾部。支持顶层 && / ; 复合与 cd（限工作区内），裸 python/pip 自动指向 venv 解释器。执行计划第 i 步（下标从 0 起）时以 step_index=i 声明归属；计划外命令（调试/兜底）不带该参数即可。
+- run_in_sandbox(command, step_index): 在沙箱 venv 中执行一条命令，返回真实 exit_code 与 stdout/stderr 尾部。支持顶层 && / ; 复合与 cd（限工作区内），裸 python/pip 自动指向 venv 解释器。执行计划第 i 步（下标从 0 起）时以 step_index=i 声明归属；计划外命令（调试/兜底）不带该参数即可。本工具不用于写代码；行内 -c 只用于简短探针（导入检查、打印版本或数据形状）。凡是需要写文件、或把成段实现塞进命令行的，一律先落成脚本再运行——超长载荷会被直接拒绝。
 - request_user_input(question, is_sensitive, purpose_key): 缺少继续执行所需的信息（凭证/参数/路径）时向用户索要一条信息。必须单独一轮调用（不与其他工具放在同一轮 tool_calls），且尽量在执行训练等重活之前问。
 
 工作纪律：
 1. 先调 prepare_environment 准备环境；依赖装不全（install_failed_packages 非空）时可用 run_in_sandbox 执行 pip install 兜底或调整版本。
 2. 按 execution_steps 逐条执行：每条命令跑完先检查返回 JSON 的 exit_code / stderr_tail 再决定下一步；一次只跑一条命令。
 3. 识别到认证失败 / 缺凭证迹象（authentication failed、401 unauthorized、403 forbidden、could not read username、terminal prompts disabled 等）时，立即调 request_user_input（is_sensitive=true，给出合适的 purpose_key，如 "git_credential:github.com" / "hf_token"）索取凭证后重试，不要反复盲试。
-4. 命令失败时可做少量有把握的就地修正（如补装缺失包、修正相对路径）后重试；无法解决时如实收尾，交由编排层分类处理。
+4. 命令失败时可做少量有把握的就地修正（如补装缺失包、调整依赖版本）后重试；但**不得写入或修改任何代码文件**——代码本身有问题时如实收尾，由编排层交回代码生成环节修复。其它无法解决的情况同样如实收尾，交由编排层分类处理。
 5. 预算意识：推理轮数有限，本次实际可用轮数以 HumanMessage 上下文中的 max_rounds 数字为准；不要重复执行同一条命令空转。
 
 成功判定纪律（强约束）：
