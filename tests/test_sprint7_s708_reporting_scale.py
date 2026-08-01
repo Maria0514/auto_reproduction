@@ -11,7 +11,7 @@
       **三形态（full_success / code_only / degraded）均带**（Maria 裁决 8，§40 P-14）；
     - CP-5.9-4 **零扰动（§18.7(6)）**：缺键 / `False` / 字符串 `"false"` 三种取值下报告
       Markdown 与 sp5 基线**字节一致**；`_render_code_only` 源码零改动；
-    - CP-5.9-5 `term_map` +1 条、`humanize` 命中、`len(TERM_LABELS) == 42`（供 T-5-11
+    - CP-5.9-5 `term_map` +1 条、`humanize` 命中、`len(TERM_LABELS) == 43`（供 T-5-11
       的 `EXPECTED_N` 对账）；`ui/pages/result_report.py` 零改动且结论卡片自动跟随降档。
 
 全部离线纯函数直测，零 LLM、零网络。报告头部含 `datetime.now()`，字节比较类用例统一
@@ -366,12 +366,16 @@ def test_cp_5_9_4_render_code_only_untouched():
 # CP-5.9-5：term_map +1 条 + UI 结论卡片零改动自动跟随降档
 # =========================================================================== #
 def test_cp_5_9_5_term_map_has_new_entry_and_expected_total():
-    """term_map +1 条；总数 42（41 + 1），供 T-5-11 `EXPECTED_N` 对账。"""
+    """term_map +1 条；总数 43，供 T-5-11 `EXPECTED_N` 对账。
+
+    账目：S7-08 本任务加 `annotation:scale_reduced` ⇒ 41 + 1 = 42；
+    S7-11 / T-S7-7-7 加 `error_category:incomplete_execution` ⇒ 43。
+    """
     from ui.term_map import TERM_LABELS, humanize
 
     assert TERM_LABELS["annotation:scale_reduced"] == "缩小规模复现"
     assert humanize("annotation", "scale_reduced") == "缩小规模复现"
-    assert len(TERM_LABELS) == 42, (
+    assert len(TERM_LABELS) == 43, (
         "term_map 条数变了：T-5-11 的 EXPECTED_N 与本断言须同步更新"
     )
 

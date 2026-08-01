@@ -432,7 +432,23 @@ class DispatchScriptLLM(BaseChatModel):
                 "summary": "凭证到手重试成功，train 仍失败", "notes": None,
             })
 
-        # chain / spy / sentinel 修复回合：单命令 train → 收尾。
+        # sentinel 修复回合：**按计划全量重跑**（fetch → train）后收尾。
+        # ⚠ S7-11（T-S7-7-8）：原来这里只跑 train 一条，而哨兵剧本的计划有 fetch +
+        # train 两步 —— 那份夹具描述的是"修复回合只补跑失败那一步"的行为，而 S7-11
+        # 起编排层要求每个执行回合从第一步开始全量重跑（提示词纪律 6），少跑步骤不
+        # 判成功。**这是把夹具改成与新契约自洽的正确值，不是放宽断言**：本用例的
+        # "零明文"那批断言与成功闭环断言一字未动。
+        if self.scenario == "sentinel":
+            if n_run == 0:
+                return self._call("run_in_sandbox", {"command": "python fetch.py"}, "c_r1")
+            if n_run == 1:
+                return self._call("run_in_sandbox", {"command": "python train.py"}, "c_r2")
+            return self._final({
+                "steps_attempted": 2, "all_exit_zero": bool(repair),
+                "summary": "按计划重跑 fetch 与 train 完成", "notes": None,
+            })
+
+        # chain / spy 修复回合：计划只有 train 一步 → 单命令 train → 收尾。
         if n_run == 0:
             return self._call("run_in_sandbox", {"command": "python train.py"}, "c_r1")
         return self._final({
@@ -858,10 +874,17 @@ def test_cp_g2_2_mask_engaged_and_bydesign_stores(monkeypatch, tmp_path):
     assert _SENTINEL not in final_logs, "终态 execution_result.logs 含哨兵明文"
     evidence = [logs for logs in obs["history_exec_logs"] if "Bearer" in logs]
     assert evidence, "历史帧应含 exec#1 的 fetch 证据行（否则阳性对照失效）"
+    # mask 阳性对照对**每一个**含哨兵原文的历史帧都成立（强度不变）。
     for logs in evidence:
         assert _SENTINEL not in logs, "历史帧 execution_result.logs 含哨兵明文"
         assert "****" in logs, "logs 应含 mask 占位符（证明哨兵确实流经并被替换）"
-        assert "exit=128" in logs, "logs 应保留失败证据（mask 只替换敏感值）"
+    # "mask 只替换敏感值、失败证据仍在"这一条针对的是**发生了失败的那一帧**（exec#1）。
+    # get_state_history 是新帧在前 ⇒ 最老的那个含哨兵帧就是 exec#1。
+    # ⚠ S7-11（T-S7-7-8）：此前这一条写在上面的 for 循环里，隐含"只有 exec#1 会出现
+    # 哨兵"这个前提；S7-11 起修复回合按计划全量重跑（提示词纪律 6），exec#2 也会重跑
+    # fetch（这次 exit=0，凭证已到手）⇒ 它同样含哨兵原文但**本就没有失败证据**。
+    # 把这一条落到它真正针对的那一帧上，是**订正断言的对象、不是放宽断言**。
+    assert "exit=128" in evidence[-1], "exec#1 的 logs 应保留失败证据（mask 只替换敏感值）"
 
     # `.secrets`：remember=True 落盘（设计内明文），0600 强制。
     secrets_path = obs["ws"] / config.SECRETS_FILE_NAME

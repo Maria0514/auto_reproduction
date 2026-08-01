@@ -96,6 +96,18 @@ def _make_workdir_with_venv(tmp_path: Path, name: str = "wd") -> str:
     return str(wd)
 
 
+#: S7-11（T-S7-7-8）：fetch 剧本专用的自洽计划。
+#: 原来这些剧本共用 ``_base_state`` 那份 ``[prep_data, train]`` 计划，而剧本实际跑的是
+#: ``fetch.py`` + ``train.py`` —— 计划第一步在剧本里**从来没被执行过**，是自相矛盾的
+#: 夹具；只是在 S7-11 之前"计划步骤跑完没有"不进 success 判定，这笔账才没被撞出来。
+#: ⚠ **这是把夹具改成自洽的正确值，不是放宽断言**：两个用例的 ``success is True``
+#: 与 L-E4-01 的 effective-runs 语义断言一字未动。
+_FETCH_PLAN_STEPS: List[Dict[str, str]] = [
+    {"command": "python fetch.py"},
+    {"command": "python train.py"},
+]
+
+
 def _base_state(work_dir: str, **overrides: Any) -> Dict[str, Any]:
     state: Dict[str, Any] = {
         "llm_config_set": {"default": {"model": "test"}},
@@ -455,7 +467,12 @@ def test_le401_fix_credential_inline_retry_success_single_round(
     graph = _build_self_loop_graph(InMemorySaver())
     cfg = {"configurable": {"thread_id": f"e4-credfix-{uuid.uuid4().hex[:8]}"}}
 
-    paused = graph.invoke(_base_state(wd), cfg)
+    paused = graph.invoke(
+        _base_state(wd, reproduction_plan={
+            "execution_steps": list(_FETCH_PLAN_STEPS), "environment": {},
+        }),
+        cfg,
+    )
     assert "__interrupt__" in paused
     ivs = _interrupt_values(graph, cfg)
     assert ivs[0]["interrupt_kind"] == INTERRUPT_KIND_USER_INPUT
@@ -506,7 +523,12 @@ def test_le401_fix_inline_retry_without_interrupt_success(monkeypatch, tmp_path)
     graph = _build_self_loop_graph(InMemorySaver())
     cfg = {"configurable": {"thread_id": f"e4-inline-{uuid.uuid4().hex[:8]}"}}
 
-    final = graph.invoke(_base_state(wd), cfg)
+    final = graph.invoke(
+        _base_state(wd, reproduction_plan={
+            "execution_steps": list(_FETCH_PLAN_STEPS), "environment": {},
+        }),
+        cfg,
+    )
     assert "__interrupt__" not in final, "无 interrupt 剧本应一次跑完"
 
     assert runner.counts == {"fetch.py": 2, "train.py": 1}

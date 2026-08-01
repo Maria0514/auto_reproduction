@@ -63,6 +63,9 @@ TERM_LABELS: Dict[str, str] = {
     "error_category:unresolved_resource": "资源无法解析",
     "error_category:none": "无错误",
     "error_category:no_metrics": "未产出指标",
+    # S7-11：⚠ 刻意与 annotation:incomplete_execution 的"执行不完整"用不同的词——
+    # 同词会让用户分不清"标注"和"错误分类"。
+    "error_category:incomplete_execution": "执行步骤未跑完",
     "error_category:degraded": "已降级",
     # --- node（graph.py 七节点，中文名与既有页面显示表口径对齐）---
     "node:paper_intake": "解析论文",

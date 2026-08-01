@@ -40,7 +40,7 @@ import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
@@ -60,7 +60,12 @@ from config import (
 )
 from core.errors import SandboxCreationError, make_node_error
 from core.llm_client import create_llm, resolve_llm_config
-from core.plan_checks import is_inline_code_write
+from core.plan_checks import (
+    UNSUPPORTED_SHELL_SYNTAX_MESSAGE,
+    has_unsupported_shell_syntax,
+    is_inline_code_write,
+)
+from core.nodes.coding import _FIX_NOTE_MAX_CHARS
 from core.react_base import _repair_truncated_json_prefix, create_react_subgraph
 from core.secrets_store import build_credential_env, load_all_secrets, mask_value
 from core.state import ExecutionResult, FixLoopRecord, GlobalState
@@ -139,6 +144,12 @@ class ErrorCategory(str, Enum):
     NONE = "none"  # 执行成功，无错误
     # S6-B2（T-S6-2-4）：代码跑通但未产出指标——可自动修复（送回 coding 检查入口脚本）。
     NO_METRICS = "no_metrics"
+    # S7-11（T-S7-7-6）：命令都跑通了、但计划步骤没跑完——可自动修复（送回 coding
+    # 继续补跑）。不复用 NO_METRICS 的三条理由（架构 Q-S7-29）：①会被
+    # _no_metrics_stalled 的"无进展早停"误伤成提前打断；②fix_hint 指错方向；
+    # ③fix_loop_history.error_category 是面向用户的修复历程标题，复用会让界面连续
+    # 印"未产出指标"而真相是"步骤没跑完"——对用户撒谎比技术债更贵。
+    INCOMPLETE_EXECUTION = "incomplete_execution"
 
 
 # 可自动修复类集合（驱动 §2.5.2 路由：是否回 coding）。
@@ -149,6 +160,7 @@ AUTO_FIXABLE = {
     ErrorCategory.PATH,
     ErrorCategory.RUNTIME,
     ErrorCategory.NO_METRICS,  # S6-B2（T-S6-2-4）：零指标可修复
+    ErrorCategory.INCOMPLETE_EXECUTION,  # S7-11（T-S7-7-6）：步骤没跑完可修复
 }
 
 
@@ -984,6 +996,22 @@ def make_run_in_sandbox_tool(
                 return _tool_error_json(
                     _INLINE_CODE_WRITE_REJECTION, exit_code=-1, results=[], timed_out=False,
                 )
+            # S7-12：沙箱不认的 shell 元字符（管道 / 重定向 / 后台）⇒ 命中即拒。
+            # ⚠ 早退位置同上一条硬要求：必须在下方 collector.run_results /
+            # collector.step_ledger 之前——否则一条**实际什么都没干成**的命令会带着
+            # 假 exit_code=0 进台账，污染 exit_ok、被步骤对账当成"完成"。
+            # 拒绝而不是支持：实现管道 / 重定向语义等于自己写一个完整 shell，
+            # 正是当初禁 shell=True 要逃离的东西（这些语法现在也本就不生效）。
+            if has_unsupported_shell_syntax(command):
+                logger.warning(
+                    "[%s] %s 工具拒绝含管道/重定向的命令（沙箱不经 shell，写了不生效）：%s",
+                    NODE_NAME, _RUN_TOOL_NAME,
+                    mask_value(command[:_REJECT_LOG_COMMAND_CHARS]) or "",
+                )
+                return _tool_error_json(
+                    UNSUPPORTED_SHELL_SYNTAX_MESSAGE,
+                    exit_code=-1, results=[], timed_out=False,
+                )
             results, session["current_dir"] = _run_step_subcommands(
                 {"command": command},
                 python_exe,
@@ -1040,24 +1068,26 @@ _EXECUTION_SYSTEM_PROMPT_BODY = """你是复现执行工程师，负责在隔离
 
 可用工具：
 - prepare_environment(): 在工作目录下创建隔离 venv 并安装复现计划声明的依赖。任何 run_in_sandbox 之前必须先调用一次。
-- run_in_sandbox(command, step_index): 在沙箱 venv 中执行一条命令，返回真实 exit_code 与 stdout/stderr 尾部。支持顶层 && / ; 复合与 cd（限工作区内），裸 python/pip 自动指向 venv 解释器。执行计划第 i 步（下标从 0 起）时以 step_index=i 声明归属；计划外命令（调试/兜底）不带该参数即可。本工具不用于写代码；行内 -c 只用于简短探针（导入检查、打印版本或数据形状）。凡是需要写文件、或把成段实现塞进命令行的，一律先落成脚本再运行——超长载荷会被直接拒绝。
+- run_in_sandbox(command, step_index): 在沙箱 venv 中执行一条命令，返回真实 exit_code 与 stdout/stderr 尾部。支持顶层 && / ; 复合与 cd（限工作区内），裸 python/pip 自动指向 venv 解释器。执行 execution_steps 里的第 i 步（下标从 0 起）时**必须**以 step_index=i 声明归属——漏报会让编排层认为该步没跑；计划外命令（调试/兜底）不带该参数即可。本工具不用于写代码；行内 -c 只用于简短探针（导入检查、打印版本或数据形状）。凡是需要写文件、或把成段实现塞进命令行的，一律先落成脚本再运行——超长载荷会被直接拒绝。
 - request_user_input(question, is_sensitive, purpose_key): 缺少继续执行所需的信息（凭证/参数/路径）时向用户索要一条信息。必须单独一轮调用（不与其他工具放在同一轮 tool_calls），且尽量在执行训练等重活之前问。
 
 工作纪律：
 1. 先调 prepare_environment 准备环境；依赖装不全（install_failed_packages 非空）时可用 run_in_sandbox 执行 pip install 兜底或调整版本。
 2. 按 execution_steps 逐条执行：每条命令跑完先检查返回 JSON 的 exit_code / stderr_tail 再决定下一步；一次只跑一条命令。
 3. 识别到认证失败 / 缺凭证迹象（authentication failed、401 unauthorized、403 forbidden、could not read username、terminal prompts disabled 等）时，立即调 request_user_input（is_sensitive=true，给出合适的 purpose_key，如 "git_credential:github.com" / "hf_token"）索取凭证后重试，不要反复盲试。
-4. 命令失败时可做少量有把握的就地修正（如补装缺失包、调整依赖版本）后重试；但**不得写入或修改任何代码文件**——代码本身有问题时如实收尾，由编排层交回代码生成环节修复。其它无法解决的情况同样如实收尾，交由编排层分类处理。
-5. 预算意识：推理轮数有限，本次实际可用轮数以 HumanMessage 上下文中的 max_rounds 数字为准；不要重复执行同一条命令空转。
+4. 命令失败时可做少量有把握的就地修正（如补装缺失包、调整依赖版本）后重试；但**不得写入或修改任何代码文件**——代码本身有问题时，把该步跑到失败为止即可，由编排层交回代码生成环节修复。确实无法继续时才如实收尾，交由编排层分类处理；收尾前必须先把计划里还没跑过的步骤跑完或跑到失败为止，不得因为"上一轮这条失败过"就跳过它。
+5. 预算意识：推理轮数有限，本次实际可用轮数以 HumanMessage 上下文中的 max_rounds 数字为准；同一回合内不要用完全相同的命令反复空转（同一条命令在不同回合之间的重跑是必要的验证，不算空转）。
+6. 修复回合请从 execution_steps 的第一步开始按顺序全量重跑，不要只挑上一轮失败的那几步——代码已被改动，上一轮通过的步骤不再自动成立。HumanMessage 会告知上一轮改了哪些文件与修复思路，据此重跑验证，而不是绕开。
 
 成功判定纪律（强约束）：
 - 你不判定复现是否成功——成功与否由编排层基于工具执行的真实 exit_code 与指标做确定性判定。
+- 编排层还会检查计划步骤是否全部跑完——少跑步骤不会被判成功。
 - 不得在结果中宣称"复现成功"；只如实汇报执行了哪些命令、各自 exit_code 与观察到的现象。
 
 输出要求：
 - 执行收尾时必须在 <result>...</result> 标签内输出严格 JSON，字段如下：
   {
-    "steps_attempted": int,        // 实际执行的命令条数
+    "steps_attempted": int,        // 本回合实际执行的命令条数
     "all_exit_zero": bool,         // 已执行命令是否全部 exit_code=0（如实填写）
     "summary": str,                // 执行过程与结果的中文如实描述
     "notes": str | null            // 降级/遗留问题等（可选）
@@ -1131,6 +1161,46 @@ def _effective_max_rounds(plan: Optional[Dict[str, Any]]) -> int:
     )
 
 
+# S7-11（T-S7-7-3）：修复轮上下文里"上一轮改了哪些文件"的展示条数上限。
+# 只为防长列表撑爆 context，不是产品语义 ⇒ 不进 config.py。
+_LAST_FIX_FILES_MAX: int = 10
+
+
+def _build_last_fix_context(state: GlobalState) -> Dict[str, Any]:
+    """上一轮编码环节的修复自述 + 改动文件清单（修法 A，S7-11 / T-S7-7-3）。
+
+    - 数据源是 coding 侧单点写入的 ``last_fix_note`` / ``last_files_written``，
+      本函数只读不写、不新开 state 通道（``fix_loop_history`` 是历史累积，本轮那
+      份就在 ``last_*`` 里，读历史既重复又更贵）；
+    - ``files`` 取 basename（对齐 coding 侧 ``_digest_fix_loop_history`` 的脱敏/瘦身
+      口径），并截断到 ``_LAST_FIX_FILES_MAX`` + 计数尾巴 —— 顺带保证 payload 里不
+      出现绝对路径，字节幂等不被机器路径污染；
+    - ``note`` 沿用 coding 侧的 ``_FIX_NOTE_MAX_CHARS`` 上限（不新增常量）；
+    - **两项皆空 → 返回空 dict**，调用方据此不注入该键（零扰动范式）。
+    """
+    note = state.get("last_fix_note", "")
+    note = str(note).strip()[:_FIX_NOTE_MAX_CHARS] if isinstance(note, str) else ""
+    raw_files = state.get("last_files_written") or []
+    files: List[str] = []
+    if isinstance(raw_files, list):
+        for item in raw_files:
+            name = PurePosixPath(str(item).replace("\\", "/")).name.strip()
+            if name:
+                files.append(name)
+    total = len(files)
+    shown: List[str] = files[:_LAST_FIX_FILES_MAX]
+    if total > _LAST_FIX_FILES_MAX:
+        shown = shown + [f"...共 {total} 个"]
+    if not note and not shown:
+        return {}
+    out: Dict[str, Any] = {}
+    if note:
+        out["note"] = note
+    if shown:
+        out["files"] = shown
+    return out
+
+
 def _build_execution_agent_context(
     state: GlobalState,
     work_dir: str,
@@ -1138,8 +1208,12 @@ def _build_execution_agent_context(
 ) -> Dict[str, Any]:
     """curated 动态上下文（HumanMessage 通道，json.dumps sort_keys 字节幂等）。
 
-    修复回合（fix_loop_count > 0 且已有上一轮 execution_result）注入摘要级反馈，
-    帮助 agent 避开上一轮已知错误（stderr 尾部裁剪防撑爆 context）。
+    修复回合（fix_loop_count > 0 且已有上一轮 execution_result）注入摘要级反馈：
+    上一轮的错误摘要 + **本轮代码已发生的改动**（改了哪些文件、编码环节怎么改的），
+    使 agent 有依据重跑验证修复，而不是绕开上一轮失败过的步骤（stderr 尾部裁剪防
+    撑爆 context）。⚠ 措辞是刻意的：S7-11 之前这句写的是"帮助 agent 绕过上一轮已知
+    错误"——那把设计意图写反了，且 agent 当时确实照做（修复轮只补跑两条命令就收尾）。
+    修复轮上下文的目的是**重跑验证**，不是躲开。
 
     P3（sp5 R-PC4）：轮次预算数字从 system prompt 主体迁出、经本动态通道注入
     （主体只留非数字表述）。T-S5-2-5 起为 _effective_max_rounds(plan) 联动值
@@ -1164,6 +1238,15 @@ def _build_execution_agent_context(
             "errors": [e if isinstance(e, str) else str(e) for e in errors],
             "stderr_tail": _tail(logs),
         }
+        # S7-11（T-S7-7-3，修法 A）：上一轮编码环节做了什么——修复说明 + 改动文件清单。
+        # 数据现成（coding.py 单点写 last_fix_note / last_files_written），此前只进
+        # fix_loop_history 供下一回合 coder 参考，从未送到 execution agent 眼前 ⇒
+        # agent 在它的认知里"那些命令还是坏的"，自然不会重跑验证。
+        # 沿 credential_degradations / scale_reduced_directive 的"非空才注入"范式：
+        # 无 fix_note 且无 files 时 payload 与 sp7 基线字节零扰动。
+        last_fix = _build_last_fix_context(state)
+        if last_fix:
+            payload["last_fix"] = last_fix
 
     # S6-B2（T-S6-2-3）：gate 放行后的降级事实注入——用户已显式降级的凭证
     # {purpose_key: purpose} 摘要告知 agent，触发模拟路径。
@@ -1695,8 +1778,202 @@ def _reconcile_steps(
 
 
 # ---------------------------------------------------------------------------
+# S7-11（T-S7-7-5）：完成度判定谓词 + 自报防伪留痕
+# ---------------------------------------------------------------------------
+# 设计权威：dev-plan §49.0 变更 1 / §49.2 第 5 条（Maria 2026-08-01 复审拍板）。
+# ⚠ 本批**不**新写确定性完成度算法：完成度唯一取自 _reconcile_steps 的产出
+# （agent 自报 step_index 为主、命令归一匹配兜底）。理由是立项那次真跑的实测——
+# agent 首轮诚实声明了 8/9 步，**根本没有虚报**；问题从来不在自报可信度，而在
+# "exit_code 全 0 就算成功"这个口径（做得多反而判失败、做得少反而判成功）。
+# 采信自报的代价（理论上可被刷满）由下方 _audit_declared_steps 的 WARNING 留痕对冲。
+
+# 自报不符的 WARNING 里最多并排展示几条（防长清单刷屏，非产品语义 ⇒ 不进 config.py）。
+_AUDIT_MISMATCH_LOG_MAX: int = 5
+
+
+def _completion_insufficient(recon: Optional[Dict[str, Any]]) -> bool:
+    """计划步骤是否"没跑完"（★ 单点谓词，S7-11 / T-S7-7-5）。
+
+    ``success`` 判定（``_build_execution_result``）与 ``_apply_incomplete_execution``
+    **两处必须都调它**，禁止各写一遍比较——否则日后必漂移出"改判了但 success 还是
+    True"这种最隐蔽的假绿（dev-plan §49.3 单点谓词红线，CP-7.6-2 打桩守门）。
+
+    - 语义：``planned > 0 and completed < planned``（**单轮全量**口径——``run_results``
+      / ``step_ledger`` 逐轮重置是正确设计，跨轮取并集等于"把上轮代码下的通过当成本轮
+      代码下的通过"，是与本次修复初衷同型的假绿，Q-S7-25(0) + Maria 双重否决）；
+    - ``planned == 0``（无计划步骤）→ ``False``，既有语义零变化；
+    - 入参非 dict / 缺键 / 键值非 int（旧 checkpoint、畸形快照，R-6）→ ``False``：
+      宁可漏判也不误判红——判红会把用户推进修复循环，代价方向更差；
+    - ``attribution_unavailable``（R-2 保守语义）**不特殊对待**：它只置空
+      ``unexecuted_steps``（展示层保守），``completed`` 照常为 0 ⇒ 判不成功。
+      "跑了一堆计划外命令、一步计划都没归属上"本就不该判成功。
+    """
+    if not isinstance(recon, dict):
+        return False
+    planned = recon.get("planned")
+    completed = recon.get("completed")
+    if not isinstance(planned, int) or isinstance(planned, bool):
+        return False
+    if not isinstance(completed, int) or isinstance(completed, bool):
+        return False
+    return planned > 0 and completed < planned
+
+
+def _plan_step_keys(step: Any) -> set:
+    """单个计划步骤的归一命令 key 集合（``cd`` / ``source`` / ``.`` 子命令不计）。"""
+    cmd_str = _extract_command_str(step)
+    if not cmd_str:
+        return set()
+    keys = set()
+    for argv, _conn in _split_top_level(cmd_str):
+        if not argv or argv[0] in ("cd", "source", "."):
+            continue
+        key = _normalize_argv_for_match(argv)
+        if key:
+            keys.add(key)
+    return keys
+
+
+def _audit_declared_steps(
+    plan_steps: Optional[List[Any]],
+    run_results: List[SandboxRunResult],
+    step_ledger: Optional[List[Tuple[int, List[str], int]]] = None,
+) -> None:
+    """自报归属防伪留痕（★ 纯观测，S7-11 / T-S7-7-5；只打 WARNING、不返回任何值）。
+
+    完成度采信 agent 自报的 ``step_index``（§49.0 变更 1），代价是理论上 agent 给
+    任意命令打任意下标就能把完成数刷满（R-S7-65）。本函数是那条产品级假设的**唯一
+    对冲手段**：信任但留痕——**自报与实际执行明显不符时记 WARNING，不阻断流程**。
+
+    判据：对每条 effective run，若它带**合法自报下标 i**（``0 <= i < planned``），
+    比对它的归一 key 与**计划第 i 步自身**的归一 key 集合；集合非空且 key 不在其中
+    ⇒ 记一条不符。
+      - ``idx == -1``（未声明）与越界一律跳过——越界已由 ``_reconcile_steps`` 打过
+        WARNING，此处不重复告警；
+      - 计划第 i 步无命令（缺 command / 空串 / 纯 ``cd``）⇒ **不判**（无从比对，避噪声）。
+
+    ⚠ **写法变通也会命中**（计划写 ``python scripts/x.py``、agent 改用
+    ``python -m scripts.x`` 重跑）——**那正是要的观测量**，所以是 WARNING 不是错误：
+    不比对字符串才是判定层的正确设计（比对会把正当的写法变通误判成"未完成"，
+    dev-plan §56 P-45 / 已作废的 R-S7-61）。
+
+    ★ 纯观测红线：**返回 None**，从签名上杜绝被判定 / 渲染 / state 消费（CP-7.5-4）。
+    脱敏：命令与步骤名一律过 ``mask_value``（命令可能内嵌 token，架构 §9.3）。
+    """
+    steps = list(plan_steps or [])
+    planned = len(steps)
+    if planned <= 0:
+        return
+    declared: Dict[Tuple[str, ...], int] = {}
+    for entry in step_ledger or []:
+        try:
+            idx_raw, cmd, _exit = entry
+            idx = int(idx_raw)
+        except (TypeError, ValueError):
+            continue  # 畸形条目已由 _reconcile_steps 告警，此处不重复
+        if not (0 <= idx < planned):
+            continue  # -1（未声明）与越界都不在本函数职责内
+        declared[tuple(str(c) for c in (cmd or []))] = idx
+
+    if not declared:
+        return
+
+    mismatches: List[Tuple[int, str, str]] = []
+    for r in _effective_runs(list(run_results or [])):
+        cmd_t = tuple(str(c) for c in (r.command or []))
+        declared_idx = declared.get(cmd_t)
+        if declared_idx is None:
+            continue
+        plan_keys = _plan_step_keys(steps[declared_idx])
+        if not plan_keys:
+            continue  # 计划该步没写命令 → 无从比对
+        if _normalize_argv_for_match(list(cmd_t)) in plan_keys:
+            continue
+        mismatches.append((
+            declared_idx,
+            mask_value(_step_display_name(steps[declared_idx], declared_idx)) or "",
+            mask_value(" ".join(cmd_t)) or "",
+        ))
+
+    if not mismatches:
+        return
+    shown = mismatches[:_AUDIT_MISMATCH_LOG_MAX]
+    detail = "；".join(
+        f"自报第 {idx + 1} 步「{name}」← 实际命令 {cmd}" for idx, name, cmd in shown
+    )
+    logger.warning(
+        "[%s] 步骤自报与实际执行不符 %d 条（完成度采信自报，仅留痕不阻断）：%s%s",
+        NODE_NAME, len(mismatches), detail,
+        f"（另 {len(mismatches) - len(shown)} 条略）" if len(mismatches) > len(shown) else "",
+    )
+
+
+
+# ---------------------------------------------------------------------------
 # 步骤 4.75（S6-B2，T-S6-2-4）：NO_METRICS 合流——exit 0 但无指标时改判
 # ---------------------------------------------------------------------------
+
+
+# S7-11（T-S7-7-6）：改判文案（用户可见——经 _append_fix_record 进 fix_loop_history，
+# 由 UI 的"修复历程"折叠条直接展示）⇒ 通俗中文、零内部标识符、零字段名（Q-S7-29b +
+# docs/product-design-specification.md:479）。提为模块级具名常量以进术语守门扫描面。
+_INCOMPLETE_EXECUTION_SUMMARY_LEAD: str = "命令都正常结束了，但计划里的步骤没跑完"
+_INCOMPLETE_EXECUTION_FIX_HINT: str = (
+    "请把计划里剩下的步骤按顺序跑完；若某些步骤跑不起来，"
+    "排查它们为什么没跑（前置步骤失败？入口脚本不存在？）。"
+)
+# 未跑完步骤清单在文案里最多列几条（防长清单撑爆 UI 折叠条）。
+_INCOMPLETE_STEPS_TEXT_MAX: int = 5
+
+
+def _apply_incomplete_execution(
+    feedback: "ExecutionFeedback",
+    recon: Optional[Dict[str, Any]],
+    exit_ok: bool,
+) -> "ExecutionFeedback":
+    """纯函数：命令全跑通但计划步骤没跑完时，改判为 INCOMPLETE_EXECUTION。
+
+    S7-11 修法 D（架构 Q-S7-28~30 + dev-plan §49.2 第 8 条）。**没有这一步，修法 C
+    的设计意图会落反**：``success=False`` 并不等于"回修复循环"——路由要求
+    ``feedback.auto_fixable`` 为真才回 coding，而"全部 exit 0 + 有指标"这条路径上
+    feedback 恒为 ``ErrorCategory.NONE``（``auto_fixable=False``）⇒ 只收严 success
+    会把 Maria 拍板的"交修复循环继续补跑"落成"直接打断用户"。
+
+    - 条件：``exit_ok ∧ feedback.category == NONE ∧ _completion_insufficient(recon)``，
+      其余情形**原样返回**（与 ``_apply_no_metrics`` 同款结构）；
+    - **优先级**：本函数排在 ``_apply_no_metrics`` **上游** ⇒ 命中后 category 不再是
+      NONE，后者的前置守卫自动让位（Q-S7-30：优先级靠调用顺序拿，``_apply_no_metrics``
+      函数体一行不改）；
+    - ``attribution_unavailable`` 时 ``unexecuted_steps`` 恒空 ⇒ 文案走**无清单**分支，
+      **不得凭空编造步骤名**。
+    """
+    if not (
+        exit_ok
+        and feedback.category == ErrorCategory.NONE
+        and _completion_insufficient(recon)
+    ):
+        return feedback
+    recon = recon if isinstance(recon, dict) else {}
+    planned = recon.get("planned")
+    completed = recon.get("completed")
+    summary = f"{_INCOMPLETE_EXECUTION_SUMMARY_LEAD}（已跑完 {completed}/{planned} 步）"
+    names = [
+        str(item.get("step_name") or "").strip()
+        for item in (recon.get("unexecuted_steps") or [])
+        if isinstance(item, dict)
+    ]
+    names = [n for n in names if n]
+    if names:
+        shown = names[:_INCOMPLETE_STEPS_TEXT_MAX]
+        tail = f" 等共 {len(names)} 个" if len(names) > len(shown) else ""
+        summary = f"{summary}：还没跑的有 {'、'.join(shown)}{tail}"
+    return ExecutionFeedback(
+        category=ErrorCategory.INCOMPLETE_EXECUTION,
+        auto_fixable=True,
+        summary=summary,
+        fix_hint=_INCOMPLETE_EXECUTION_FIX_HINT,
+        representative_stderr="",
+    )
 
 
 def _apply_no_metrics(
@@ -1880,7 +2157,16 @@ def _build_execution_result(
     """
     prep_ok = bool(prep.success) if prep is not None else bool(run_results)
     exit_ok = prep_ok and all(r.exit_code == 0 for r in _effective_runs(run_results))
-    success = bool(exit_ok and len(metrics) >= 1)
+    # S7-11（T-S7-7-6，修法 C）：第三个合取项——计划里的步骤必须跑完。
+    # 在此之前只问"做过的有没有做错"，不问"该做的做完没有"，构成反向激励：
+    # 立项那次真跑 round_0 跑了 17 条命令 5 条失败 ⇒ 判失败；round_1 只跑 2 条全 0
+    # ⇒ 判**成功**（指标还是汇总上一轮的残留产物）。做 2 件事比做 17 件事更容易成功。
+    # ⚠ 必须调 _completion_insufficient 这个单点谓词，禁止在此另写比较（红线）。
+    success = bool(
+        exit_ok
+        and len(metrics) >= 1
+        and not _completion_insufficient(step_reconciliation)
+    )
 
     # artifacts 收集（越界等异常不应炸节点）。
     artifacts: List[str] = []
@@ -2391,19 +2677,32 @@ def execution(state: GlobalState) -> dict:
     # commit，guard 命中路径复用已落盘结果零重算。
     metrics_groups = _collect_grouped_metrics(work_dir)
 
-    # 步骤 4.75（S6-B2，T-S6-2-4）：NO_METRICS 合流——exit 0 但无指标时改判。
-    # 需在 _collect_grouped_metrics（步骤 4.5）之后、_build_execution_result 之前；
-    # exit_ok 与分类器用同套 _effective_runs 口径（prep 中性判据一致）。
-    _prep_ok_for_nm = bool(agent_out.prep.success) if agent_out.prep is not None else bool(run_results)
-    _exit_ok_for_nm = _prep_ok_for_nm and all(r.exit_code == 0 for r in _effective_runs(run_results))
-    feedback = _apply_no_metrics(feedback, metrics, metrics_groups, _exit_ok_for_nm)
-
     # 步骤 4.6（sp5 S5-06，T-S5-2-4/2-5）：确定性步骤对账 + 降级凭证快照 + 截断标记。
     # 幂等纪律③（架构 §9.2）：必须在 _build_execution_result 之前完成、随 exec_result
     # 一次 commit；guard 命中路径（复用已落盘 execution_result）即含新字段，零重算。
+    # ⚠ S7-11（T-S7-7-6）：**调用位置前移**（原在 4.75 之后）——步骤 4.7 的完整度改判
+    # 需要它的产出。_reconcile_steps 函数体一行未改，两条既有契约（在
+    # _build_execution_result 之前完成、只调一次）均保持。
     step_reconciliation = _reconcile_steps(
         plan.get("execution_steps") or [], run_results, agent_out.step_ledger,
     )
+
+    # 步骤 4.65（S7-11，T-S7-7-5）：自报归属防伪留痕——完成度采信 agent 自报的
+    # step_index，此处只把"自报与实际执行明显不符"打成 WARNING 留痕，**不阻断、
+    # 不返回任何值**（R-S7-65 的唯一对冲手段）。
+    _audit_declared_steps(
+        plan.get("execution_steps") or [], run_results, agent_out.step_ledger,
+    )
+
+    # 步骤 4.7（S7-11，T-S7-7-6）+ 4.75（S6-B2，T-S6-2-4）：两级改判合流。
+    # 顺序即优先级（Q-S7-30）：INCOMPLETE 排在 NO_METRICS 之前 ⇒ "没跑完且没指标"
+    # 报的是"步骤没跑完"（真因）而不是"没产出指标"（果）；_apply_no_metrics 的
+    # category==NONE 前置守卫使它在改判后自动原样返回，**函数体一行不改**。
+    # 两者共用同一处 exit_ok 单点计算，与分类器同套 _effective_runs 口径。
+    _prep_ok = bool(agent_out.prep.success) if agent_out.prep is not None else bool(run_results)
+    _exit_ok = _prep_ok and all(r.exit_code == 0 for r in _effective_runs(run_results))
+    feedback = _apply_incomplete_execution(feedback, step_reconciliation, _exit_ok)
+    feedback = _apply_no_metrics(feedback, metrics, metrics_groups, _exit_ok)
     # AC-S5-03 第②落点：同点快照 coding gate 的降级凭证 purpose_key（.get() 防御读，
     # 兼容旧 checkpoint 无该键；只存 purpose_key，天然无敏感值，架构 §9.3）。
     degraded_credentials = sorted((state.get("credential_degradations") or {}).keys())

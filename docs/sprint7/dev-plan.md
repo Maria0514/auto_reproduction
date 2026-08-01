@@ -2885,6 +2885,8 @@ graph TD
 |---|---|---|
 | **改前基线（S7-10 开工时，2026-07-31 主控实测）** | `sha256[:16] = 0dbe4143dc836e91`，主体长 **1560 字符** | `.venv/bin/python` 实算。**该值即 sp4~sp7 期间"本应被锁定却从未被锁定"的那个值**（P-27：既有两条 `assert head == BODY` 是常量与自身渲染比，恒绿） |
 | **改后基线（2026-07-31 T-S7-6-4 实测）** | `sha256[:16] = f82f3938cf31f882`，主体长 **1698 字符**（改前 1560，+138） | 已写死进 `tests/test_sprint5_t14_execution_prompt.py::test_cp_6_2_1_execution_prompt_body_byte_baseline`；**主控须独立复算一次** |
+| **改后基线（2026-08-01 T-S7-7-4 / S7-11 实测）** | `sha256[:16] = c73e1e6e3cfc1280`，主体长 **1979 字符**（改前 1698，+281） | 已写死进 `tests/test_sprint5_t14_execution_prompt.py::test_cp_6_2_1_execution_prompt_body_byte_baseline`。**变更原因**：S7-11 修法 B 六处——①`run_in_sandbox` 工具说明把 `step_index` 声明由"可选提示"升为**必须**并写明漏报后果（S7-11 起完成度直接采信该自报值，§49.0 变更 1）；②纪律 4 收窄"如实收尾"授权（限"确实无法继续时"+ 收尾前把没跑过的步骤跑完或跑到失败为止）；③纪律 5 的"禁止空转"限定为**同一回合内**；④**新增纪律 6「修复回合从第一步开始按顺序全量重跑」**（判定层完成度合取项硬依赖此条，R-S7-59）；⑤成功判定纪律补"少跑步骤不会被判成功"；⑥输出契约 `steps_attempted` 注释明确为"本回合"。**零插值、零论文级动态值**，AC-S7-46 点名保留的三句（"不得写入或修改任何代码文件" / "交回代码生成环节修复" / "cd（限工作区内）"）**原样在位**，点名禁止的"修正相对路径"**仍不存在** |
+| **验红记录（S7-11）** | ✅ **两次实做**：①改 prompt 那一刻该门**当场红**，报错逐字为 `execution prompt 主体字节已变更（当前：c73e1e6e3cfc1280，基线：f82f3938cf31f882）`，同文件另 12 用例仍绿（**CP-7.4-1 活体证明**）；②更新基线后 13 passed，再在主体内插一个空格 → 复红（`当前：421761ac1165dedd`）→ `sha256` 校验逐字节还原 → 复绿 13 passed（CP-7.4-2） | **不验红等于没建门** |
 | **变更原因** | S7-10 的**一次性静态变更**：`:1018` 工作纪律第 4 条收窄（删「修正相对路径」这一内联写码授权口 + 补「不得写入或修改任何代码文件；代码本身有问题时如实收尾，由编排层交回代码生成环节修复」）；`:1011` `run_in_sandbox` 工具说明补「本工具不用于写代码」+ **Q-S7-22 的形态表述**（行内 `-c` 只用于简短探针 / 超长载荷会被直接拒绝，**刻意不写阈值数字**——避免与 `_INLINE_PY_MAX_CHARS` 形成无机械绑定的双源真相，那是 R-S7-41 换层皮） | 判 bug 的标准是"是否引入论文级 / 任务级动态值"，不是"是否修改过"（沿 §40.1 与架构 §18.4(1) 同款口径）。**动态值仍一律走 HumanMessage**。`cd（限工作区内）` 表述**保留未删**（AC-S7-46 明令） |
 | **验红记录** | ✅ **三次全部实做**：①T-6-2 建门后（改前基线 `0dbe4143dc836e91` 当场 13 passed）body 末尾临时插一个空格 → 该断言变红、**同文件另 12 用例仍绿**、逐字节还原后复绿（CP-6.2-2）；②T-6-4 一改 prompt 该门**当场红**——报错逐字为 `当前：f82f3938cf31f882，基线：0dbe4143dc836e91`（CP-6.4-1，**这就是"门是真的"的活体证明**）；③更新基线后 25 passed，再在主体内插一个空格 → 复红 → 还原复绿（CP-6.4-5） | **不验红等于没建门** |
 | **后人须知** | 本表与 §40.1 合起来覆盖 planning + execution 两个冻结区。**coding / resource_scout 两侧的 system prompt 主体目前仍无字节基线守门**——本批不扩围（超范围），**登记为遗留项**，日后改那两处时须一并补 | 与 §40.1「后人须知」同款纪律 |
@@ -2964,3 +2966,956 @@ graph TD
 *⚠ **本批与前几批的关键差异：尚无 PRD 章节与架构章节**，设计依据只有 Maria 2026-07-31 三条约束拍板 + 架构师 2026-07-31 四问裁决（本文暂记 Q-S7-16~19，未落 `architecture.md`）。⇒ 验收点暂用 `DA-S7-10-N` 命名、不占用 `AC-S7-*` 号段，待立项后统一换发。*
 *⚠ **开工前三项待 Maria / PM / 架构师表态**：①PRD 立项 + 架构落章；②`core/plan_checks.py` 零改动红线解除（S7-08 §32.3 所立，Q-S7-17(c) 判定不延伸，但须显式请示）；③本批编号取 S7-10 还是改由本批占用 S7-09。*
 *⚠ **T-S7-6-9 真跑须 Maria 单独授权具体动作、严禁预授权**；批次边界逐批确认制照旧。）*
+
+
+---
+
+## 49. S7-11 概述（执行完整度进判定——第三次 UMAP 真跑挖出的「做得越少越容易成功」反向激励）
+
+> **⚠ 编号说明（务必先读）**：**S7-09** 已被占用（`docs/TODO.md:602` + `docs/sprint7/prd.md` §11「只读环境探测命令白名单放开」），**S7-10** 是刚提交的批次 6（HEAD `c480990`，2026-07-31 交付、2026-08-01 完成真跑）。⇒ **本批取 S7-11**；任务号沿本文既有体例 **T-S7-7-N**（第二段是**批次号**不是需求号，批次 0~6 已用满，本批为**批次 7**），CP 号 **CP-7.x-y**，章节号接续 §48。
+>
+> **⚠ 本批不走 PRD**（Maria 2026-08-01 明确）：前两条修法（A/B）是**纯缺陷修复**，第三条（C）的产品决策 Maria 已当场拍板（见 §49.2 第 0 条）。⇒ 验收点用 **`DA-S7-11-N`** 命名，**不占用 `AC-S7-*` 号段**（与 S7-10 同款处置）。设计依据为：**① Maria 2026-08-01 拍板**；**② 架构师代理 2026-08-01 两轮裁决（本文记 Q-S7-25~27 与 Q-S7-28~31，含附则 Q-S7-29a/29b，尚未落 `architecture.md`）**。
+>
+> **本节及以下 §50~§56 为纯追加**，不覆盖 §1~§48.4 任何既有内容。
+>
+> ### ⚠⚠ 49.0 方案变更（Maria 2026-08-01 复审拍板，**已决，本批不再议**；本节以下内容已按此全面订正）
+>
+> **变更 1（★ 删整块）：砍掉「确定性完成度算法」这条路线。** 原计划新增的纯函数 **`_deterministic_completion`**（按命令字符串归一后比对计划步骤与实跑命令）**整块删除**，**改为直接采信 execution agent 自报的 `step_index`**——即**直接复用既有 `_reconcile_steps` 产出的 `step_reconciliation.completed / planned`**，不新增第二个完成度算法、不新增 `ExecutionResult.completion` 键。
+>
+> - **依据（Maria 的判断 + 主控存档实证）**：这次真跑 agent **根本没有虚报**。两轮对账实测：round_0 `executed=8 / completed=3 / success=False`；round_1 `executed=2 / completed=2 / success=True`。**agent 首轮诚实声明了 8 步**（9 步里只有 1 步没声明）。⇒ **问题从来不在自报可信度，而在「exit_code 全 0 就算成功」这个口径**——做得多反而判失败，做得少反而判成功。
+> - **连带效果（★ 一个大坑自动消失）**：`python scripts/x.py` vs `python -m scripts.x` 的写法不匹配（原 **P-45 / R-S7-61**）**不再构成问题**——不比对命令字符串就不会误伤：agent 用 `-m` 形态重跑并声明 `step_index=i`，规则①照样归属到第 i 步。⇒ **R-S7-61 作废**（§53 已标注），相关任务/CP/红线一并删除。
+> - **替代的防伪方案（信任但留痕，本批新增）**：完成度采信自报，但**自报与实际执行明显不符时记 WARNING 留痕、不阻断流程**。判据见 §49.2 第 5 条。既不误伤正当的写法变通（`-m` / 相对路径变体），真出现虚报也能被发现。
+>
+> **变更 2（★ 保持不动）：逐轮重置 + 判定坚持「单轮全量」。** Maria 独立提出、与架构 Q-S7-25(0) 裁决一致：**跨轮取并集是「把上轮代码下的通过当成本轮代码下的通过」，与本次修复初衷同型的假绿**。主控此前曾建议「完成度跨轮累计」——**那是错的，已撤回**；本文任何顺着该方向的表述以本条为准。`run_results` / `step_ledger` **逐轮重置是正确设计**，判定口径就是「**本轮必须从头把计划的可执行步骤跑完**」。
+>
+> **变更 3：其余四条修法（A/B/C/D）保持，但按上两条对齐。** A/B/D 实质不变；**C 的实现从"新写算法"降为"接线既有对账结果"**。
+>
+> **本次删改清单（供审阅）**：删 §49.2 原第 5 条（确定性算法全裁）、原第 7 条（并存分层）；删 **T-S7-7-5 中 `_deterministic_completion` 与 `ExecutionResult.completion` 两项产出**（该任务改为"接线 + 防伪留痕"）；删 CP-7.5-1/2/3/4/5（算法专属守门）→ 换发为新 CP；删 §49.3 中 4 条与该算法绑定的红线；**R-S7-61 作废**、新增 **R-S7-65（自报可信度）**；§56.2 影响面由 9 条修正为 **6 条**（3 条 schema 债随 `completion` 键一并消失）。
+
+### 49.1 需求目标（一句话）
+
+2026-08-01 第三次 UMAP 真跑（arXiv:1802.03426）：**计划 9 步只完成 2 步、执行总耗时 0.243 秒，却判 `success=true`**，报告形态出 `full_success`（`workspace/1802.03426/report.md:5`），同一份报告顶部却又如实印着「⚠️ 计划步骤未全部执行完成（已完成 2/9 步）」（`:14` / `:47`）——**判定逻辑压根没看这个数**。本批修的是**「成功」这个词的定义**：从「跑过的命令有没有跑错」改成「该跑的跑完没有 **且** 跑过的没跑错 **且** 有指标」。
+
+### 49.2 方案要点（Maria 拍板 + 架构师 Q-S7-25~31 两轮裁决，本批不重新决策）
+
+**0. Maria 2026-08-01 拍板（已决，本批不得再议）**：**执行未跑完计划步骤时不判成功，交给修复循环继续补跑；不设百分比阈值**——只要实际完成步数少于计划步数就不判成功，让修复循环接着跑，撞顶后走既有 interrupt#2 面板让用户决策。**预算与轮次上限本就是兜底**（本次真跑只用了 1/20 修复轮，`config.py:32 MAX_FIX_LOOP_COUNT=20`）。
+
+**根因三层 + 本批新挖出的第四层**（行号均为本 dev-plan 落盘时实测，见 §49.4）：
+
+1. **第一层（信息缺失，最根本）**：`_build_execution_agent_context`（`core/nodes/execution.py:1134-1192`）在修复轮注入的 payload 只有 `work_dir` / `execution_steps` / `environment` / `max_rounds`（`:1149-1154`）+ `fix_round` / `last_error_summary`（`:1155-1166`）+ 两个条件注入项（`:1168-1176` `credential_degradations`、`:1189-1190` `scale_reduced_directive`）。**没有任何字段告诉执行节点「代码已被修改」**。编码节点的自述 `last_fix_note`（`core/nodes/coding.py:737` 写入、`core/state.py:306` 声明）在 execution 侧**只被 `_append_fix_record`（`:2011-2040`，`:2037` / `:2038`）消费写进 `fix_loop_history` 供后续 coding 回合参考，从未送到 execution agent 眼前**。⇒ agent 在它的认知里「那些命令还是坏的」。
+2. **第二层（提示词措辞）**：`_EXECUTION_SYSTEM_PROMPT_BODY`（`:1039`）——纪律 4（`:1050`）**两次**出现「如实收尾」，是明确的提前结束授权；纪律 5（`:1051`）「不要重复执行同一条命令空转」**没有区分「无意义空转」与「重跑验证修复」**，而后者恰是唯一必须重复执行同一条命令的场景；输出契约（`:1058-1064`）字段语义是 `steps_attempted`（`:1060` 实际执行条数）/ `all_exit_zero`（`:1061` **已执行命令**是否全 0），**只问「做过的有没有做错」，不问「该做的做完没有」**；代码注释把修复轮上下文的意图写成「帮助 agent **避开**上一轮已知错误」（`:1142`）——设计意图就是绕开，不是回验。
+3. **第三层（判定口径）**：`:1881-1883`
+   ```python
+   prep_ok = bool(prep.success) if prep is not None else bool(run_results)
+   exit_ok = prep_ok and all(r.exit_code == 0 for r in _effective_runs(run_results))
+   success = bool(exit_ok and len(metrics) >= 1)
+   ```
+   `run_results` 是**本轮实际执行过的命令**且逐轮重置 ⇒ 修复轮只跑 1~2 条命令、exit 全 0、有指标 ⇒ 判成功。**这构成反向激励：agent 做得越少越容易被判成功。** ⚠ **本批实测的铁证（§49.4 第 3 条）**：round_0 跑了 **17 条命令、5 条 exit=1** ⇒ 判失败；round_1 只跑 **2 条、全 0** ⇒ 判**成功**。**做了 17 件事失败，做了 2 件事成功。**
+4. **⚠ 第四层（本批新挖出，Maria 描述未提，是 C 能否成立的命门）**：**`success=False` 并不等于「回修复循环」**。路由在 `:2213-2247`：`success` 为真早退（`:2213-2215`）；否则须 `feedback.auto_fixable` 为真才回 coding（`:2230-2247`），**否则直接 interrupt#2 打断用户**。而「全部 exit 0 + 有指标」这条路径上 feedback 恒为 `ExecutionFeedback(ErrorCategory.NONE, False, "执行成功", "", "")`（`:260`），**`auto_fixable=False`**（`AUTO_FIXABLE` 集合 `:145-152` 不含 NONE）。⇒ **只做 A/B/C 三条修法而不配套改判，C 会把 Maria 要的「交修复循环补跑」落成「打断用户」——设计意图落反。**
+
+**三条修法（必须同批，缺一则被另两条拉回原状）+ 第四条配套（本批新增，不可省）**：
+
+- **修法 A（信息接线）**：把「上轮被修改的文件清单 + 编码节点修复说明」接进 execution 修复轮上下文。数据现成（`last_fix_note` / `last_files_written`，`core/state.py:306` / `:307` 一带，以及 `fix_loop_history` 里的 `files_touched`，`core/state.py:213`），**主要是接线，零新数据源**。
+- **修法 B（提示词）**：补一条修复轮纪律「**必须重跑此前失败的步骤以验证修复**」，把纪律 5 的「禁止空转」**限定为「同一轮内无意义重复」**，与修复验证明确区分。⚠ **架构 Q-S7-25(0) 追加的硬要求**：还必须写明「**每个执行回合从头按计划全量重跑**」——否则判定层必然死锁（见下）。
+- **修法 C（判定）**：把执行完整度接进 `success` 判定，**数据源直接用既有 `step_reconciliation`**（不新写算法，见第 5 条）。
+- **修法 D（本批新增，配套 C 的必需项）**：新增 `ErrorCategory.INCOMPLETE_EXECUTION` + 纯函数 `_apply_incomplete_execution` 改判，使完成度不足走**修复循环**而非 interrupt#2。
+
+**5. ★ 完成度数据源：直接采信 agent 自报的 `step_index`，即复用既有 `step_reconciliation`（Maria 2026-08-01 复审拍板，见 §49.0 变更 1）**
+
+**不新增任何完成度算法。** `_reconcile_steps`（`:1611-1714`）**已经**产出 `planned` / `executed` / `completed` 三个数，其归属规则①正是 agent 经 `run_in_sandbox(command, step_index)` 自报的下标（`:1643-1661` 建表、`:1680-1682` 消费），规则②是命令归一精确匹配兜底（`:1663-1685`）。⇒ **修法 C 只是把这个已有的数接进 `success`，一行合取项的事。**
+
+- **(a) 判定谓词（唯一）**：`_completion_insufficient(recon) -> bool` = `planned > 0 and completed < planned`。`planned == 0`（无计划步骤）时**恒 `False`**，既有语义零变化。入参非 dict / 缺键 / 键类型畸形 → 一律 `False`（旧 checkpoint 不误判红）。
+- **(b) ★ 为什么可以信自报（推翻上一版的判断）**：立项那次真跑的存档实测——round_0 `executed=8 / completed=3`、round_1 `executed=2 / completed=2`，**agent 首轮诚实声明了 8 步**（9 步里只有 1 步没声明）。**没有虚报。** 上一版据 §48 P-24「自报可绕过」而否决该数据源，是把"理论上可被绕过"当成了"实际正在被绕过"；**实测证据方向相反**。⇒ 采信自报。
+- **(c) ★ 连带解决的大坑**：不比对命令字符串 ⇒ `python scripts/x.py` vs `python -m scripts.x`（原 P-45 物证）**不再造成误判**——agent 用 `-m` 形态重跑并声明 `step_index=i`，规则①照样归属第 i 步。**原 R-S7-61「归一漏配造成系统性假红」随之作废。**
+- **(d) `attribution_unavailable`（R-2 保守语义，`:1692-1705`）在判定层：不特殊对待。** 该字段只置空 `unexecuted_steps`（展示层保守），**不改 `completed` 的值**；全零归属时 `completed == 0 < planned` ⇒ 判不成功，**这正是要的结果**（"跑了一堆计划外命令、一步计划都没归属上"本就不该判成功）。R-2 只约束**展示**——展示层保持不印"0/N"式数字（§49.2 第 9 条 (b) 处置），判定层照常。
+- **(e) ★ 防伪留痕（替代方案，本批新增；Maria 明令设计判据）**：新增只读纯函数 **`_audit_declared_steps(plan_steps, run_results, step_ledger) -> List[Dict]`**，**只打 WARNING、不进任何返回值、不进 state、不影响判定**。
+  - **判据**：对每条 effective run，若它带**合法自报下标 `i`**（`0 <= i < planned`），取该 run 的归一 key（`_normalize_argv_for_match`）与**计划第 i 步自身的归一 key 集合**（`_extract_command_str` → `_split_top_level` → 丢 `cd`/`source`/`.` 头 → 逐条归一）比对；**计划第 i 步 key 集合非空** ∧ **run 的 key ∉ 该集合** ⇒ 记一条"自报与实际执行不符"。
+  - **为什么这个判据是对的**：它捕的正是"换了命令还自报同一下标"这一种虚报形态；而"写法变通"（`-m` / 相对路径差异）也会命中——**但那正是我们想看见的观测量**，所以是 WARNING 不是错误。计划第 i 步无命令（纯 `cd` / 空串）时**不判**（无从比对，避免噪声）。
+  - **日志形态**：命中时打**一条**汇总 WARNING（不逐条刷屏）：不符条数 + 前 5 条 `(自报第 N 步「步骤名」, 实际命令)` 并排，命令与步骤名一律过 `mask_value`（与 `:1702` 同口径）。零命中不打（对齐已知 bug 模式 #3 的"无目标不打噪声"）。
+  - **红线**：该函数**返回值不得被任何判定/渲染消费**——它是纯观测。CP 用"打桩使其恒返回大量不符 → `success` 与 feedback 一字不变"来钉死。
+
+**（原第 7 条「新算法与既有 `step_reconciliation` 并存分层」随确定性算法一并删除——本批只有一个完成度数据源，不存在"两个完成数同时对外"的问题。）**
+
+**6. ★ 判定口径为「单轮全量」，跨轮不取并集（架构 Q-S7-25(0)，阻塞级前置裁决）**
+
+`run_results` 逐轮重置是事实。合取项上线后，若 agent 在修复轮只重跑失败那一步，本轮 `completed < planned_actionable` ⇒ **永远判不成功**。这不是边缘死锁，是**必然死锁**。两条出路只能选一：
+
+- **采纳（本批取此）**：**提示层要求每个执行回合从头按计划全量重跑，判定层坚持单轮全量。** 理由是产品定义——"复现成功"的证据必须是**一次干净的端到端跑通**，跨轮拼凑出的"累计完成 9 步"在**代码已被修改**的前提下根本不成立。
+- **否决**：state 层跨轮取已完成步骤下标并集。它把"上一轮代码下步骤 3 通过"当成"当前代码下步骤 3 通过"，是另一种假绿，**与本次修复的初衷同型**。
+
+⇒ **修法 B 的 prompt 约束是本批交付项而非"顺带"**，判定层的正确性硬依赖它 —— 这是**新增耦合**，登记 **R-S7-59（阻塞级）**。
+
+**7. 单一完成度数据源（原「并存分层」条目已删）**
+
+- 全系统**只有一个完成数**：`step_reconciliation.completed / planned`。判定、报告横幅、步骤对账节**全部取它**，不存在口径分叉，**报告内不可能再自相矛盾**。
+- `_reconcile_steps` **函数体一行不改**（本批只把它的**调用位置前移**，见第 8 条插槽表）——它继续同时服务展示（`unexecuted_steps` / `extra_commands` / `attribution_unavailable`）与判定。
+- **S7-10 红线「验收断言不得引 `step_reconciliation` 作证」本批解除**（Maria 变更 1 的直接后果：既然产品决定采信自报，它就是**判定的正式数据源**，验收自然可以引它）。**代价与对冲**：自报可信度成为一条产品级假设 ⇒ 登记 **R-S7-65**，对冲手段是第 5 条 (e) 的 `_audit_declared_steps` WARNING 留痕。
+
+**8. 修法 D 的落点与形态（架构 Q-S7-28~30，逐条已裁，本批照抄不再决策）**
+
+- **Q-S7-28 形态**：新增纯函数 `_apply_incomplete_execution(feedback, completion, exit_ok) -> ExecutionFeedback`，插在 `_apply_no_metrics` 的**紧邻上游**；**路由条件 `feedback.auto_fixable` 一字不改**。**否决**"改路由条件加 `or completion_insufficient`"，三条理由：①路由分支里 `_append_fix_record`（`:2238`）拿 `feedback.category.value` 写 `fix_loop_history`，走旁路则历史里记 `error_category="none"` + 空 `fix_strategy`，**直接污染 S7-02/S7-05 刚建的反馈链路**；②`auto_fixable` 目前是"是否回 coding"的**唯一准入判据**，旁路会造出第二个真值源；③`_feedback_from_committed_result`（`:2444-2472`）从落盘 `errors[0]` 的 `[error_category=...]` 前缀重建 feedback，走 feedback 通道则 guard 重入路径**零改动**自动正确。
+- **插槽顺序（关键，本次订正）**：主流程改为 4.5 `_collect_grouped_metrics`（不动）→ **4.6 `_reconcile_steps` 调用位置前移**（**函数体一行不改**，只是从 `_apply_no_metrics` 之后挪到之前——因为 4.7 需要它的结果）→ **4.65（新）`_audit_declared_steps`（只打 WARNING）** → **4.7（新）`_apply_incomplete_execution(feedback, step_reconciliation, _exit_ok)`** → 4.75 `_apply_no_metrics`（**函数体零改动，仅位置后移**）→ 5 `_build_execution_result(...)`（`step_reconciliation` 入参**已存在**，无需新增）。`_prep_ok_for_nm` / `_exit_ok_for_nm` 改名 `_prep_ok` / `_exit_ok` 供 4.7 与 4.75 共用（**仍是单点计算，不新增第二处 exit_ok 口径**）。⚠ **`ExecutionResult` 不加新键**——`step_reconciliation` 本就在里面（`core/state.py:171-181`，11 键不变）。
+- **★ 单点谓词红线**：`success` 判定（`:1902-1904`，`_build_execution_result` 内，用它已收到的 `step_reconciliation` 入参）与 `_apply_incomplete_execution` 用的是同一个"完成度不足"判断，**必须抽成唯一小谓词 `_completion_insufficient(recon) -> bool`，两处都调它**。否则两处各写一遍比较，日后必漂移出"改判了但 success 还是 True"的假绿。
+- **Q-S7-29 分类取值**：**新增 `ErrorCategory.INCOMPLETE_EXECUTION = "incomplete_execution"` 并入 `AUTO_FIXABLE`**，不复用 NO_METRICS。理由：①复用会让 `_no_metrics_stalled`（`:2180-2195`，`NO_METRICS_EARLY_STOP_ROUNDS=2`）把"正在补跑"误判成"无进展"提前打断；②fix_hint 指错方向；③**`fix_loop_history.error_category` 是面向用户的修复历程折叠条标题**（`ui/pages/execution_monitor.py:447-450` / `:688-696`，经 `humanize` 转中文），复用会让界面连续印"未产出指标"而真相是"步骤没跑完"——**对用户撒谎，比技术债更贵**。**代价盘点（架构实测，比预估低）**：`:1925-1930 _map_category_to_error_type` 是 `if category in AUTO_FIXABLE` ⇒ **自动 `transient`，零改动**；`_feedback_from_committed_result` 是 `ErrorCategory(raw)` + `category in AUTO_FIXABLE` ⇒ **round-trip 零改动**；`_no_metrics_stalled` 显式 gate 在 NO_METRICS ⇒ **新类别天然不进早停**。真实成本只有 `ui/term_map.py`（`:53-65` 区段）加一条 + 三个数字。
+- **Q-S7-29b 文案约束**：summary 经 `_append_fix_record` 进 UI，**必须通俗中文、零内部标识符**，缺失步骤清单**截断**（前 5 条 + "等共 N 个"），步骤名走 `mask_value`（与 `:1682` 同口径）。fix_hint 指向"把剩余步骤按计划跑完 / 排查这些步骤为何没跑（前置步骤失败？命令写法与计划不一致？）"，**不得出现"检查指标输出"字样**。
+- **Q-S7-30 叠加优先级**：**INCOMPLETE 优先于 NO_METRICS**，且 **`_apply_no_metrics` 一行不改**——它已有前置守卫 `feedback.category == ErrorCategory.NONE`（`:1715`），排在它前面改判后 category 不再是 NONE，它**自动原样返回**。**零改动拿到优先级**，比给它加 `completion_ok` 入参好（加参会让 S6-B2 既有测试面全部改签名）。真值表（`exit_ok=True` 前提）：
+
+  | metrics | 完成度 | 判定 |
+  |---|---|---|
+  | 有 | 足 | NONE，`success=True` → reporting |
+  | 有 | 不足 | **INCOMPLETE**，回 coding |
+  | 空 | 不足 | **INCOMPLETE**（不是 NO_METRICS） |
+  | 空 | 足 | NO_METRICS（既有语义原封不动） |
+
+**9. 对外口径订正（架构 Q-S7-31，本批必做，否则报告与实现不符）**
+
+- **(a) `core/nodes/reporting.py:834` 必须改，且顺手提为具名常量。** 现文案两个问题：①口径本身已过时；②「判定口径（**B 档**）」——**"B 档"是内部分档术语裸露给用户**，本就违反 `docs/product-design-specification.md:479` 的红线（"系统内部枚举值与自创术语……不得裸露给用户"），只是因为它是**内联字面量、不在 `_GUARDED_CONSTANTS` 覆盖面内**才一直没被扫到（S7-06 同款失效模式）。⇒ 提为模块级常量 **`_SUCCESS_CRITERIA_NOTE`**，登记进 `_GUARDED_CONSTANTS`；文案重写为**三条件**、**去掉"B 档"**：退出码正常 + 至少解析出 1 个指标 + **计划内需要执行的步骤全部跑完**。"指标对比表仅供参考不做硬性判定"那半句**保留不动**。
+- **(b) `incomplete_execution` 标注条件补一条析取项（数据源不变，仍是 `step_reconciliation`）。** `reporting.py:282-290` 现为「`unexecuted_steps` 非空 ∨ `budget_truncated is True`」。**补第三项**：`∨ _completion_insufficient 同款条件（planned > 0 ∧ completed < planned）`。**理由**：`attribution_unavailable` 时 `unexecuted_steps` 被 R-2 置空，但判定层已判不成功 ⇒ 不补这一项会出现"**结论说没跑完、横幅不印**"的反向矛盾。⚠ **配套**：`:644-652` 横幅在 `attribution_unavailable is True` 时**不得印"已完成 0/N 步"**（R-2 展示红线：禁"0 步未执行"式误导），走既有 else 分支的**无数字表述**。**横幅与对账节的数据源本就是 `step_reconciliation`，本批零改挂、无回落分支、旧 checkpoint 天然兼容。**
+- **(c) 术语守门账目**：`ui/term_map.py:53-65` 加 `"error_category:incomplete_execution": "执行步骤未跑完"`（⚠ **别写"执行不完整"**——那是 `annotation:incomplete_execution` 的既有文案（`:87`），两处同词会让用户分不清"标注"和"错误分类"）。`tests/test_s708_user_text_guard.py:122-124` 现值 `EXPECTED_TERM_LABELS_N=42` / `EXPECTED_CONSTANTS_N=12` / `EXPECTED_N=54` ⇒ **改为 43 / 13 / 56**。`==` 形态**禁止放宽为 `>=`**；被撞一次**正是它的设计目的**（新增用户可见文案必须过一次评审）。
+
+**10. 提示词字节门连带（S7-10 §48.1 刚建的真门）**
+
+`_EXECUTION_SYSTEM_PROMPT_BODY` 现基线 **`f82f3938cf31f882` / 1698 字符**（本 dev-plan 落盘时 `.venv/bin/python` 独立复算一致）。本批改提示词必须走三件套：**①重算哈希写死 ②§48.1 追加留档行 ③跑一次验红**。**禁止改回 `EXPECTED_HASH = actual_hash` 自锁定形态。**
+
+### 49.3 红线（本批任一任务不得破）
+
+- **A/B/C/D 四条必须同批生效，禁止拆批**（R-S7-60）：只上 C 不上 D ⇒ 完成度不足直接 interrupt#2 打断用户，**设计意图落反**；只上 C 不上 B ⇒ agent 只补跑缺失步骤，判定层**必然死锁**、每次真跑烧满 20 轮；只上 A/B 不上 C ⇒ 反向激励原封不动。任何"先上 C 观察一轮"的提议一律驳回。
+- **★ 不新增完成度算法、不新增 `ExecutionResult` 键**（§49.0 变更 1）：全批**零**新增 state / schema 字段，完成度**唯一**来自 `step_reconciliation`。任何"再写一个确定性算法交叉验证"的提议一律驳回（那是被明确砍掉的那条路）。
+- **`_reconcile_steps`（`:1611-1714`）函数体一行不改**：本批只前移其**调用位置**；收口时该函数体 `git diff` 为空。
+- **`_apply_no_metrics`（`:1722-1751`）函数体一行不改**：只移动调用位置（Q-S7-30 靠调用顺序拿优先级）。
+- **完成度不足的判断只有一个谓词 `_completion_insufficient`**：`success` 判定与 `_apply_incomplete_execution` 两处都调它，**禁止各写一遍比较**（单点谓词红线）。
+- **`_audit_declared_steps` 是纯观测**：只打 WARNING，返回值**不得**被判定 / 渲染 / state 消费；打桩使其恒报大量不符时，`success` 与 feedback **一字不变**（CP 钉死）。
+- **判定层不特殊对待 `attribution_unavailable`**；但**展示层不得印"已完成 0/N 步"**（R-2 展示红线保留）。
+- **旧 checkpoint 兼容（R-6）**：`_completion_insufficient` 对 `None` / `{}` / 畸形键一律返回 `False`；reporting 侧全链路 `.get()` 防御读。**本批无新键 ⇒ 无回落分支、无第二个构造点要补**。
+- **execution 冻结区文案零插值**：无 `{`/`}`、不含 `arxiv`、不含绝对路径、不含任何论文级/任务级值；跨论文 SystemMessage 主体字节一致（`tests/test_sprint5_t14_execution_prompt.py:146-169` 口径不破）。
+- **新增用户可见文案必须提为具名常量并进术语守门**：`EXPECTED_TERM_LABELS_N` 42→**43**、`EXPECTED_CONSTANTS_N` 12→**13**、`EXPECTED_N` 54→**56**；**`==` 禁止放宽**。
+- **既有断言只准同步为更严的正确值**（Maria 明令）：因 success 收严而变红的既有用例，**只能把夹具改成自洽的正确值**，**不得弱化成 `>=` / `issubset` / `skip` / 删除**。
+- **不新增中断种类、不新增决策类型、不新增按钮、不改流程分支**：`_maybe_interrupt_or_return` 的 `already_committed` 两段式语义一字不动。
+- **不改 `core/graph.py`、不改 `core/nodes/planning.py`、不改 `core/nodes/coding.py`、不改 `core/plan_checks.py`、不改 `core/nodes/resource_scout.py`、不改 `core/tools/**`、不改 `sandbox/local_venv.py`、不改 `core/nodes/_repo_scoring.py`**：收口时 `git diff` 逐一为空。
+- **不做**：**新写确定性完成度算法**（§49.0 变更 1 砍掉）、跨轮完成度取并集（Q-S7-25(0) + Maria 变更 2 双重否决）、百分比阈值（Maria 明确否决）、"连续 N 轮完成数无增长"计数器（Q-S7-27 明确压到第二批）、扩 `_normalize_argv_for_match` 的折叠表（`:1590-1591` 那条"非解释器 head 不折叠"的误报防线是对的，别破）、给"自然语言步骤"加语法启发式判断（那是新枚举的开始）。
+
+### 49.4 前置事实（本 dev-plan 落盘时逐条上磁盘 Read / grep / **实跑探针**核实，2026-08-01；**凡与主控描述有出入的一律记进 §56**）
+
+1. **判定式属实，行号 `:1881-1883`**（主控写 1882-1883，`prep_ok` 在 `:1881`）。`_effective_runs` 定义在 `:210-219`（同 argv 多次尝试只留最后一次）。
+2. **报告自相矛盾属实且比描述更甚**：`workspace/1802.03426/report.md:5` 报告形态 **`full_success`**、`:14` 「⚠️ 计划步骤未全部执行完成（已完成 2/9 步）」、`:26-28` 结论"代码跑通"+「判定口径（B 档）…」、`:47` 「已完成 2/9 步（计划 9 步，可归属执行 2 步）」、`:49-56` 未执行清单 7 条（第 1~7 步）、`:170` 「执行总耗时（runtime）: 0.243 秒」。
+3. **★ 反向激励有铁证（主控未提，本批新增事实）**：`workspace/1802.03426/code/exec_logs/round_0.log` 共 **17 条 `[step#`，其中 5 条 `exit=1`**（step#3/9/11/13/15，且日志按"错误优先"编排故这 5 条在头部重复出现）⇒ 判失败、回修复循环；`round_1.log` 仅 **693 字节 / 2 条命令**（`python -m scripts.summarize_results …` + `python -m py_compile …`）**全 0** ⇒ 判**成功**。**做了 17 件事失败，做了 2 件事成功。** 且 round_1 的指标 `best_knn_accuracy` 是 `summarize_results` **汇总 round_0 遗留产物**得来的（`outputs/knn_eval` mtime `Aug 1 03:08`、`outputs/summary` `03:10`）——**"成功"的指标源自上一轮的残留产物**。
+4. **修复轮上下文缺失属实**：`_build_execution_agent_context`（`:1134-1192`）payload 四个恒有键在 `:1149-1154`；修复轮增补 `fix_round` / `last_error_summary` 在 `:1155-1166`；`:1168-1176` `credential_degradations`（+ directive）、`:1189-1190` `scale_reduced_directive` 两个条件注入项 ⇒ **修复轮 payload 最多 8 个键，主控列的 7 个漏了 `scale_reduced_directive`**（§56 P-36）。**全函数无 `last_fix_note` / `files_touched` / `last_files_written` 任何一个 token**（grep 核实）。
+5. **`last_fix_note` 只进历史不进 agent 眼前，属实**：`coding.py:737` `"last_fix_note": last_fix_note` 写 state；`core/state.py:306` 声明；execution 侧唯一消费点是 `_append_fix_record`（`:2011-2040`，`:2037` `fix_note=state.get("last_fix_note", "") or ""`、`:2038` `files_touched=list(state.get("last_files_written", []) or [])`）；下游是 `coding.py:328-380 _digest_fix_loop_history`。⇒ **数据现成，只差一根线。**
+6. **提示词四处措辞属实**：`:1039` 主体常量；`:1050` 纪律 4（**"如实收尾"确实出现两次**）；`:1051` 纪律 5「不要重复执行同一条命令空转」；`:1058-1064` 输出契约，`:1060` `steps_attempted` 注释「实际执行的命令条数」、`:1061` `all_exit_zero` 注释「**已执行命令**是否全部 exit_code=0」；`:1142` 注释「帮助 agent **避开**上一轮已知错误」。
+7. **提示词字节基线属实**：`.venv/bin/python` + `importlib.import_module("core.nodes.execution")` 实算 `_EXECUTION_SYSTEM_PROMPT_BODY` = **1698 字符 / `sha256[:16] = f82f3938cf31f882`**，与 §48.1「改后基线」逐字相符。⚠ 复算必须走 `importlib`（`core/nodes/__init__.py` 显式 export 遮蔽陷阱，已知 bug 模式 #6）。
+8. **`step_reconciliation` 结构属实（⚠ 结论已按 §49.0 变更 1 改写）**：规则① `declared` 建表 `:1643-1661`、消费 `:1680-1682`；规则② `plan_index` 建表 `:1663-1674`（`:1673` 首个步骤先占）、消费 `:1683-1685`；`completed` 计算 `:1689-1691`；R-2 保守语义 `:1692-1705`；返回六键 `:1707-1714`。⚠ **P-24「自报可被绕过」在理论上仍成立，但实测未发生**（§49.2 第 5(b) 条）⇒ **Maria 拍板采信自报**，本批把它作为完成度的正式数据源；**规则②"首个步骤先占"在新方案下不构成死锁**（完成度以规则①自报归属为主，规则②只是兜底）。主控引的 `:1592-1610` 是 **S7-10 改动前的行号**（§56 P-37）。
+9. **★ 路由死路属实（第四层根因）**：`:260` `return ExecutionFeedback(ErrorCategory.NONE, False, "执行成功", "", "")`；`AUTO_FIXABLE`（`:145-152`）= {SYNTAX, IMPORT, DEPENDENCY, PATH, RUNTIME, NO_METRICS}，**不含 NONE**；`:2213-2215` success 早退；`:2230-2247` 回 coding 需 `feedback.auto_fixable` 为真；否则 `:2249+` interrupt#2。
+10. **`_apply_no_metrics` 前置守卫属实**：`:1702-1731`，`:1713-1718` 条件含 `feedback.category == ErrorCategory.NONE`（`:1715`）⇒ **靠调用顺序即可拿到优先级，零改动**。
+11. **三处映射点零改动属实**（架构 Q-S7-29 代价盘点，本 dev-plan 独立复核）：`:1925-1930 _map_category_to_error_type` = `if category in AUTO_FIXABLE: return "transient"`；`:2444-2472 _feedback_from_committed_result` = `ErrorCategory(raw)` + `auto_fixable=category in AUTO_FIXABLE`；`:2180-2195 _no_metrics_stalled` 显式 `if feedback.category != ErrorCategory.NONE...` 起手（`:2186` gate 在 NO_METRICS 上）。
+12. **`ExecutionResult` 现 11 键**：`core/state.py:171-181`。两个构造点：`:1922`（`_build_execution_result` 返回）与 `:2379-2388`（work_dir 缺失的降级路径）。⚠ **本批零新增键**（§49.0 变更 1）⇒ **两处都不动**，schema 债归零。
+13. **术语守门账目属实**：`tests/test_s708_user_text_guard.py:122-124` = `EXPECTED_TERM_LABELS_N: int = 42` / `EXPECTED_CONSTANTS_N: int = 12` / `EXPECTED_N = 42 + 12  # == 54`；`:36-38` 明写「`EXPECTED_N` 用 `==` 是**刻意的**」。`ui/term_map.py` 现 109 行，`error_category:*` 12 条（`:53-66` 区段，含 `:65 no_metrics`、`:66 degraded`），`:87 "annotation:incomplete_execution": "执行不完整"`。
+14. **reporting 三处落点属实**：`:249` `engineering ⇔ exec_result.success == True`；`:283-290` 标注取 `step_reconciliation.unexecuted_steps`（`:290 annotations.append("incomplete_execution")`）；`:644-652` 横幅数字取 `recon.get("planned")/("completed")`；`:725-755` `_render_step_reconciliation`；`:834-836` 那句「判定口径（B 档）…」是**内联 f-string 拼接、非具名常量**（故从未进 `_GUARDED_CONSTANTS`）。
+15. **产品红线属实**：`docs/product-design-specification.md:479`「系统内部枚举值与自创术语（如 from_scratch、full_success、error_category 取值、内部节点名）**不得裸露给用户**」⇒ 「B 档」违规。
+16. **★ 影响面已用非侵入探针实测（不改仓库任何文件，探针只在 `/tmp`）**：
+    - **基线**：`.venv/bin/pytest -q -m "not e2e and not browser" -p no:randomly` → **2287 passed / 25 skipped / 58 deselected**（61.71s）。
+    - **变体 A**（`step_reconciliation.completed < planned` 收严 success）→ **6 failed / 2281 passed**。
+    - **变体 B**（丢弃 agent 自报 step_index、纯确定性匹配后收严）→ **同样 6 failed，且失败用例集合逐条相同**（口径差异不改变影响面）。
+    - **变体 C**（再加 `completion` 键进 `ExecutionResult`）→ **8 failed / 2279 passed**（多出 2 条**键集合精确断言**）。⚠ **变体 C 随 §49.0 变更 1 作废——本批不加键 ⇒ 这 3 条 schema 债不会发生。**
+    - **★ 订正后的影响面（本批实际口径 = 变体 A）：6 条，3 个文件，全是夹具债。** 清单：`tests/test_sprint4_e2e.py::test_cp_g2_2_sentinel_zero_plaintext_in_code_report_caplog`；`tests/test_sprint4_e3.py::test_cp_e3_1_deduction_rounds_plus_metric_calls` / `::test_cp_e3_1_deduction_rounds_only_no_metric_call` / `::test_cp_e3_3_success_from_real_exit_codes_and_metrics`；`tests/test_sprint4_e4_regression_gate.py::test_le401_fix_credential_inline_retry_success_single_round` / `::test_le401_fix_inline_retry_without_interrupt_success`。**（原清单里的 3 条键集合断言——`test_cp_e3_5_coding_digest_consumes_failure_contract` / `test_cp_2_6_4_main_constructor_all_new_keys` / `test_cp_2_6_4_degraded_path_all_new_keys`——随 `completion` 键删除而不再受影响。）**
+    - **★ 根因是夹具债不是算法债**：`tests/test_sprint4_e3.py:102-112` 的 `_run()` helper **写死 `command=["python", "x.py"]`**，而同文件 `:130` 的计划步骤是 `{"command": "python train.py"}` ⇒ **本就归属不上**（这些假 run 也不带 `step_ledger` 自报，规则①无从生效），是自相矛盾的夹具。⇒ **改夹具让命令自洽（更严的正确值），不得为迁就它们放宽判定。**
+    - ⚠ **术语守门那三条数字断言未被探针覆盖**（探针没加枚举/常量），实施后 `tests/test_s708_user_text_guard.py` 的 3 处 `==` 会额外撞红——**那是设计目的，不计入"意外影响面"**。
+17. **修复循环与预算常量属实**：`config.py:32 MAX_FIX_LOOP_COUNT=20`、`:118 MAX_DEV_LOOP_LLM_CALLS=120`、`:119 DEV_LOOP_MIN_CALLS_PER_ROUND=4`、`:153 NO_METRICS_EARLY_STOP_ROUNDS=2`、`:31 MAX_TOTAL_LLM_CALLS=240`。真跑只用 **1/20 修复轮**（`exec_logs` 只有 round_0 / round_1）属实；**"只用了 22% 预算"无法从磁盘复核**（报告不印预算、该次运行的 checkpoint db 已回收，`find /data/myproj -name "*.db" -newermt 2026-08-01` 零命中）——§56 **P-38**。
+18. **LangSmith 现状与主控描述有出入**：全仓 `LANGSMITH` grep（排除 `.venv` / `deepxiv_sdk_repo`）**只在 `tests/conftest.py:33-45` 命中 5 处**（测试侧硬关闭 + `LANGSMITH_TRACING_IN_TESTS=1` 逃生舱），**生产代码 / `app.py` / `scripts/` 零命中**。⇒ "真跑侧显式开启并按轮次分独立项目"是**运行时手工操作（改 `.env` 的 `LANGSMITH_PROJECT`），不是代码能力** ⇒ 真跑任务里必须写成**人工前置动作**，否则轮次分项目不会自己发生。§56 **P-39**。
+19. **仓库现状**：HEAD = `c480990`（S7-10 交付）；`git status --porcelain` 仅 ` M tests/conftest.py`（LangSmith 硬关闭，未提交）。`workspace/repos/lmcinnes__umap` `git status --porcelain` **实测为空** ⇒ §48 P-33 / CP-6.7-2 已闭环。
+20. **`core/nodes/__init__.py` 显式 export 遮蔽陷阱仍在**（已知 bug 模式 #6）：测试/脚本访问 `core.nodes.execution` 模块属性必须走 `importlib.import_module(...)`，不得 `from core.nodes import execution`。本批的哈希复算脚本与结构守门测试都会踩到。
+21. **`execution_steps` 的 schema 属实**：`core/nodes/planning.py:250` `{"step_name": str, "command": str, "expected_output": str}`；`:352 _coerce_step_list` 容忍字符串元素；`_extract_command_str`（`:565-576`）同时认 `command` / `cmd` / `run` 三个键名与纯字符串形态。
+22. **⚠ `runtime_seconds` 同样是本轮口径（主控未提，本批不修）**：`:1908` `runtime_seconds=float(sum(r.duration_seconds for r in run_results))` ⇒ 报告 `:170` 的「0.243 秒」与产物清单里 20 组真实可视化结果并存，**同一份报告里第三处自相矛盾**。本批范围内不处置，登记 §56 **P-40** + **R-S7-64**。
+
+### 49.5 关键风险一句话
+
+**本批把"成功"的定义改严，而改严的正确性硬挂在一条提示词约束上（agent 每回合从头全量重跑）——提示词天然不可靠，本项目实测服从率 75%。** 若 agent 只补跑缺失步骤，判定层会**恒判未完成、跑满 20 轮修复、把每次真跑都推到 interrupt#2**：这是**假红 + 白烧预算**，不是假绿，但用户体感比现状更差。⇒ **修法 B 的 prompt 约束是交付项不是顺带项**，且**这条假设只能由真跑证伪、mock 层证不到**（R-S7-59）。同时四条修法**必须同批**：只上 C 不上 D 会把 Maria 要的"交修复循环"落成"打断用户"，设计意图落反（R-S7-60）。
+
+**⚠ 原并列头号风险 R-S7-61（命令归一漏配造成系统性假红）已随 §49.0 变更 1 作废**：完成度改为采信自报 `step_index` 后，`python scripts/x.py` vs `python -m scripts.x` 的写法差异不再影响判定（agent 用哪种写法重跑、只要声明下标就归属得上）。**取而代之的新风险是 R-S7-65：完成度建立在 agent 自报之上**——理论上 agent 可以给任意命令打任意下标把完成数刷满。**对冲**：①exit 全 0 与 ≥1 指标两个合取项仍是硬的、②`_audit_declared_steps` 的 WARNING 留痕能把"换了命令还自报同一下标"打出来、③立项那次真跑实测 agent **没有虚报**（round_0 诚实声明 8 步）。**这是一条被明确接受的产品级假设，不是遗漏。**
+
+---
+
+## 50. S7-11 任务清单总表
+
+| 任务编号 | 任务名 | 产出文件 | 依赖前置 | 估时 | 风险 |
+|---|---|---|---|---|---|
+| **T-S7-7-1** | **实现前核实 + 真跑现场取证固化**（零生产改动）：复核 §49.4 全部 22 条；把第三次 UMAP 真跑的 `report.md` / `exec_logs/round_0.log` / `round_1.log` 关键切片**抄进 §56.1 取证表**（磁盘会被下一次真跑覆盖）；独立复算 prompt 哈希 | 核实落档（§56 / §56.1），**不入生产** | 批次 6 收口（`c480990`）+ Maria 确认批次边界 | 2h | 中（证据一旦被覆盖，本批立项依据就没了——S7-08 已因临时 checkpoint db 丢过一次证据） |
+| **T-S7-7-2** | **★ 影响面评估专项**（Maria 明令的独立任务，零生产改动）：用**非侵入探针**（只落 `/tmp`，仓库零触碰）跑三个变体，产出**受影响用例逐条清单 + 每条的根因判定（夹具债 / 算法债）+ 每条的"更严的正确值"改法** | 影响面清单落 §52 T-7-2 正文 + §56.2 | T-S7-7-1 | 2h | 中（判错"夹具债 vs 算法债"会导致把假绿写进测试基线） |
+| **T-S7-7-3** | **修法 A：修复轮上下文接线**（`_build_execution_agent_context` 增补 `last_fix_note` + `files_touched`；注释意图从"避开"改为"回验"） | `core/nodes/execution.py`（**单收口窗口**，动态上下文段） | T-S7-7-1 | 2h | 中（HumanMessage 字节幂等 + "非空才注入"零扰动范式） |
+| **T-S7-7-4** | **修法 B：execution 冻结区改写**（纪律 4 收窄"如实收尾"授权 + 纪律 5 空转口径限定 + **新增全量重跑纪律** + 输出契约补完成度自述）+ 哈希三件套（重算写死 / §48.1 追加第三行 / 验红） | `core/nodes/execution.py`（同窗口，prompt 主体）+ `tests/test_sprint5_t14_execution_prompt.py` + 本文 §48.1 | T-S7-7-3 | 3h | **高**（冻结区 + 字节门 + **判定层硬依赖这条约束**，R-S7-59） |
+| **T-S7-7-5** | **修法 C 骨架：`_completion_insufficient` 单点谓词 + `_audit_declared_steps` 防伪留痕**（两个纯函数，**零新增 state / schema 键**） | `core/nodes/execution.py`（同窗口） | T-S7-7-2 | 2h | 中（谓词本身极简；风险在防伪判据的正负两向与"纯观测"红线） |
+| **T-S7-7-6** | **修法 C 接线 + 修法 D：`ErrorCategory.INCOMPLETE_EXECUTION` 进 `AUTO_FIXABLE` + `_apply_incomplete_execution` + 主流程插槽重排（4.6 前移 / 4.65 / 4.7）+ `success` 合取项** | `core/nodes/execution.py`（同窗口） | T-S7-7-5、T-S7-7-4 | 4h | **高**（插槽顺序 + 单点谓词 + 路由语义；改错即"改判了但 success 还是 True"） |
+| **T-S7-7-7** | **对外口径订正**：`_SUCCESS_CRITERIA_NOTE` 具名常量（去"B 档"、补第三条件）+ 标注条件补一条析取项 + 横幅在归属不可用时不印"0/N" + `term_map` 加一条 + 术语守门账目 42/12/54 → **43/13/56** | `core/nodes/reporting.py` + `ui/term_map.py` + `tests/test_s708_user_text_guard.py` | T-S7-7-6 | 2h | 中高（用户可见文案 + 三个 `==` 数字连改，改错一个全量红） |
+| **T-S7-7-8** | **CP 测试全覆盖 + 逐条验红 + 既有 6 条同步为更严正确值 + 全量回归零退化 + mypy 零错误** | `tests/test_sprint7_s711_completion.py`（新）+ 既有 3 个文件夹具同步 | T-S7-7-3~7-7 | 8h | **高**（五道命门验红 + 账目精确闭合 + **禁止弱化断言**） |
+| **T-S7-7-9** | **UMAP 端到端真跑验收（⚠ 须 Maria 单独授权具体动作、严禁预授权）** + handoff | `docs/sprint7/test-reports/` | T-S7-7-8 | 3h | **高**（R-S7-59 那条假设的**唯一**证伪手段；且**失败与否都要按 §52 T-7-9 的判读细则读**） |
+
+**任务总数**：**9 个**（单批 T-S7-7-1 ~ T-S7-7-9）。
+**批次数**：1（**批次 7** = S7-11 执行完整度进判定）。
+**检查点总数**：**CP 51 个**（CP-7.1-1 ~ CP-7.9-5；分布 5 / 5 / 6 / 7 / 5 / 8 / 6 / 6 / 3，T-S7-7-8 为收口闸门）。⚠ **原 57 个**——随确定性算法删除，T-7-5 由 8 减为 5、T-7-7 由 7 减为 6、T-7-9 由 5 减为 3（去掉两条只与归一漏配有关的观测量 CP）。
+**总估时**：**~25h**（原 ~31h；C 骨架由 4h 降 2h、口径订正由 3h 降 2h、真跑判读由 3h 降 2h）。
+**验红项（五道命门）**：① **完成度合取项**（去掉 `success` 里的 `not _completion_insufficient(...)` → UMAP 同型 fixture 必须由红转绿 ⇒ 证明该断言真的在守；恢复后必红）；② **单点谓词**（monkeypatch 打桩 `_completion_insufficient`，两处行为必须**同时**翻转，只翻一处即红）；③ **execution 字节门**（改 prompt 时 `f82f3938cf31f882` 那道门当场红 + 更新后插空格复红）；④ **改判路由**（把 `INCOMPLETE_EXECUTION` 从 `AUTO_FIXABLE` 摘掉 → 路由断言必须红，证明"回 coding 而非 interrupt#2"是真判定）；⑤ **术语守门**（`EXPECTED_*` 少算一条即红，`==` 形态一字不动）。
+**真跑验证项**：T-S7-7-9（**耗 deepxiv 配额 + 真实 LLM，须 Maria 单独授权具体动作，严禁预授权**）。
+**新增生产模块**：**0 个新 `.py` 生产文件**（改 `core/nodes/execution.py` / `core/nodes/reporting.py` / `ui/term_map.py` **三个**既有文件；⚠ **`core/state.py` 已从清单移除**——本批零新增 schema 键）；**graph 零改动**；**interrupt payload 零改动**；**新增第三方依赖 0**。
+**新增测试文件**：1 个（`tests/test_sprint7_s711_completion.py`）+ 既有 4 个文件的夹具/账目同步（`test_sprint4_e2e.py` / `test_sprint4_e3.py` / `test_sprint4_e4_regression_gate.py` / `test_s708_user_text_guard.py`）+ `test_sprint5_t14_execution_prompt.py` 哈希更新。（⚠ `test_sprint5_t26_grouped_metrics.py` **已从清单移除**——无新键即无键集合断言变动。）
+
+---
+
+## 51. S7-11 批次划分与依赖图
+
+### 51.1 批次总览
+
+| 批次 | 名称 | 任务 | 前置条件 | DA 映射 | 特殊标注 |
+|---|---|---|---|---|---|
+| **7** | S7-11 执行完整度进判定（单批） | T-7-1 → 7-2 → 7-3 → 7-4 → 7-5 → 7-6 → 7-7 → 7-8 → 7-9 | 批次 6（S7-10）收口于 `c480990` + Maria 确认批次边界 | DA-S7-11-1~9（见 §55.3） | `execution.py` **单收口窗口**（T-7-3 → 7-4 → 7-5 → 7-6 **四任务串行同窗口**）；A/B/C/D **禁止拆批**；真跑须 Maria **单独**授权 |
+
+### 51.2 依赖图（→ 表示"必须先完成"）
+
+```
+T-7-1（核实 + 取证固化，零改动）
+   ├─→ T-7-2（影响面评估，零改动）
+   │        └─→ T-7-5（C 骨架：两个纯函数 + completion 键）
+   └─→ T-7-3（A：修复轮上下文接线）
+            └─→ T-7-4（B：prompt 冻结区 + 哈希三件套）
+                     └─→ T-7-5 ─→ T-7-6（C 接线 + D 改判 + 插槽重排）
+                                      └─→ T-7-7（对外口径订正）
+                                               └─→ T-7-8（测试全覆盖 + 验红 + 回归）★闸门
+                                                        └─→ T-7-9（真跑验收，须单独授权）
+```
+
+### 51.3 顺序理由（为什么不是别的顺序）
+
+1. **T-7-2 必须早于 T-7-5**：不先摸清 6 条受影响用例各自是"夹具债"还是"判定债"，收严判定时会不自觉地把口径放宽去迁就夹具——**那正是把假绿写进测试基线**。先出清单、先给每条定性，再动判定。
+2. **T-7-3（A）必须早于 T-7-4（B）**：B 的新纪律要求 agent「重跑此前失败的步骤以验证修复」，而 agent **只有拿到 A 注入的"代码已被改、改了这些文件、这么改的"才有理由相信重跑会有不同结果**。B 先落 A 后落，中间那段时间 prompt 在要求一件 agent 没有依据去做的事。
+3. **T-7-4（B）必须早于 T-7-5/7-6（C/D）**：判定层收严依赖 prompt 约束（Q-S7-25(0)）。**先收严后改 prompt = 中间态必然死锁**，若此时有人跑真跑就会得到一个误导性的"本批做砸了"结论。
+4. **T-7-5 与 T-7-6 拆两任务而非合一**：T-7-5 交付的是**两个纯函数**（`_completion_insufficient` + `_audit_declared_steps`），**收口时行为零变更、全量回归应零新增红**；T-7-6 才动 `success` 与路由（行为变更，6 条夹具债一次性变红）。拆开的好处是 **T-7-5 收口时能单独跑一次全量回归**验证"纯函数落地零扰动"——合一则分不清红是新函数带来的还是判定收严带来的。
+5. **T-7-7（对外口径）必须晚于 T-7-6**：标注条件要补的那条析取项与 `success` 用的是同一个谓词，`success` 收严先落地才能构造出"判不成功但 `unexecuted_steps` 为空"的真实场景来验证它；提前改则该分支无从触发，**测试会假绿**。
+6. **T-7-9 排最后且单独授权**：它是 R-S7-59 唯一的证伪手段，但耗 deepxiv 配额；在 T-7-8 全绿之前跑它是浪费配额。
+
+### 51.4 `execution.py` 单收口窗口（本批硬约束）
+
+S7-11 有**四处**改动落在 `core/nodes/execution.py`：
+- ① **动态上下文段**（`_build_execution_agent_context`，`:1134-1192`）归 **T-7-3**；
+- ② **冻结区 prompt 主体**（`_EXECUTION_SYSTEM_PROMPT_BODY`，`:1039-1066`）归 **T-7-4**；
+- ③ **新增两个纯函数**（`_completion_insufficient` + `_audit_declared_steps`，建议落在 `_reconcile_steps` 之后、`_apply_no_metrics` 之前的独立区段）归 **T-7-5**；
+- ④ **枚举 / `AUTO_FIXABLE` / `_apply_incomplete_execution` / `success` 合取项（`:1902-1904`）/ 主流程插槽重排**（`:122-152`、`:1722` 上游、`:2400-2440`）归 **T-7-6**。
+
+**四任务串行同窗口**，不得与其他任务并行触碰该文件。⚠ 注意 ② 改的是**冻结前缀**（影响 §48.1 哈希基线），①③④ 改的是函数体 / 常量区（**不影响 prompt 主体哈希**）——**T-7-4 之后的每一次收口都要复算一次哈希确认没被顺手带改**（CP-7.6-8）。
+
+### 51.5 容量裁剪线（若时间不足，按此顺序砍）
+
+- **第 1 顺位可砍**：T-7-5 的 `_audit_declared_steps` 防伪留痕 —— 砍则完成度全盘采信自报**且无任何观测手段**，**必须在 handoff 显式登记 R-S7-65 无对冲**。（⚠ 这是 Maria 点名要设计的那条，除非工期崩了否则不砍。）
+- **第 2 顺位可砍**：T-7-3（修法 A）的 `files_touched` 半边（只注入 `last_fix_note` 文字说明）—— 砍则 agent 知道"改过代码"但不知道"改了哪些文件"，**登记为"A 只做了一半"**。
+- **绝不可砍**：T-7-4（B 的全量重跑纪律）、T-7-6（D 的改判）、T-7-8 的五道验红、T-7-2 的影响面清单。**砍任一条都会让本批从"修好了"变成"引入了新的假红/假绿"。**
+
+---
+
+## 52. 批次 7：S7-11 执行完整度进判定（单批，`execution.py` 四任务串行单收口窗口）
+
+> **通用纪律（每个任务都适用，不再逐条重复）**：①**每个 CP 都必须有验红**——故意改坏证明会红，然后**逐字节完整还原**（`cp` 备份 + `sha256` 校验还原），不验红等于没改；②既有断言**只准同步为更严的正确值**，禁 `>=` / `issubset` / `skip` / 删除；③访问 `core.nodes.execution` 模块属性一律走 `importlib.import_module`（遮蔽陷阱）；④凡引用文件必带行号，实施时**行号会随本批改动漂移，以符号名为准、行号只作定位提示**。
+
+### 52.1 T-S7-7-1　实现前核实 + 真跑现场取证固化（零生产改动）
+
+- **产出文件**：本文 §56（落点勘误留档）+ **§56.1（第三次 UMAP 真跑取证表，新建）**。**不碰任何 `core/` `tests/` `ui/` 文件。**
+- **依赖**：批次 6 收口（HEAD `c480990`）+ Maria 确认批次边界。
+
+**实施要点**：
+
+1. **逐条复核 §49.4 的 22 条前置事实**：凡与本文所写不符的，**以实测为准**并登记 §56（本表的存在价值就是"我也可能写错"）。重点复核**行号是否已漂移**（S7-10 刚改过 `execution.py` 与 `plan_checks.py`）。
+2. **★ 取证固化（本任务的核心价值）**：把第三次真跑的以下切片**逐字抄进 §56.1**——磁盘上的 `workspace/1802.03426/` 会被下一次真跑覆盖，**S7-08 已经因为运行期 checkpoint db 落在临时目录而丢过一次证据**（§48 P-26）：
+   - `report.md` 的 `:5`（报告形态）/ `:14`（横幅）/ `:26-28`（结论 + B 档口径句）/ `:47`（对账行）/ `:49-56`（未执行 7 条）/ `:170`（0.243 秒）；
+   - `round_0.log` 的**命令条数 + exit 分布**（17 条 / 5 条 exit=1，逐条 `[step#N exit=M]` 抄下）；
+   - `round_1.log` **全文**（693 字节，两条命令 + 那条 `<METRICS>` 输出）；
+   - `outputs/` 各子目录的 **mtime**（证明 round_1 的指标源自 round_0 残留产物）；
+   - 三个文件的 **sha256**（日后有人质疑证据被改，可对账）。
+3. **独立复算 prompt 哈希**：`.venv/bin/python` + `importlib` 实算 `_EXECUTION_SYSTEM_PROMPT_BODY` 的 `len` 与 `sha256[:16]`，与 §48.1「改后基线」比对。**不一致则说明 S7-10 之后有人动过 prompt 而没走三件套** —— 那是必须先查清的事，不能带着往下走。
+4. **确认 `_reconcile_steps` / `_apply_no_metrics` 的当前 `git blame` 无未提交改动**（`git status --porcelain` 应只有 ` M tests/conftest.py`）。
+5. **不做**：任何代码改动、任何 `pip install`、任何真跑。
+
+**检查点（5 个）**：
+
+- [x] **CP-7.1-1** §49.4 全 22 条逐条实测复核，出入登记 §56。**验红**：随机抽 3 条把行号改错 1 行 → 按新行号 `sed -n` 读出的内容与描述不符 ⇒ 证明"带行号"这件事真的可被核对（还原）。
+- [ ] **CP-7.1-2** §56.1 取证表落盘，含三个文件的 sha256。**验红**：取证抄录完成后，`sha256sum` 三个文件 → 与表内值逐字相符；故意把表里一位十六进制改掉 → 对账脚本报不符（还原）。
+- [x] **CP-7.1-3** prompt 哈希独立复算 = `f82f3938cf31f882` / 1698。**验红**：临时在 body 末尾加一个空格实算 → 哈希变化 ⇒ 证明复算脚本对字节敏感（还原并复算确认回到基线值）。
+- [ ] **CP-7.1-4** `round_1.log` 的两条命令 + `round_0.log` 的 17 条 / 5 失败**已逐条落表**，且 `round_1` 的 `summarize_results` 与 `outputs/summary` 的 mtime 关系写清（"成功的指标来自上一轮残留产物"这条判断必须有 mtime 作证，不能只凭推理）。**验红**：把 mtime 结论反着写一遍，检查是否与 `ls -la` 输出冲突（还原）。
+- [x] **CP-7.1-5** `git status --porcelain` 实测记录 + 零生产改动确认（本任务收口时 `git diff -- core/ tests/ ui/` 为空）。**验红**：临时 `touch core/nodes/execution.py` 不改内容 → `git diff` 仍空（证明该判据不误报）；临时插一个空行 → 非空（还原）。
+
+---
+
+### 52.2 T-S7-7-2　★ 影响面评估专项（Maria 明令的独立任务，零生产改动）
+
+- **产出文件**：影响面清单落本节正文 + **§56.2（受影响用例逐条定性表，新建）**。**不碰任何仓库文件**（探针只落 `/tmp`）。
+- **依赖**：T-S7-7-1。
+
+**实施要点**：
+
+1. **建立基线**：`.venv/bin/pytest -q -m "not e2e and not browser" -p no:randomly` 记 passed / skipped / deselected 与耗时；`-m browser` 单独记；`.venv/bin/mypy` 记。
+2. **★ 非侵入探针法（本任务的方法论，务必照做）**：**绝不改仓库任何文件**来做影响面评估。做法是在 `/tmp` 写一个 pytest 插件，用 `pytest_configure` 钩子（**不能在模块顶层 import `core`**——插件加载早于 rootdir 进 `sys.path`，会 `ModuleNotFoundError`）monkeypatch `execution._build_execution_result`，再 `PYTHONPATH=/tmp:<repo> .venv/bin/pytest ... -p <插件名>`。
+3. **⚠ 变体口径已按 §49.0 变更 1 收敛为一个**：**变体 A**（`step_reconciliation.completed < planned` 时把 `success` 置 False）**就是本批的真实口径**。原变体 B（抹 `step_index` 纯确定性匹配）与变体 C（加 `completion` 键）**随确定性算法删除而作废，不再跑**。⇒ 本任务实测一个变体即可，与 §56.2 订正后的 6 条对账。
+4. **逐条定性**（**本任务不可省的一步**）：对每条受影响用例，判定它是
+   - **夹具债**（fixture 自相矛盾，如假 run 的 argv 与计划步骤对不上、且不带 `step_ledger` 自报）⇒ 改法 = **把夹具改成自洽的正确值**；
+   - **判定债**（判定口径本身判错）⇒ **回头改判定，不许改测试**。
+   ⚠ **判错这一步的代价**：把判定债误判成夹具债 = 把假绿写进测试基线，比不做这次评估更糟。
+5. **不做**：任何仓库文件改动；任何"顺手把夹具先改了"的动作（改夹具属 T-7-8）。
+
+**检查点（5 个）**：
+
+- [x] **CP-7.2-1** 基线三组数字落档（`not e2e and not browser` / `browser` / `mypy`）。**验红**：故意漏记 deselected 一栏 → 后续账目对不平（`--collect-only` 数 − skipped ≠ passed）⇒ 证明这三个数缺一不可（补回）。
+- [x] **CP-7.2-2** 变体 A 跑一次，失败集合逐条落表，与 §56.2 订正后的 6 条对账。**验红**：把变体 A 的收严条件改成 `completed < 0`（恒不触发）→ 应回到基线全绿 ⇒ 证明这 6 条红确实由完成度合取项引起，而非别的扰动（还原）。
+- [x] **CP-7.2-3** 每条受影响用例**逐条定性**（夹具债 / 判定债）+ 给出"更严的正确值"改法原文。**验红**：随便挑一条标为"夹具债"的，按写下的改法在 `/tmp` 副本里改一次夹具 → 该条在变体 A 下应转绿（证明改法真的有效，不是纸上谈兵；副本用完即弃，**不写回仓库**）。
+- [x] **CP-7.2-4** **零 schema 变更复核**：确认本批不新增 `ExecutionResult` 键 ⇒ `tests/test_sprint5_t26_grouped_metrics.py` 的两条键集合断言与 `test_cp_e3_5_coding_digest_consumes_failure_contract` **不在影响面内**。**验红**：在 `/tmp` 副本里临时给 `_build_execution_result` 加一个键 → 这 3 条立刻转红 ⇒ 证明"不加键"确实是这 3 条不受影响的原因（副本弃用）。
+- [x] **CP-7.2-5** 收口时 `git status --porcelain` 与 T-7-1 结束时**逐字相同**（证明零触碰）。**验红**：在 `/tmp` 之外误建一个文件 → `git status` 出现 `??` ⇒ 该判据有效（删除）。
+
+**⚠ 本 dev-plan 落盘时已先行跑过一遍（结论见 §49.4 第 16 条，供 T-7-2 对照复核，不替代该任务）**：按 §49.0 变更 1 订正后 —— **6 条受影响**（3 个文件），**全部是夹具债**，**判定债 0 条、schema 债 0 条**。⚠ **主控派单时预估"会波及大量既有测试"，实测远小于此** —— 登记 §56 **P-41**。另：术语守门的 3 处 `==` 数字会额外撞红，**那是设计目的，不计入意外影响面**。
+
+---
+
+### 52.3 T-S7-7-3　修法 A：修复轮上下文接线
+
+- **产出文件**：`core/nodes/execution.py`（**单收口窗口**，`_build_execution_agent_context` 段）。
+- **依赖**：T-S7-7-1。
+
+**实施要点**：
+
+1. **注入位置**：`_build_execution_agent_context`（`:1134-1192`）内、**已有的 `fix_count > 0` 分支里**（`:1157`），与 `fix_round` / `last_error_summary` 同段。**不新开分支、不新开 state 读取通道。**
+2. **注入内容（两项，均取自现成 state 键）**：
+   - `last_fix_note`：`state.get("last_fix_note", "")`（`core/state.py:306`，coding 侧 `coding.py:737` 单点写）——coder 本轮自述"问题定位 + 修复逻辑"；
+   - `files_touched`：`state.get("last_files_written", []) or []`（同链路，`coding.py` 侧 `_extract_files_written` 产出）——coder 本轮改的文件列表。
+   **两项都走"非空才注入"范式**（对齐 `:1172` `credential_degradations` 与 `:1189` `scale_reduced_directive` 的既有写法）⇒ **首轮 / 无 fix_note 的路径 payload 与 sp7 基线字节零扰动**。
+3. **★ 键名与形态**：建议 `payload["last_fix"] = {"note": <str>, "files": [<basename>...]}`，**单键嵌套**而非两个平级键——理由是它们语义上是同一件事（"上一轮 coder 做了什么"），且 `json.dumps(sort_keys=True)` 下嵌套结构的字节幂等更好把握。**`files` 取 basename**（对齐 `coding.py:345` `_digest_fix_loop_history` 的既有脱敏/瘦身口径），并**截断**（建议前 10 条 + `"...共 N 个"`）防长列表撑爆 context。`note` 截断沿用 `coding.py` 的 `_FIX_NOTE_MAX_CHARS`（**不新增常量**）。
+4. **字节幂等**：payload 最终经 `json.dumps(..., ensure_ascii=False, sort_keys=True, default=str)` 渲染（既有通道），**不得引入时间戳 / uuid / 绝对路径**（`files` 取 basename 正好顺手满足）。
+5. **★ 注释意图订正**：`:1141-1142` 那句「帮助 agent **避开**上一轮已知错误」必须改写为「**告知 agent 上一轮的错误与本轮代码已发生的改动，使其重跑验证修复**」。**这不是文字游戏** —— §49.2 第二层根因里"设计意图就是绕开"这句判断的唯一书面证据就是这行注释，不改它，下一个读代码的人会照着"避开"继续实现。
+6. **不做**：不新增 state 键；不读 `fix_loop_history`（它是历史累积，本轮那份在 `last_*` 里，读历史会重复且更贵）；不动 system prompt（那是 T-7-4）。
+
+**检查点（6 个）**：
+
+- [x] **CP-7.3-1** 修复轮 payload 含 `last_fix.note` 与 `last_fix.files`，取值与 `state["last_fix_note"]` / `state["last_files_written"]` 一致。**验红**：把注入行删掉 → 该断言红；还原复绿。
+- [x] **CP-7.3-2** **零扰动**：`fix_count == 0`、或 `last_fix_note` 为空串、或两键缺失（旧 checkpoint）三种形态下，payload 的 `json.dumps(sort_keys=True)` 结果与**改动前**逐字节相同。**验红**：把"非空才注入"改成无条件注入 → 三种形态里至少两种字节变化 ⇒ 该断言红；还原复绿。
+- [x] **CP-7.3-3** **字节幂等**：同一 state 连续调用两次，payload 序列化逐字节相同；`files` 全为 basename（无 `/`）、无绝对路径、无时间戳。**验红**：把 basename 改回全路径 → 断言红；还原。
+- [x] **CP-7.3-4** **截断生效**：`files` 超过 10 条时只保留前 10 + 计数尾巴；`note` 超长时按 `_FIX_NOTE_MAX_CHARS` 截断。**验红**：把截断上限调成一个巨大值 → 长列表断言红；还原。
+- [x] **CP-7.3-5** `:1141-1142` 注释已改为"回验"口径，且**"避开"这个词在该 docstring 中不再出现**。**验红**：把词改回去 → 断言红；还原。（⚠ 这条断言守的是**注释**，是本项目少见的做法——理由写在实施要点 5，实施时把理由抄进用例 docstring。）
+- [x] **CP-7.3-6** **system prompt 主体哈希未被本任务带改**：本任务收口时实算仍为 `f82f3938cf31f882` / 1698。**验红**：临时在 body 里加一个空格 → 断言红；还原。
+
+---
+
+### 52.4 T-S7-7-4　修法 B：execution 冻结区改写 + 哈希三件套
+
+- **产出文件**：`core/nodes/execution.py`（**同窗口**，prompt 主体）+ `tests/test_sprint5_t14_execution_prompt.py`（哈希更新）+ 本文 **§48.1（追加第三行）**。
+- **依赖**：T-S7-7-3。
+
+**实施要点（四处改动，一次改完，禁止分两次破两次前缀）**：
+
+1. **纪律 4（`:1050`）收窄"如实收尾"授权**：保留"不得写入或修改任何代码文件"与"交回代码生成环节修复"（**AC-S7-46 明令，一字不动**），但把两处"如实收尾"的语境限定为「**确实无法继续时**」，并补一句「**收尾前必须先把计划里还没跑的步骤跑完或跑到失败为止；不得因为'上一轮这条失败过'就跳过它**」。
+2. **纪律 5（`:1051`）空转口径限定**：把「不要重复执行同一条命令空转」改为「**同一回合内**不要用完全相同的命令反复空转（同一命令在不同回合之间的重跑是必要的验证，不算空转）」。
+3. **★ 新增一条修复回合纪律（本批的核心，Q-S7-25(0) 硬要求）**：措辞须同时覆盖两件事——
+   - 「**修复回合请从 `execution_steps` 的第一步开始按顺序全量重跑**，不要只挑上一轮失败的那几步；上一轮通过的步骤在代码被改动后**不再自动成立**」；
+   - 「HumanMessage 会告知上一轮改动了哪些文件与修复思路，**据此重跑验证**，而不是绕开」。
+   ⚠ **形态表述、不写数字、不写内部字段名**（Q-S7-22 的既有纪律：写数字会与常量形成无机械绑定的双源真相）。
+4. **★ `step_index` 声明由"可选提示"升为"硬纪律"（本次方案变更后新增的关键一处，替代原 `plan_steps_finished` 方案）**：完成度现在**直接采信 `step_index` 自报**（§49.0 变更 1）⇒ 工具说明那句「执行计划第 i 步（下标从 0 起）时以 step_index=i 声明归属」必须**加重为强制**，并写明后果：「**执行计划内的步骤时必须声明 step_index**；漏报会让编排层认为该步没跑」。⚠ **不新增 `plan_steps_finished` 输出字段**（原计划的交叉核对字段随确定性算法一并删除——既然判定就用自报，再要一个自报数字是冗余的双源真相）。同时在成功判定纪律段的「**你不判定复现是否成功**」之后补一句：「编排层还会检查计划步骤是否全部跑完——**少跑步骤不会被判成功**」（让 agent 知道少做没好处，正面消解反向激励）。
+5. **哈希三件套**：①改动落定后重算 `sha256[:16]` 与 `len`，写死进 `tests/test_sprint5_t14_execution_prompt.py::test_cp_6_2_1_execution_prompt_body_byte_baseline`（**禁止写成 `EXPECTED_HASH = actual_hash` 自锁定形态**）；②本文 **§48.1 追加第三行**（改后基线 + 变更原因 + 验红记录）；③**改动那一刻那道门必须当场红**（报错形如 `当前：<新>，基线：f82f3938cf31f882`）——**这就是"门是真的"的活体证明，错过就永远拿不到**。
+6. **零插值复核**：新增文案零 `{`/`}`、零 `arxiv`、零绝对路径、零论文级/任务级值；`_build_execution_system_prompt`（`:1102-1112`）跨两次调用**整条 SystemMessage 字节一致**（execution 侧本就连尾部都无动态变量，比 planning 更强）。
+7. **不做**：不写阈值数字；不动 `cd（限工作区内）` 表述（AC-S7-46 明令保留）；不动"不得写入或修改任何代码文件"与"交回代码生成环节修复"两句（S7-10 的 AC 守着）。
+
+**检查点（7 个）**：
+
+- [x] **CP-7.4-1** ★ **字节门当场红**：改 prompt 的那次运行，`test_cp_6_2_1_execution_prompt_body_byte_baseline` 报错逐字含 `f82f3938cf31f882` ⇒ **截图/抄录该报错原文进 §48.1 验红记录**。（**本条的"验红"就是这次红本身**——它是"先建后改"在上一批换来的红利，本批要用掉它。）
+- [x] **CP-7.4-2** 更新基线后全绿；再在 body 主体内插一个空格 → 复红 → **逐字节还原**（`sha256` 校验）→ 复绿。
+- [x] **CP-7.4-3** 新增三处文案**正向在位**：主体含「从…第一步开始按顺序全量重跑」语义串、含「不再自动成立」、含「少跑步骤不会被判成功」（**逐字串断言，字面量抄自实现**）。**验红**：删任一句 → 对应断言红；还原。
+- [x] **CP-7.4-4** **负向/收窄生效**：纪律 5 的旧原文串「不要重复执行同一条命令空转」**不再存在**（已被"同一回合内…"替代）；纪律 4 的「不得写入或修改任何代码文件」与「交回代码生成环节修复」**仍在**（S7-10 的 AC-S7-46 不破）。**验红**：把旧串加回去 → 负向断言红；把 AC-S7-46 那两句删掉 → 正向断言红；均还原。
+- [x] **CP-7.4-5** **`step_index` 强制声明措辞在位**：主体含「必须声明」+「漏报会让编排层认为该步没跑」两层语义（逐字串断言）；且**全仓 grep `plan_steps_finished` 零命中**（证明原方案的冗余字段确实没被顺手带进来）。**验红**：删掉"必须"那半句 → 正向断言红；临时往 prompt 里加 `plan_steps_finished` → 负向断言红；均还原。
+- [x] **CP-7.4-6** **零插值 + 跨调用字节一致**：新增文案零 `{`/`}`、零 `arxiv`、零绝对路径；`_build_execution_system_prompt()` 连续两次调用结果逐字节相同。**验红**：临时往 body 塞一个 `{arxiv_id}` → 断言红；还原。
+- [x] **CP-7.4-7** **§48.1 追加第三行**（改后哈希 + 字符数 + 变更原因 + 三次验红记录）。**验红**：把留档行里的哈希改错一位 → 与实算不符（人工对账即发现）；还原。
+
+---
+
+### 52.5 T-S7-7-5　修法 C 骨架：单点谓词 + 防伪留痕（两个纯函数，零 schema 变更）
+
+- **产出文件**：`core/nodes/execution.py`（**同窗口**，新函数落在 `_reconcile_steps` 之后、`_apply_no_metrics` 之前的独立区段）。⚠ **不碰 `core/state.py`**（§49.0 变更 1：零新增键）。
+- **依赖**：T-S7-7-2（影响面清单）、T-S7-7-4。
+
+**实施要点**：
+
+1. **`_completion_insufficient(recon: Optional[Dict[str, Any]]) -> bool`**（★ **单点谓词**，本批最重要的一个函数）：
+   - 语义：`planned > 0 and completed < planned`，其中两个数直接取自 `_reconcile_steps` 的返回 dict；
+   - **防御**：入参非 dict / 缺键 / 键值非 int（旧 checkpoint、畸形快照）→ **一律返回 `False`**，零异常（宁可漏判也不误判红——判红会把用户推进修复循环）；
+   - **`success` 判定与 `_apply_incomplete_execution` 两处都必须调它**，禁止各写一遍比较（单点谓词红线）。
+2. **`_audit_declared_steps(plan_steps, run_results, step_ledger) -> None`**（★ **纯观测防伪留痕**，Maria 明令设计的那条）：
+   - **判据**（§49.2 第 5(e) 条）：对每条 effective run，取其在 `step_ledger` 中的**合法自报下标 `i`**（`0 <= i < planned`；`-1` 与越界跳过——越界已由 `_reconcile_steps` 打过 WARNING，此处不重复告警）；计算计划第 `i` 步自身的归一 key 集合（`_extract_command_str` → `_split_top_level` → 丢 `cd`/`source`/`.` 头 → `_normalize_argv_for_match`，去空）；**该集合非空** ∧ **run 的归一 key ∉ 该集合** ⇒ 记一条不符；
+   - **计划第 i 步无命令**（缺 command / 空串 / 纯 `cd`）⇒ **不判**（无从比对，避免噪声）；
+   - **日志**：命中时打**一条**汇总 WARNING（不逐条刷屏）——不符条数 + 前 5 条 `自报第 N 步「步骤名」← 实际命令` 并排，步骤名与命令**一律过 `mask_value`**（与 `:1702` 同口径）；**零命中不打**（已知 bug 模式 #3 的"无目标不打噪声"）；
+   - **★ 纯观测红线**：**返回 `None`**（或返回列表但调用方丢弃——**取 `None` 更硬，从签名上就杜绝被消费**）；不进 state、不进 `ExecutionResult`、不影响 feedback 与 `success`。⇒ 本文取 **返回 `None`**。
+   - **为什么这个判据是对的**：它捕的正是"换了命令还自报同一下标"这一种虚报形态；写法变通（`-m` / 相对路径变体）也会命中，**但那正是我们要的观测量**，所以只 WARNING 不阻断。
+3. **本任务不改 `success`、不改 feedback、不改路由、不改主流程调用顺序**（那是 T-7-6）—— 收口时**行为零变更**，**全量回归应零新增红**（这是本任务能单独收口的判据）。
+4. **不做**：不动 `_reconcile_steps` 一行；不写第二个完成度算法（§49.0 变更 1 已砍）；不扩 `_normalize_argv_for_match` 的折叠表；不新增 state / schema 键。
+
+**检查点（5 个）**：
+
+- [x] **CP-7.5-1** **谓词真值表 + 防御**：`{"planned":9,"completed":2}` → `True`；`{"planned":9,"completed":9}` → `False`；`{"planned":0,"completed":0}` → **`False`**（空计划不得被判永久红）；`None` / `{}` / `{"planned":"x","completed":1}` → **`False` 且零异常**。**验红**：把 `<` 改成 `<=` → 第二格红；把防御分支去掉 → 畸形入参格红（抛异常）；均还原。
+- [x] **CP-7.5-2** **UMAP 同型场景**：用 §56.1 存的真跑现场数字构造 `{"planned":9,"executed":2,"completed":2}` → `_completion_insufficient` 为 `True`；round_0 的 `{"planned":9,"executed":8,"completed":3}` → 同样 `True`。**验红**：把谓词改成恒 `False` → 两格皆红；还原。
+- [x] **CP-7.5-3** **★ 防伪留痕正负两向**：①agent 声明 `step_index=0` 但实跑命令与计划第 0 步完全不同 → **有 WARNING，含"自报"字样与不符条数**；②agent 声明 `step_index=0` 且命令与计划第 0 步一致 → **零 WARNING**；③agent 用 `python -m scripts.x` 重跑计划里写 `python scripts/x.py` 的第 0 步 → **有 WARNING（这是设计内的观测命中，不是缺陷）**；④计划第 0 步无 command → **零 WARNING**。**验红**：把判据反向（∈ 时告警）→ ①②同时翻转变红；还原。
+- [x] **CP-7.5-4** **★ 纯观测守门（本任务的红线机制化）**：`_audit_declared_steps` 的**返回值为 `None`**；monkeypatch 打桩使其内部记到大量不符 → `_build_execution_result` 产出的 `success` 与 `feedback.category` **一字不变**；`ExecutionResult` 键集合仍为 **11 键**（零新增）。**验红**：临时把它的返回值接进 `success` 计算 → 打桩断言红；还原。
+- [x] **CP-7.5-5** **行为零变更 + 脱敏**：本任务收口时全量回归**零新增红**（`success` 语义与改动前逐条一致）；WARNING 日志中的命令与步骤名**已过 `mask_value`**（构造一条内嵌假 token 的命令，断言日志里不出现明文）。**验红**：去掉 `mask_value` → 脱敏断言红；还原。
+
+---
+
+### 52.6 T-S7-7-6　修法 C 接线 + 修法 D：改判 + 插槽重排 + `success` 合取项
+
+- **产出文件**：`core/nodes/execution.py`（**同窗口**，枚举区 `:122-152` + `_apply_no_metrics` 上游 + 判定式 `:1902-1904` + 主流程 `:2400-2440`）。
+- **依赖**：T-S7-7-5、T-S7-7-4。
+
+**实施要点**：
+
+1. **新增枚举值**：`ErrorCategory.INCOMPLETE_EXECUTION = "incomplete_execution"`，落在「可自动修复类」注释块内（与 `NO_METRICS` 同族，有现成注释体例可抄），并加入 `AUTO_FIXABLE`。**三处映射点零改动**（`_map_category_to_error_type` / `_feedback_from_committed_result` / `_no_metrics_stalled`，见 §49.4 第 11 条）——**实施时逐一实测确认，不许只凭本文断言**。
+2. **新增 `_apply_incomplete_execution(feedback, recon, exit_ok) -> ExecutionFeedback`**（纯函数，紧邻 `_apply_no_metrics` **上方**）：
+   - 条件：`exit_ok and feedback.category == ErrorCategory.NONE and _completion_insufficient(recon)`；其余情形**原样返回**（与 `_apply_no_metrics` 同款结构）；
+   - 命中时返回 `ExecutionFeedback(INCOMPLETE_EXECUTION, auto_fixable=True, summary=..., fix_hint=..., representative_stderr="")`；
+   - **文案（Q-S7-29b）**：通俗中文、零内部标识符；含"已跑完 X/Y 步"与**截断后的未执行步骤名**（取 `recon["unexecuted_steps"]` 的 `step_name`，前 5 条 + `等共 N 个`；这些名字在 `_reconcile_steps` 内已过 `mask_value`）。⚠ **`attribution_unavailable` 时 `unexecuted_steps` 恒空** ⇒ 文案走**无清单**的分支（只说"已跑完 X/Y 步"），**不得凭空编造步骤名**；
+   - `fix_hint` 指向「把剩余步骤按计划跑完 / 排查这些步骤为何没跑（前置步骤失败？入口脚本不存在？）」，**不得出现"检查指标输出"字样**；
+   - 两段文案**提为模块级具名常量**（进术语守门，见 T-7-7）。
+3. **★ 主流程插槽重排**（`:2400-2440`）：
+   ```
+   4.5   metrics_groups = _collect_grouped_metrics(work_dir)          # 不动
+   4.6   step_reconciliation = _reconcile_steps(...)                  # 函数体一行不改，仅调用位置【前移】
+   4.65  _audit_declared_steps(...)                                   # 新增，只打 WARNING
+   （_prep_ok / _exit_ok 单点计算，供 4.7 与 4.75 共用）
+   4.7   feedback = _apply_incomplete_execution(feedback, step_reconciliation, _exit_ok)   # 新增
+   4.75  feedback = _apply_no_metrics(feedback, metrics, metrics_groups, _exit_ok)         # 函数体零改动，仅位置后移
+   5     exec_result = _build_execution_result(..., step_reconciliation=step_reconciliation, ...)  # 入参已存在
+   ```
+   ⚠ **4.6 前移是本批的必要改动**（4.7 依赖它的结果），但**必须保住它原有的两条契约**：仍在 `_build_execution_result` **之前**完成（幂等纪律③）、仍随 exec_result 一次 commit。原位置的注释块要一并搬走，**不要在原地留半截注释**。
+4. **`success` 合取项**（`_build_execution_result` 内，`:1902-1904`）：`success = bool(exit_ok and len(metrics) >= 1 and not _completion_insufficient(step_reconciliation))`。**必须调那个单点谓词**，不许在此另写比较。⚠ `step_reconciliation` 已经是本函数的既有入参（默认 `None`），**签名一字不改**。
+5. **`_apply_no_metrics` 函数体一行不改**（红线）：优先级靠调用顺序拿——它已有 `feedback.category == ErrorCategory.NONE` 前置守卫，改判后 category 不再是 NONE，自动原样返回。
+6. **不做**：不改路由条件里的 `feedback.auto_fixable`（Q-S7-28 三条理由已裁）；不加"连续 N 轮无增长"计数器（Q-S7-27 明令压到第二批）；不新增 state 键；不改 `_reconcile_steps` / `_apply_no_metrics` 函数体。
+
+**检查点（8 个）**：
+
+- [x] **CP-7.6-1** **★ 四格真值表逐格**（`exit_ok=True` 前提）：有指标+完成足→NONE/`success=True`；有指标+不足→**INCOMPLETE**；无指标+不足→**INCOMPLETE**（**不是 NO_METRICS**）；无指标+完成足→NO_METRICS。**验红**：把 `_apply_incomplete_execution` 移到 `_apply_no_metrics` **之后** → 第三格变成 NO_METRICS ⇒ 断言红；还原（**这条红正是"优先级靠顺序拿"的活体证明**）。
+- [x] **CP-7.6-2** **★ 单点谓词守门**：`monkeypatch` 打桩 `_completion_insufficient` 使其恒 `True` → `success` 与 feedback 改判**必须同时**翻转；恒 `False` → 两者**同时**回落。**验红**：把 `success` 那处改成内联比较（不调谓词）→ 打桩后只有 feedback 翻转、`success` 不翻 ⇒ 断言红；还原。（**这一条是本批最重要的守门** —— 它拦的是"改判了但 success 还是 True"这种最隐蔽的假绿。）
+- [x] **CP-7.6-3** **★ 路由正确（修法 D 的命门）**：`exit_ok ∧ metrics≥1 ∧ 完成度不足` → `_dev_loop_route == _ROUTE_RETRY_CODING`、`fix_loop_count` +1、`fix_loop_history[-1]["error_category"] == "incomplete_execution"`、`fix_loop_history[-1]["error_summary"]` 非空。**验红**：把 `INCOMPLETE_EXECUTION` 从 `AUTO_FIXABLE` 摘掉 → 路由落 interrupt#2 ⇒ 断言红；还原。（**这条红证明的正是"没有 D 就会打断用户"**。）
+- [ ] **CP-7.6-4** **撞上限走既有两段式 interrupt#2**：`fix_loop_count == MAX_FIX_LOOP_COUNT` 时 → `already_committed` 语义**零退化**（先落盘 + self-loop 重入 → 函数体内 interrupt）。**验红**：把 `already_committed` 分支短路 → 断言红；还原。
+- [x] **CP-7.6-5** **guard 重入 round-trip**：落盘 `errors[0]` 的 `[error_category=incomplete_execution]` 前缀经 `_feedback_from_committed_result` 还原为 `INCOMPLETE_EXECUTION` 且 `auto_fixable=True`（**证明该函数零改动即正确**）。**验红**：把枚举值字符串改成一个 `ErrorCategory` 里不存在的值 → 还原落到 `RUNTIME` ⇒ 断言红；还原。
+- [x] **CP-7.6-6** **早停不误触**：连续 3 轮 `error_category == "incomplete_execution"` 的 `fix_loop_history` → `_no_metrics_stalled` 恒 `False`（新类别天然不进 NO_METRICS 早停）。**验红**：把 `_no_metrics_stalled` 的 gate 从 NO_METRICS 放宽成"任意 auto_fixable" → 断言红；还原。
+- [x] **CP-7.6-7** **三处映射点零改动实测**：`_map_category_to_error_type(INCOMPLETE_EXECUTION) == "transient"`；`_feedback_from_committed_result` round-trip（CP-7.6-5 已覆盖）；`_no_metrics_stalled` 不点火（CP-7.6-6 已覆盖）。**且这三个函数的函数体 `git diff` 为空**。**验红**：临时给 `_map_category_to_error_type` 加一条针对新枚举的显式分支 → `git diff` 非空 ⇒ 该判据有效；还原。
+- [x] **CP-7.6-8** **插槽重排无副作用**：prompt 主体哈希未被本任务带改 + **`_reconcile_steps` / `_apply_no_metrics` 函数体 `git diff` 为空**（只允许调用位置移动）+ `_reconcile_steps` 仍在 `_build_execution_result` 之前被调用一次且**只调一次**（幂等纪律③）+ `ExecutionResult` 键集合仍为 **11 键**。**验红**：把 `_reconcile_steps` 挪到 `_build_execution_result` 之后 → 对账数据落空 ⇒ 断言红；还原。
+
+---
+
+### 52.7 T-S7-7-7　对外口径订正（reporting + term_map + 术语守门账目）
+
+- **产出文件**：`core/nodes/reporting.py` + `ui/term_map.py` + `tests/test_s708_user_text_guard.py`。
+- **依赖**：T-S7-7-6。
+
+**实施要点**：
+
+1. **`_SUCCESS_CRITERIA_NOTE` 具名常量**（`reporting.py:834-836` 那句提出来）：
+   - **去掉"B 档"**（`docs/product-design-specification.md:479` 红线：内部分档术语不得裸露给用户；它一直没被扫到只是因为是**内联 f-string、不在 `_GUARDED_CONSTANTS` 覆盖面内** —— S7-06 同款失效模式）；
+   - 文案重写为**三条件**：退出码正常 + 至少解析出 1 个指标 + **计划里的步骤全部跑完**；
+   - 「指标对比表仅做并列展示、不做硬性结论判定」那半句**逐字保留**；
+   - 登记进 `tests/test_s708_user_text_guard.py` 的 `_GUARDED_CONSTANTS`。
+2. **标注条件补一条析取项**（`reporting.py:282-290`，**数据源不变**）：现为「`unexecuted_steps` 非空 ∨ `budget_truncated is True`」⇒ 补 **∨「`planned > 0 ∧ completed < planned`」**。**理由**：`attribution_unavailable` 时 `unexecuted_steps` 被 R-2 置空，判定层却已判不成功 ⇒ 不补则出现"结论说没跑完、横幅不印"的反向矛盾。⚠ **reporting 侧不 import execution 的私有谓词**（跨节点耦合），在本文件内以同样两行条件表达即可——**这不违反单点谓词红线**（那条红线约束的是 execution 判定链路内部；reporting 是展示层，且本条已有 CP 用"两处结论必须同向"来钉死一致性）。
+3. **横幅数字的 R-2 例外**（`:644-652`）：`attribution_unavailable is True` 时**不得印"已完成 0/N 步"**，走既有 else 分支的**无数字表述**（"计划步骤未全部执行完成，详见步骤对账节"）。这是 R-2 展示红线（禁"0 步未执行"式误导）与本批新增标注析取项的交汇点，**不处理就会出现本批自己造的误导**。
+4. **`_render_step_reconciliation` 一行不改**（它本就取 `step_reconciliation`，单一数据源下无口径分叉）。⚠ **原计划的"改挂 `completion` + 旧 checkpoint 回落"整块删除**（§49.0 变更 1）。
+5. **`ui/term_map.py` 加一条**：`"error_category:incomplete_execution": "执行步骤未跑完"`。⚠ **别写"执行不完整"** —— 那是 `annotation:incomplete_execution` 的既有文案（`:87`），两处同词会让用户分不清"标注"和"错误分类"。
+6. **术语守门账目**（`tests/test_s708_user_text_guard.py:122-124`）：`EXPECTED_TERM_LABELS_N` 42→**43**、`EXPECTED_CONSTANTS_N` 12→**13**、`EXPECTED_N` 54→**56**。**`==` 形态一字不动**。⚠ **13 = 12 + 1（`_SUCCESS_CRITERIA_NOTE`）**；若 T-7-6 的两段 feedback 文案也提了常量并进守门，则须相应再 +2 ⇒ **实施时按实际提取的常量数结算，本文给的是最小值**，账目必须逐条对平写进 CP。
+7. **不做**：不动 `:249` 的 `engineering ⇔ success == True` 语义（B 档语义原封不动，只是 `success` 的定义变严了）；不改三形态骨架；不改 `conclusion_level` 三值文案（AC-S5-07 红线）。
+
+**检查点（6 个）**：
+
+- [x] **CP-7.7-1** **"B 档"从报告里消失**：渲染出的 Markdown 全文**零命中 `B 档`**；`_SUCCESS_CRITERIA_NOTE` 已是模块级常量且在 `_GUARDED_CONSTANTS` 内。**验红**：把常量文案改回含"B 档" → 断言红；还原。
+- [x] **CP-7.7-2** **三条件在位**：口径句含"退出码"、"指标"、"步骤全部跑完"三层语义；"仅供参考对比…不做硬性结论判定"半句逐字保留。**验红**：删掉第三条件 → 断言红；还原。
+- [ ] **CP-7.7-3** **标注析取项生效 + 与判定同向**：构造 `attribution_unavailable=True`（`unexecuted_steps` 为空）且 `planned=9/completed=0` 的 exec_result → **标注命中 `incomplete_execution`**；构造 `planned=9/completed=9` → **不命中**。且**同一 fixture 下 `success is False` 与"标注命中"必须同向**（两处结论不得相反）。**验红**：把新增析取项删掉 → 第一格红；还原。
+- [ ] **CP-7.7-4** **★ R-2 展示红线不破**：`attribution_unavailable=True` 时横幅**不含 `0/`**、不含任何"已完成 N/M 步"数字，只出无数字表述；`attribution_unavailable=False` 且 `completed=2/planned=9` 时**照常印"已完成 2/9 步"**。**验红**：去掉 R-2 例外分支 → 第一格出现"已完成 0/9 步" ⇒ 断言红；还原。
+- [x] **CP-7.7-5** **UMAP 同型场景端到端**：planned=9 / completed=2 / metrics 非空 / exit 全 0 的 fixture → `conclusion.level == "none"`（不再是 `engineering`）、报告形态**不再是 `full_success`**、标注含 `incomplete_execution`、横幅印"已完成 2/9 步"。**验红**：把 `success` 合取项去掉 → level 回到 `engineering` ⇒ 断言红；还原。（**这条是"UMAP 那份自相矛盾报告不会再出现"的直接证明**。）
+- [x] **CP-7.7-6** **term_map 新条目 + 账目对平**：`humanize("error_category", "incomplete_execution") == "执行步骤未跑完"` 且 **≠** `humanize("annotation", "incomplete_execution")`；`EXPECTED_TERM_LABELS_N` / `EXPECTED_CONSTANTS_N` / `EXPECTED_N` 三数与实际扫描**逐条相等**，注释里**逐条列明加了哪几条**。**验红**：`_GUARDED_CONSTANTS` 去掉一条 → **两道断言同时红**；把两处文案写成同一个词 → 术语区分断言红；均还原。
+
+---
+
+### 52.8 T-S7-7-8　CP 测试全覆盖 + 逐条验红 + 既有 6 条同步 + 全量回归（★收口闸门）
+
+- **产出文件**：`tests/test_sprint7_s711_completion.py`（新）+ 既有 4 个文件的夹具/账目同步。
+- **依赖**：T-7-3 ~ T-7-7 全部完成。
+
+**实施要点**：
+
+1. **既有 6 条按 T-7-2 的定性逐条同步为更严的正确值**（**禁止弱化**）：
+   - **夹具债 6 条**（`test_sprint4_e3.py` 3 条 / `test_sprint4_e4_regression_gate.py` 2 条 / `test_sprint4_e2e.py` 1 条）：根因是 `test_sprint4_e3.py:102-112` 的 `_run()` helper **写死 `command=["python", "x.py"]`**、而 `:130` 的计划步骤是 `python train.py` ⇒ **自相矛盾**（且这些假 run 不带 `step_ledger` 自报，规则①无从生效）。改法 = **让假 run 的 argv 与计划步骤自洽**（把 `_run()` 加一个 `command` 形参、默认取计划里那条；或把计划步骤改成 `python x.py`——**取哪种由实施时看哪种更贴该用例原意，但绝不许放宽断言**）。
+   - **schema 债 0 条**（本批零新增键 ⇒ 键集合断言全部不受影响）。
+   - **判定债 0 条**（若 T-7-2 实测出判定债，**回头改判定，不许改测试**）。
+2. **新用例覆盖面**（对齐本文各 CP）：单点谓词真值表与防御 / 防伪留痕正负四向 + 纯观测守门 / 路由三态 / 撞上限 interrupt#2 / guard 重入 round-trip / 早停不误触 / 四格真值表 / reporting 标注与 R-2 展示例外 / 文案守门。
+3. **五道命门逐条验红，红绿两态实据齐全**（见 §50 的五道命门定义）——每道都要**记录红的条数与报错原文摘要**，还原后 `sha256` 校验 + 复绿。
+4. **全量回归 + 账目精确对平**：`-m "not e2e and not browser"` / `-m browser` / `mypy` 三组；**新数字必须能从基线逐条加减对平、无余数**（沿 §48 CP-6.8-9 的体例）。
+5. **不做**：不加 retry / flaky 重跑（本项目正在治假绿，加 retry 是反方向）；不 `skip` 任何变红用例。
+
+**检查点（6 个）**：
+
+- [x] **CP-7.8-1** 既有 6 条**逐条同步完毕**，且每条在 §56.2 有"改法 + 定性"留档。**验红**：随机挑 1 条，把改法退回原样 → 该条复红 ⇒ 证明改法是**必要**的而非"顺手改的"；还原。
+- [x] **CP-7.8-2** **★ 禁弱化守门（本批的自我约束）**：对本批**改动过的每一个测试文件**做一次 diff 审查——`>=` / `issubset` / `pytest.skip` / `xfail` / 删除断言 **零新增**。**验红**：临时把某条 `==` 改成 `>=` → 该守门（人工 diff 审查清单 + `git diff` grep）当场命中；还原。
+- [x] **CP-7.8-3** **五道命门逐条验红**，每道记录：改坏方式 / 红的条数 / 报错原文摘要 / 还原后 `sha256` 一致 / 复绿条数。**验红**：本条**自身就是验红总账**；若任一道"改坏后仍全绿"，**当场判该断言无效并重写**（S7-10 的 F2/F3 就是这么漏过去的）。
+- [x] **CP-7.8-4** **全量回归零退化 + 账目对平**：三组数字落档，且 `新 passed = 基线 2287 + 新增用例数 ± 同步用例数变化`，**逐条列出、无余数**。**验红**：故意漏算一条新增用例 → 账目差 1 ⇒ 对不平（补回）。
+- [x] **CP-7.8-5** **`mypy` 零错误** + **零改动红线文件 `git diff` 逐一为空**（`core/graph.py` / `core/nodes/planning.py` / `core/nodes/coding.py` / `core/plan_checks.py` / `core/nodes/resource_scout.py` / `core/tools/**` / `sandbox/local_venv.py` / `core/nodes/_repo_scoring.py` / **`core/state.py`**）。**验红**：临时在 `core/plan_checks.py` 加一个空行 → 该清单命中 ⇒ 判据有效；还原。
+- [x] **CP-7.8-6** **handoff 草稿**：运行方式 / 依赖说明 / 测试入口 / 已知限制（**必须含 R-S7-59「判定层硬依赖 prompt 约束」与 R-S7-65「完成度建立在 agent 自报之上」两条**）/ 未跑项（真跑）。**验红**：漏写任一条已知限制 → 收口复核清单命中（补回）。
+
+---
+
+### 52.9 T-S7-7-9　UMAP 端到端真跑验收（⚠ 须 Maria 单独授权具体动作、严禁预授权）+ handoff
+
+- **产出文件**：`docs/sprint7/test-reports/2026-08-xx_s711-real-run.md`。
+- **依赖**：T-S7-7-8 全绿。
+
+> ⚠ **本任务耗 deepxiv 日配额 + 真实 LLM 调用，须 Maria 单独授权具体动作，严禁预授权** —— 对批次 7 的授权 **≠** 对本任务的授权（照 §44 T-S7-6-9 的既有写法）。
+
+**跑前前置（人工，零配额）**：
+
+1. **把 `reproduction_plan` 全文落盘成 bundle**（S7-08 与本批都已因运行期 checkpoint db 落在临时目录而丢过计划原文，§48 P-26 / §56 P-38）。
+2. **LangSmith 按轮次分独立项目是人工动作，不是代码能力**（§49.4 第 18 条 / §56 P-39）：生产代码零 `LANGSMITH` 命中，测试侧在 `tests/conftest.py:33-45` 硬关闭。⇒ 跑前须**手工设 `.env` 的 `LANGSMITH_PROJECT`**，并按既有范式两步零配额验证：①`tracing_is_enabled()` 为 `True`；②`Client().list_projects()` 验 key 真有效。**不做这一步则轮次分项目不会自己发生，事后无法按轮次拉 trace。**
+3. **确认 `workspace/repos/lmcinnes__umap` 干净**（`git status --porcelain` 为空，S7-10 已闭环，跑前复验一次）。
+4. **把上一次真跑的 `workspace/1802.03426/` 归档或改名** —— 否则新跑会覆盖 §56.1 的取证现场（取证表已抄录，但原始文件仍有价值）。
+
+**⚠ 判读口径（必须提前设对，否则会被误判成"本批做砸了"）**：
+
+1. **本批的成功标准 = 「不再出现『少跑步骤却判成功』」**，**不是**「这次真跑一定成功」。三条正确结局，任一即达标：
+   - **(a) 理想**：agent 按新纪律全量重跑、跑完 9 步、指标齐 → `success=true`，且报告里**不再有"执行不完整"横幅**；
+   - **(b) 可接受**：agent 全量重跑但某步真失败 → 判失败、回修复循环 → **这正是设计内的正确行为**；
+   - **(c) 可接受**：跑满修复轮上限 → 走 interrupt#2 面板交给用户 → **也是 Maria 拍板的行为**。
+2. **★ 必须逐条判读的两个观测量（R-S7-59 / R-S7-65 的唯一证伪手段；原第三个观测量随 R-S7-61 作废而删除）**：
+   - **① agent 是否真的全量重跑**：逐轮统计 `step_reconciliation` 的 `executed` / `completed` 覆盖了计划的哪几步。**若修复轮只跑缺失的那几步 ⇒ R-S7-59 兑现**，判定层会恒判未完成 ⇒ **须回头改 prompt 措辞，不得改判定口径**（改口径就是退回跨轮取并集那条已被 Maria 与架构双重否决的路）。
+   - **② 自报是否可信（R-S7-65）**：逐轮抄录 `_audit_declared_steps` 的 WARNING 原文，对每条不符判"**换了命令还自报同一下标（疑似虚报）**"还是"**写法变通（`-m` / 相对路径，正当）**"。**若出现前者 ⇒ R-S7-65 兑现**，此时才讨论要不要给完成度加确定性交叉校验（**事前不加——那正是被砍掉的那条路**）。**零 WARNING 也是有效结论**：说明自报与实跑一致，采信自报的产品假设成立。
+   - **（附）修复循环是否被白烧**：记录跑了几轮、每轮 `completed` 有没有增长。连续无增长 ⇒ **R-S7-62** 兑现，触发"是否要做那条被压到第二批的早停"的重议。
+3. **⚠ 与 R-S7-54 的既有已知限制叠加判读**：历史上编码环节的产物曾自身跑不通（6 处 `%` 优先级 bug）。**失败时先判"是不是产物自身 bug"，再判"是不是本批引入的"** —— 判反会把一个正确的失败当成回归。
+4. **真跑证据可引 LangSmith**（追踪已恢复），但**LangSmith 不能替代磁盘证据** —— 三个观测量必须同时有 `exec_logs/round_*.log` 与 `report.md` 的落盘佐证。
+
+**检查点（3 个）**：
+
+- [ ] **CP-7.9-1** 跑前四项前置全部完成并留痕（bundle 路径 / LangSmith 两步验证输出 / 仓库 `git status` / 归档路径）。**验红**：跳过 LangSmith 验证直接跑 → 事后拉不到按轮次分的 trace ⇒ 该前置的必要性即被证明（**不要真的跳过，写进报告作为"为什么这一步不能省"的说明**）。
+- [ ] **CP-7.9-2** **★ 两个观测量逐轮落表**：①逐轮列出「本轮执行的命令 → 自报归属到哪几个计划步骤 → `completed/planned`」；②`_audit_declared_steps` 的 WARNING 原文逐条抄录并定性（疑似虚报 / 写法变通 / 零告警）。**验红**：若某轮 `completed` 与 `report.md` 印的数字不一致 ⇒ 说明单一数据源被破坏（当场记为缺陷）；若 feedback 是 INCOMPLETE 而报告未印标注 ⇒ T-7-7 的析取项没做全（当场记为缺陷）。
+- [ ] **CP-7.9-3** **★ 主断言 + handoff 归档**：报告里**不再出现"判定为成功但横幅说没跑完"这种自相矛盾**（`success=true` ∧ `incomplete_execution` 标注同时成立的组合**必须为零**）。**验红**：拿 §56.1 存的**上一次**真跑现场数据（`planned=9 / executed=2 / completed=2`）重放一遍（**零配额**）→ 在新代码下**必须判不成功** ⇒ 这是"本批真的修好了"的最硬证明。归档：本报告 + T-7-8 覆盖矩阵 + 五道命门验红证据 + 已知限制（**含 R-S7-59 / R-S7-62 / R-S7-64 / R-S7-65 四条**）+ 未跑项显式登记。
+
+---
+
+## 53. S7-11 风险登记（编号接续 §45 的 **R-S7-58**；本 dev-plan 新登记 **R-S7-59~64**）
+
+> ⚠ **编号说明**：架构师 2026-08-01 第二轮裁决建议编号 `R-S7-42~45`，但 **R-S7-42~58 号段早已用满**（全仓 `grep -o "R-S7-[0-9]*" docs/sprint7/*.md` 实测最大号为 **58**）。⇒ **改发 R-S7-59~62**，另本 dev-plan 自行新增 R-S7-63/64。映射见 §56 **P-43**。
+
+| 风险 | 描述 | 触发任务 | 缓解措施 | 回退方案 |
+|---|---|---|---|---|
+| **R-S7-59（★ 阻塞级，本批头号风险）** | **判定层硬依赖 execution prompt 的「每回合从头全量重跑」约束**（Q-S7-25(0)）。`run_results` 逐轮重置是事实；若 agent 只补跑缺失步骤，本轮 `completed < planned_actionable` ⇒ **恒判 INCOMPLETE、跑满 `MAX_FIX_LOOP_COUNT=20`、每次真跑都被推到 interrupt#2**。这是**假红 + 白烧预算**（不是假绿），但用户体感比现状更差。而 prompt 天然不可靠——本项目实测服从率 **75%** | **T-7-4**（prompt 是交付项不是顺带项）+ T-7-9 | ①B 的全量重跑纪律列为**绝不可裁剪项**（§51.5）；②A 先落 B 后落，让 agent **有依据**相信重跑会不同（否则它在执行一条没有理由的指令）；③**唯一证伪手段是真跑**（CP-7.9-2 观测量①逐轮统计覆盖率），**mock 层证不到** | **⚠ 回退方向明确禁止改判定口径**——跨轮取并集已被 Q-S7-25(0) 判为"另一种假绿，与本次修复初衷同型"。若真跑证实 agent 不听话，**触发的是"prompt 措辞要改"，不是"口径要放宽"**（与 R-S7-58 同款纪律） |
+| **R-S7-60** | **四条修法拆批即比现状更糟**：只上 C 不上 D ⇒ 完成度不足直接 interrupt#2 打断用户，**Maria 拍板的"交修复循环补跑"落成反面**；只上 C 不上 B ⇒ 必然死锁（R-S7-59）；只上 A/B 不上 C ⇒ 反向激励原封不动 | 全批 | §49.3 红线首条 + §51.3 顺序理由 + DA-S7-11-9 立"四条同批落地"的机制化守门（缺任一条当场红，对齐 AC-S7-52 范式） | **无**——任何"先上一条观察一轮"的提议一律驳回 |
+| **~~R-S7-61~~（★ 已作废，2026-08-01 Maria 复审）** | ~~命令归一漏配造成 `missing_steps` 假阳性 ⇒ 系统性判红~~。**随 §49.0 变更 1 整条作废**：完成度改为采信 agent 自报的 `step_index`，**不再比对命令字符串** ⇒ `python scripts/x.py` vs `python -m scripts.x`（§56.1 / P-45 的物证）不再影响判定。**原物证本身仍属实，只是不再构成风险** | — | — | — |
+| **R-S7-62** | **INCOMPLETE 无类别级早停**（Q-S7-27 明令不加"连续 N 轮无增长"计数器）⇒ 最坏烧满 20 轮修复才走 interrupt#2 | T-7-6 / T-7-9 | **已由 Maria 拍板接受**（"撞顶后走既有 interrupt#2 面板让用户决策"）；`MAX_FIX_LOOP_COUNT=20` + `DEV_LOOP_MIN_CALLS_PER_ROUND=4` + `MAX_DEV_LOOP_LLM_CALLS=120` 三重兜底本就在位；CP-7.9-4 观测量③记录每轮 `completed` 是否增长 | **可选早停压到第二批**（Q-S7-27）：若真跑显示轮次被大量空耗，再加"本轮 `completed` 未超过上一轮 → 提前 interrupt#2"，它**只读已落盘的 `completion.completed`、不新增 state 键**。**没有真跑证据前它是过度工程，本批不做** |
+| **R-S7-63** | **`EXPECTED_*` 三个数字连改（42→43 / 12→13 / 54→56），改错一个就全量红**；且若 T-7-6 的两段 feedback 文案也提常量，`EXPECTED_CONSTANTS_N` 还要再 +2 ⇒ 本文给的是**最小值** | T-7-7 | 三个数字**写死进 CP-7.7-7**，并要求**注释里逐条列明加了哪几条**（沿 `:112-118` 既有体例）；账目**按实际提取的常量数结算、逐条对平** | 单点修正数字；**禁止放宽为 `>=`**（`:36-38` 明写这是刻意的） |
+| **R-S7-64（本批发现，明确不修）** | **`runtime_seconds` 同样是本轮口径**：`:1908` `runtime_seconds=float(sum(r.duration_seconds for r in run_results))` ⇒ 报告 `:170` 印「执行总耗时 0.243 秒」而产物清单里躺着 20 组真实可视化结果，**同一份报告里第三处自相矛盾**（前两处：判定 vs 横幅、两个完成数） | — | **本批范围外，只登记不修**（本批治的是"成功"的定义，跨轮累计耗时是另一件事）；写进 handoff 已知限制 | 日后若做"跨轮累计口径"，须**一次性把 runtime / artifacts / logs 三者的轮次口径一起想清楚**，不要单点补一个 |
+
+---
+
+| **R-S7-65（★ 本次方案变更引入，替代作废的 R-S7-61）** | **完成度建立在 agent 自报的 `step_index` 之上**：理论上 agent 可以给任意命令打任意下标把 `completed` 刷满 ⇒ 假绿。§48 **P-24** 早已登记该理论缺口，S7-10 据此立过"验收不得引 `step_reconciliation` 作证"的红线（**本批解除**） | T-7-5 / T-7-6 / T-7-9 | ①**产品已拍板接受**（Maria 2026-08-01：立项那次真跑实测 agent **没有虚报**，round_0 诚实声明 8/9 步）；②`exit` 全 0 与 ≥1 指标两个合取项仍是**硬的**——刷下标刷不出指标；③**`_audit_declared_steps` WARNING 留痕**是本条的专属对冲手段（CP-7.5-3 正负四向 + CP-7.9-2 观测量②真跑抄录） | **不得回头再写确定性完成度算法**（那正是本次被砍掉的路线）。若真跑观测到疑似虚报，**先找 Maria 重议**——届时的候选手段是"确定性交叉校验只用于告警升级 / 只对特定形态生效"，而不是把判定源换回去 |
+
+## 54. S7-11 关键纪律汇总（开工前逐条对照）
+
+1. **A/B/C/D 四条同批生效，禁止拆批**（R-S7-60）。任何"先上一条观察"的提议驳回。
+2. **★ 不新增完成度算法、不新增 schema 键**（§49.0 变更 1）：完成度**唯一**来自 `step_reconciliation`（agent 自报 `step_index` + 归一兜底）。任何“再写一个确定性算法”的提议一律驳回。
+3. **完成度不足的判断只有一个谓词 `_completion_insufficient`**：`success` 与 `_apply_incomplete_execution` 两处都调它（**CP-7.6-2 打桩守门**）。这是本批最重要的一条——它拦的是"改判了但 success 还是 True"这种最隐蔽的假绿。
+3b. **`_audit_declared_steps` 是纯观测**：返回 `None`、只打 WARNING，不得被判定 / 渲染 / state 消费（**CP-7.5-4 守门**）。
+4. **判定口径是单轮全量，跨轮不取并集**（Q-S7-25(0)）。跨轮并集是"把上轮代码下的通过当成本轮代码下的通过"，与本次修复初衷同型的假绿。
+5. **改判走 feedback 通道，不走路由旁路**（Q-S7-28 三条理由）：路由条件 `feedback.auto_fixable` 一字不改。
+6. **优先级靠调用顺序拿，`_apply_no_metrics` 函数体一行不改**（Q-S7-30）：`_apply_incomplete_execution` 排它上游，它的 `category == NONE` 前置守卫自动让位。
+7. **`_reconcile_steps` 函数体一行不改**，本批只**前移其调用位置**（4.7 依赖它的结果）；它同时服务判定与展示，**全系统只有一个完成数**。
+8. **R-2 保守语义（`attribution_unavailable`）只约束展示、不外溢判定**：判定层照常按 `completed < planned` 判不成功；**展示层不得印“已完成 0/N 步”**（CP-7.7-4 守门）。
+9. **S7-10 红线「验收不得引 `step_reconciliation` 作证」本批解除**（Maria 变更 1：它已是判定的正式数据源）；代价登记 **R-S7-65**，对冲手段是 `_audit_declared_steps` 的 WARNING 留痕。
+10. **`ExecutionResult` 零新增键**，两个构造点都不动；旧 checkpoint 一律 `.get()` 防御读、谓词对畸形入参返 `False`（R-6）。
+11. **prompt 冻结区三件套**：重算哈希写死 + §48.1 追加留档行 + 跑一次验红。现基线 `f82f3938cf31f882` / 1698。**禁止 `EXPECTED_HASH = actual_hash` 自锁定形态。**
+12. **prompt 写形态表述、不写数字**（Q-S7-22 既有纪律）。⚠ 本批**例外且必须**写 `step_index` 这个工具入参名——它本就是工具签名的一部分、prompt 里早已出现；**不新增 `plan_steps_finished` 输出字段**（原方案的冗余双源，已删，CP-7.4-5 负向守门）。
+13. **新增用户可见文案必须提为具名常量并进术语守门**：42/12/54 → **43/13/56**（最小值，按实际结算）。**`==` 禁止放宽为 `>=`。**
+14. **"B 档"从用户可见文本里清除**（`docs/product-design-specification.md:479` 红线）。它一直没被扫到只是因为是内联 f-string、不在 `_GUARDED_CONSTANTS` 覆盖面内——**S7-06 同款失效模式，顺手补上**。
+15. **既有断言只准同步为更严的正确值**：禁 `>=` / `issubset` / `skip` / `xfail` / 删除（CP-7.8-2 diff 审查守门）。**夹具债改夹具，算法债改算法。**
+16. **每个 CP 都要验红**：故意改坏证明会红，`sha256` 校验**逐字节还原**，复绿。**若任一道"改坏后仍全绿"，当场判该断言无效并重写**（S7-10 的 F2/F3 就是这么漏过去的）。
+17. **`execution.py` 单收口窗口，四任务串行**（T-7-3 → 7-4 → 7-5 → 7-6），不得与其他任务并行触碰该文件；**T-7-4 之后每次收口复算一次 prompt 哈希**，确认没被顺手带改。
+18. **访问 `core.nodes.execution` 模块属性一律走 `importlib.import_module`**（`core/nodes/__init__.py` 显式 export 遮蔽陷阱，已知 bug 模式 #6）。
+19. **影响面评估用非侵入探针**（只落 `/tmp`，`pytest_configure` 钩子内 import，仓库零触碰）。**绝不为了"看看会红几条"而改仓库文件。**
+20. **判读口径提前设对**（R-S7-59）：本批成功标准是「**不再出现『少跑步骤却判成功』**」，**不是**「这次真跑一定成功」。全量重跑后某步真失败 → 回修复循环，是**设计内的正确行为**。
+21. **真跑须 Maria 单独授权具体动作，严禁预授权**；LangSmith 按轮次分项目是**人工前置动作**（生产代码零 `LANGSMITH` 命中），不做则事后拉不到分轮 trace。
+22. **不新增中断种类 / 决策类型 / 按钮 / 流程分支**；`already_committed` 两段式 interrupt#2 语义一字不动。
+
+---
+
+## 55. S7-11 增补 CP 索引 / 编号速查 / DA 映射 / 交付物清单
+
+### 55.1 CP 索引（51 个；原 57，随确定性算法删除净减 6）
+
+| 任务 | CP 区间 | 数量 | 核心守什么 |
+|---|---|---|---|
+| T-S7-7-1 | CP-7.1-1 ~ 7.1-5 | 5 | 前置事实复核 + **真跑现场取证固化**（磁盘会被覆盖） |
+| T-S7-7-2 | CP-7.2-1 ~ 7.2-5 | 5 | 影响面清单 + **逐条定性**（夹具债 / 判定债）+ 零 schema 变更复核 |
+| T-S7-7-3 | CP-7.3-1 ~ 7.3-6 | 6 | 修法 A 接线 + 零扰动 + 字节幂等 + 注释意图订正 |
+| T-S7-7-4 | CP-7.4-1 ~ 7.4-7 | 7 | 修法 B 冻结区 + **字节门当场红** + `step_index` 强制声明 |
+| T-S7-7-5 | CP-7.5-1 ~ 7.5-5 | 5 | 单点谓词真值表 + 防御 + **防伪留痕正负四向** + **纯观测守门** |
+| T-S7-7-6 | CP-7.6-1 ~ 7.6-8 | 8 | **四格真值表** + **单点谓词打桩** + **路由回 coding** + 零改动三处映射 |
+| T-S7-7-7 | CP-7.7-1 ~ 7.7-6 | 6 | "B 档"清除 + 标注补析取项 + **R-2 展示红线（禁 0/N）** + 账目对平 |
+| T-S7-7-8 | CP-7.8-1 ~ 7.8-6 | 6 | 既有 6 条同步 + **禁弱化守门** + 五道命门验红总账 + 回归对平 |
+| T-S7-7-9 | CP-7.9-1 ~ 7.9-3 | 3 | 真跑两观测量 + **主断言：自相矛盾组合为零** + 旧现场重放 |
+
+### 55.2 编号速查
+
+- **需求编号**：**S7-11**（S7-09 被"只读环境探测白名单放开"占用；S7-10 是批次 6，HEAD `c480990`）。
+- **任务编号**：`T-S7-7-N`（第二段 **7 = 批次号**，不是需求号；批次 0~6 已用满）。
+- **检查点**：`CP-7.x-y`（x = 任务序号）。
+- **风险**：`R-S7-59 ~ R-S7-65`（接续 §45 的 R-S7-58；架构建议的 R-S7-42~45 与既有号段冲突，映射见 §56 P-43）。⚠ **R-S7-61 已作废**（§49.0 变更 1），**R-S7-65 为本次方案变更新增**。
+- **架构问答**：`Q-S7-25 ~ Q-S7-27`（第一轮：完成度算法 / 并存关系 / 死锁护栏）+ `Q-S7-28 ~ Q-S7-31`（第二轮：改判落点 / 分类取值 / 叠加优先级 / 对外口径）+ 附则 `Q-S7-29a`（不吃 ledger）/ `Q-S7-29b`（文案约束）。**均尚未落 `architecture.md`**（本批不走 PRD，同 S7-10 处置）。
+- **验收点**：`DA-S7-11-1 ~ DA-S7-11-9`（**不占用 `AC-S7-*` 号段**）。
+- **勘误留档**：`P-36 ~ P-46`（接续 §48 的 P-35；**P-46 为本次方案变更留档**）。
+- **章节**：§49 概述 / §50 任务总表 / §51 批次划分 / §52 任务详细规格 / §53 风险 / §54 纪律 / §55 索引 / §56 勘误留档（含 §56.1 取证表、§56.2 影响面表）。
+
+### 55.3 DA 映射（验收点 → CP → 预期用例落点）
+
+| DA | 一句话 | CP | 预期用例落点 |
+|---|---|---|---|
+| **DA-S7-11-1** | 修复轮上下文含"上轮改了哪些文件 + 怎么改的"，且零扰动 | CP-7.3-1~4 | `test_sprint7_s711_completion.py::test_da_1_*` |
+| **DA-S7-11-2** | prompt 含全量重跑纪律，空转口径已限定为同轮内 | CP-7.4-3/4 | 同上 + `test_sprint5_t14_execution_prompt.py` |
+| **DA-S7-11-3** | prompt 字节门当场红并已更新基线 + §48.1 留档 | CP-7.4-1/2/7 | `test_cp_6_2_1_execution_prompt_body_byte_baseline` |
+| **DA-S7-11-4 ★** | 完成度采信自报且**有防伪留痕**：谓词真值表 + WARNING 正负两向 + 纯观测不外溢 | CP-7.5-1~5 | `::test_da_4_*`（含纯观测守门） |
+| **DA-S7-11-5 ★** | 少跑步骤不判成功，且**单点谓词**两处同步 | CP-7.5-6 / CP-7.6-2 | `::test_da_5_*`（打桩守门） |
+| **DA-S7-11-6 ★** | 完成度不足**回修复循环**而非打断用户 | CP-7.6-3/4/5 | `::test_da_6_*`（含 `AUTO_FIXABLE` 摘除验红） |
+| **DA-S7-11-7** | INCOMPLETE 优先于 NO_METRICS，且 `_apply_no_metrics` 零改动 | CP-7.6-1/8 | `::test_da_7_four_cell_truth_table` |
+| **DA-S7-11-8** | 报告口径与实现一致，"B 档"消失，标注与判定同向且不印"0/N" | CP-7.7-1~6 | `::test_da_8_*` + `test_s708_user_text_guard.py` |
+| **DA-S7-11-9 ★** | **A/B/C/D 四条同批落地**的机制化守门（缺任一条当场红） | 收口判定 / CP-7.8-3 | `::test_da_9_all_four_fixes_landed_together`（对齐 AC-S7-52 范式；⚠ **四条臂一律写成真调生产路径的行为断言，禁源码子串检查** —— S7-10 的 F2 教训） |
+
+### 55.4 交付物清单
+
+- **生产代码**（**3 个**既有文件，零新增 `.py`）：`core/nodes/execution.py`（四处改动，单收口窗口）、`core/nodes/reporting.py`、`ui/term_map.py`（加 1 条）。⚠ **`core/state.py` 零改动**（本批不新增 schema 键）。
+- **测试**：`tests/test_sprint7_s711_completion.py`（新）+ 既有 **5** 个文件同步（`test_sprint4_e2e.py` / `test_sprint4_e3.py` / `test_sprint4_e4_regression_gate.py` / `test_s708_user_text_guard.py` / `test_sprint5_t14_execution_prompt.py`）。⚠ `test_sprint5_t26_grouped_metrics.py` **不再受影响**。
+- **文档**：本文 §49~§56（含 §48.1 追加第三行、§56.1 取证表、§56.2 影响面表）+ `docs/TODO.md` 条目 + `docs/sprint7/test-reports/2026-08-xx_s711-real-run.md`。
+- **零改动红线文件**（收口 `git diff` 逐一为空）：`core/graph.py`、`core/nodes/planning.py`、`core/nodes/coding.py`、`core/plan_checks.py`、`core/nodes/resource_scout.py`、`core/tools/**`、`sandbox/local_venv.py`、`core/nodes/_repo_scoring.py`、**`core/state.py`**。
+- **新增第三方依赖**：**0**。**state 新增键**：**0**（§49.0 变更 1）。**graph / interrupt payload 改动**：**0**。
+
+---
+
+## 56. S7-11 落点勘误留档（本 dev-plan 落盘时 Read / grep / **非侵入探针实跑**发现的出入）
+
+> 体例照抄 §48。**本表只登记事实出入与处置，不自行改 PRD / 架构 / 产品文档。** 主控的描述也可能有错——发现即记，**以实测为准**。
+
+| 编号 | 主控 / 上游描述 | 实测 | 影响 | 处置 |
+|---|---|---|---|---|
+| **P-36（键数遗漏）** | 「修复轮注入的 payload 只有 `work_dir` / `execution_steps` / `environment` / `max_rounds` / `fix_round` / `last_error_summary` / `credential_degradations`」（**7 项**） | 实测 `_build_execution_agent_context`（`:1134-1192`）还有**第 8 项** `scale_reduced_directive`（`:1189-1190`，S7-08 T-S7-5-8 加的缩规模指令贯穿，`plan.get("scale_reduced") is True` 才注入）。⇒ 修复轮 payload **最多 8 键**。另主控给的行号 `1148-1165` 是 **payload 字典 + 修复轮分支**那一段，函数整体是 `:1134-1192` | **低**（不改变"没有任何字段告诉 agent 代码已被修改"这个结论——第 8 项也不是） | ①§49.4 第 4 条按 8 键写；②T-7-3 的"非空才注入"范式**正是抄这两个既有条件注入项**（`credential_degradations` + `scale_reduced_directive`），有现成体例可循，实施更省 |
+| **P-37（行号漂移）** | `step_reconciliation` 用 agent 自报：`core/nodes/execution.py:1592-1610`、`:1626-1628` | **结论完全成立，但行号是 S7-10 改动前的**。实测：规则① `declared` 建表 `:1623-1641`（`:1641` 落表）、消费 `:1660-1662`；规则② `plan_index` 建表 `:1643-1654`、消费 `:1663-1666`；`completed` 计算 `:1669-1671`；R-2 保守语义 `:1672-1685` | **低**（结论不变），但会误导实施者去错行 | §49.4 第 8 条按实测行号写。**纪律**：本批实施时行号还会再漂，**以符号名为准、行号只作定位提示**（§52 通用纪律④） |
+| **P-38（无法磁盘复核）** | 「本次真跑只用了 22% 预算、1/20 修复轮」 | **1/20 修复轮属实**（`exec_logs` 只有 `round_0.log` / `round_1.log`，`config.py:32 MAX_FIX_LOOP_COUNT=20`）；**"22% 预算"无法复核**——报告不印预算数字，且 `find /data/myproj -name "*.db" -newermt 2026-08-01` **零命中**（该次运行的 checkpoint db 已回收，与 §48 P-26 同款） | 中：**再丢一次现场，本批立项依据就只剩转述** | ①**T-7-1 CP-7.1-2 把现场取证固化进 §56.1**（本表下方）；②T-7-9 跑前须**把 `reproduction_plan` 全文落盘成 bundle**（CP-7.9-1）；③本文引用预算占比时一律注明"未独立复核" |
+| **P-39（能力 vs 手工动作）** | 「LangSmith 追踪已恢复（测试侧在 `tests/conftest.py` 硬关闭、**真跑侧显式开启并按轮次分独立项目**）」 | 前半属实（`tests/conftest.py:33-45`，含 `LANGSMITH_TRACING_IN_TESTS=1` 逃生舱）；**后半不是代码能力**——全仓 `LANGSMITH` grep（排除 `.venv` / `deepxiv_sdk_repo`）**只在 `tests/conftest.py` 命中 5 处**，`app.py` / `scripts/` / `core/` **零命中**。⇒ "按轮次分独立项目"靠**手工改 `.env` 的 `LANGSMITH_PROJECT`** | 中：若按"它会自动分"来安排真跑，**事后拉不到分轮 trace**，R-S7-59 的观测量①就少一条旁证 | 写进 **T-7-9 跑前前置第 2 条**（人工动作 + 两步零配额验证：`tracing_is_enabled()` 为 True + `Client().list_projects()` 验 key）。**不为此写生产代码**（真跑一次的配置不值得造机制） |
+| **P-40（主控未提，第三处自相矛盾）** | — | **`runtime_seconds` 同样是本轮口径**：`:1908` `runtime_seconds=float(sum(r.duration_seconds for r in run_results))` ⇒ `report.md:170` 印「执行总耗时 0.243 秒」，而同一份报告的产物清单里躺着 20 组真实可视化结果（`outputs/visualization/*.png|*.npy`）。**与"判定 vs 横幅"、"两个完成数"并列，是同一份报告里的第三处自相矛盾** | 低（本批范围外） | 登记 **R-S7-64**「明确不修」+ 写进 handoff 已知限制。**不单点补**——日后若做跨轮累计口径，须把 runtime / artifacts / logs 三者一起想清楚 |
+| **P-41（影响面高估）** | 「改 `success` 判定会波及**大量既有测试**（很多用例假设 `success=true`）」 | **实测远小于此**：非侵入探针三变体 → **6 条（判定收严）+ 3 条（`completion` 键集合）= 9 条**，分布在 **4 个文件**；`grep -c` 那种"144 处 success 断言"的粗估**严重高估**（绝大多数断言的是别的节点或本就 `success is False`）。**且算法债 0 条——9 条全是夹具债 / schema 债** | 中（**方向是好的**：影响面小意味着本批可控；但若照"大量"去安排工期会虚耗） | ①§49.4 第 16 条落实测数字与逐条清单；②T-7-2 仍作为**独立任务**执行（Maria 明令），本文数字**供对照复核、不替代该任务**；③**注意**：术语守门 3 处 `==` 会额外撞红，**那是设计目的、不计入意外影响面** |
+| **P-42（★ 主控未提的第四层根因，本批最重要的新增事实）** | 主控给出根因三层（信息缺失 / 提示词措辞 / 判定口径），修法三条（A/B/C） | **还有第四层**：`success=False` **不等于**"回修复循环"。`:2213-2247` 的路由要求 `feedback.auto_fixable` 为真才回 coding，否则**直接 interrupt#2 打断用户**；而"全部 exit 0 + 有指标"路径上 feedback 恒为 `ErrorCategory.NONE`（`:260`）、**`auto_fixable=False`**（`AUTO_FIXABLE` 见 `:145-152`，不含 NONE） | **高**：只做 A/B/C 三条，C 会把 Maria 拍板的「**交修复循环继续补跑**」落成「**打断用户**」——**设计意图落反**，而且表面看"不判成功了"像是修对了，极隐蔽 | ①新增**修法 D**（`ErrorCategory.INCOMPLETE_EXECUTION` + `_apply_incomplete_execution`），列入"四条同批禁止拆批"红线（R-S7-60）；②架构师第二轮裁决 **Q-S7-28~30** 已逐条裁定落点/取值/优先级；③**CP-7.6-3 用"把新枚举从 `AUTO_FIXABLE` 摘掉必须变红"作机制化守门** |
+| **P-43（编号冲突）** | 架构师第二轮裁决建议风险编号 **R-S7-42 ~ R-S7-45** | **R-S7-42~58 号段早已用满**（`grep -o "R-S7-[0-9]*" docs/sprint7/*.md` 实测最大 **58**）。架构师给的 R-42「prompt 依赖」/ R-43「归一漏配」/ R-44「无早停」/ R-45「EXPECTED_* 连改」四条内容全部采纳 | 低（纯编号） | **改发 R-S7-59 / 60(本文自增) / 61 / 62 / 63 / 64**。映射：架构 R-42 → **R-S7-59**；R-43 → **R-S7-61**；R-44 → **R-S7-62**；R-45 → **R-S7-63**。R-S7-60（禁拆批）与 R-S7-64（runtime 口径）为本 dev-plan 自增 |
+| **P-44（★ 主控未提的铁证，本批立项最有力的物证）** | 「计划 9 步只完成 2 步、执行耗时 0.243 秒，却判 `success=true`」 | **反向激励有直接实证**：`round_0.log` 跑了 **17 条命令、5 条 `exit=1`** ⇒ 判失败；`round_1.log` 只有 **693 字节 / 2 条命令**（`python -m scripts.summarize_results …` + `python -m py_compile …`）**全 0** ⇒ 判**成功**。**做了 17 件事失败，做了 2 件事成功。** 且 round_1 的指标是 `summarize_results` **汇总 round_0 遗留产物**得来的（`outputs/knn_eval` mtime `03:08`、`outputs/runtime` `03:10`、`outputs/summary` `03:10`，全在 round_1 之前/期间） | **高（正面）**：这条比"0.243 秒"更有说服力——它把"反向激励"从推理变成**可复算的实测对比** | ①落 §49.2 第三层根因与 §49.4 第 3 条；②**逐字抄进 §56.1 取证表**（磁盘会被下一次真跑覆盖）；③CP-7.9-4 的"旧现场重放"直接用这份数据作**零配额**的硬证明 |
+| **P-45（★★ R-S7-61 已在立项那次真跑上兑现——本表最要紧的一条）** | 架构师把"命令归一漏配"列为**待观测的假设性风险**（R-43 / 本文 R-S7-61），缓解手段是"首批真跑观测一次再议" | **它不是假设，它已经发生了，就在本批立项依据的这次真跑里**。`round_0.log` 那 5 条 `exit=1` **全部是 `python scripts/<name>.py --args` 形态**（`:step#3/9/11/13/15`），而紧随其后成功的那几条**全部是 `python -m scripts.<name> --args`**（`step#8/10/12/14/16`）——agent 遇到 `sys.path` 问题后**统一改用 `-m` 形态绕过**（与主控引述的 `last_fix_note`「已在各入口脚本开头统一加入 PROJECT_ROOT 到 sys.path」互为佐证）。⚠ **`_normalize_argv_for_match` 对这两种形态归一后并不相等**：计划侧 `("python","scripts/run_visualization_benchmarks.py","--datasets",…)` vs 执行侧 `("python","-m","scripts.run_visualization_benchmarks","--datasets",…)` | **高**：⇒ **即便 agent 把活全干完了，`_deterministic_completion` 也会判这些步骤"未完成"** ⇒ 恒判 INCOMPLETE、烧满 20 轮。**R-S7-61 的严重度从"待观测"升为"已知必然触发"** | ①**R-S7-61 升级为与 R-S7-59 并列的头号风险**，缓解措施从"事后观测"改为「**T-7-6 的 WARNING 日志必须实现（不是可选）**」+「**T-7-9 判读时它是首要嫌疑**」；②**处置方向仍不放宽归一**（`sh` vs `bash`、`-m` vs 脚本路径都是"两条命令确实不同"，模糊匹配会把假绿放回来）——**首选出口是 R-S7-61 回退列里那条：回 coding 时把「计划期望 X、你实际跑了 Y」作为可读反馈交给 coder，让计划与执行收敛到同一种写法**；③**另一条更根本的出口留给下批**：`python scripts/x.py` 跑不通而 `python -m scripts.x` 才跑得通，本身说明**计划写的命令形态与代码布局不匹配**——那是 planning / coding 的契约问题，不是 execution 判定层该兜的（**本批不扩围，登记为跨节点 TODO**） | ⚠ **2026-08-01 复审后处置全变**：随 §49.0 变更 1（完成度改采信自报 `step_index`、不再比对命令字符串），**本条揭示的写法差异不再影响判定** ⇒ **R-S7-61 作废**。本条物证本身仍属实且有价值——它现在的用途是 **`_audit_declared_steps` 的正向观测样例**（CP-7.5-3 第③格：`-m` 形态重跑必须打出 WARNING，属设计内命中而非缺陷）。|
+| **P-46（★★ 方案变更留档，2026-08-01 Maria 复审后补）** | 本 dev-plan 首版按架构 Q-S7-25 裁决，新写确定性完成度算法 `_deterministic_completion`（命令字符串归一比对），理由是"`step_reconciliation` 用 agent 自报的 `step_index`，可被绕过"（§48 P-24） | **Maria 复审推翻**：拿本表 §56.1 的存档两轮对账实测——round_0 `executed=8 / completed=3 / success=False`、round_1 `executed=2 / completed=2 / success=True` ⇒ **agent 首轮诚实声明了 8/9 步，根本没有虚报**。"可被绕过"是理论缺口，不是正在发生的事实；而为它新写一套字符串匹配算法，**反而把 P-45 那个真实存在的写法差异变成系统性假红** | **高（正面）**：删掉一整块最难写、风险最高的代码（原 T-7-5 的 8 个 CP 缩为 5 个），**同时消灭 R-S7-61 与 3 条 schema 债**；代价是把"自报可信"升为一条产品级假设（**R-S7-65**） | ①§49.0 记方案变更全文；②删 §49.2 原第 5/7 条、删 4 条相关红线、删 T-7-5 的算法产出与 CP-7.5-1~5 原内容；③**R-S7-61 作废、新增 R-S7-65**；④新增 `_audit_declared_steps` 防伪留痕作为 R-S7-65 的对冲（Maria 明令设计判据）；⑤影响面 9 条 → **6 条** |
+
+### 56.1 第三次 UMAP 真跑现场取证表（T-S7-7-1 / CP-7.1-2，**先存证后覆盖**）
+
+> 磁盘上的 `workspace/1802.03426/` 会被下一次真跑覆盖。**S7-08 与本次都已因运行期 checkpoint db 落在临时目录而丢过证据**（§48 P-26 / §56 P-38）。本表使得"跑了下一次就没了"这条风险解除。
+> **取证时间**：2026-08-01。**跑靶**：arXiv:1802.03426（UMAP）。**对应提交**：HEAD `c480990`（S7-10 交付）。
+
+**文件指纹**
+
+| 文件 | 字节数 | `sha256[:16]` |
+|---|---|---|
+| `workspace/1802.03426/report.md` | 15811 | `8a2c5398fa1a8668` |
+| `workspace/1802.03426/code/exec_logs/round_0.log` | 36255 | `cc603cb92b7b3abb` |
+| `workspace/1802.03426/code/exec_logs/round_1.log` | 693 | `5c92d5d435d3bf2a` |
+
+**`report.md` 关键行（逐字）**
+
+| 行 | 原文 |
+|---|---|
+| `:5` | `- 报告形态: \`full_success\`` |
+| `:14` | `> ⚠️ 计划步骤未全部执行完成（已完成 2/9 步），详见"步骤对账"节。` |
+| `:26` | `> ☑️ **代码跑通（工程复现），论文实验结论未验证**：…` |
+| `:28` | `> 判定口径（B 档）：执行退出码正常且至少解析出 1 个指标即视为代码跑通。…` |
+| `:47` | `- 已完成 2/9 步（计划 9 步，可归属执行 2 步；"已完成"= 该步归属的全部命令均成功退出）。` |
+| `:49-56` | 未执行的计划步骤 **7 条**：第 1 步 安装官方参考仓库 / 第 2 步 安装复现实验依赖 / 第 3 步 检查 UMAP 可导入 / 第 4 步 下载并缓存基础数据集 / 第 5 步 运行二维可视化复现实验 / 第 6 步 运行 kNN accuracy 对比实验 / 第 7 步 运行运行时间统计 |
+| `:63/:65` | `\| \`best_knn_accuracy\` \| — \| 0.8303 \|` ／ `\| \`visualization_runs\` \| — \| 20 \|` |
+| `:170` | `- 执行总耗时（runtime）: 0.243 秒` |
+
+**`round_0.log` 步骤表（17 条，5 条失败；★ 即 P-45 的物证）**
+
+| step# | exit | 命令形态（`<venv-py>` = `…/code/.venv/bin/python`） |
+|---|---|---|
+| 0 / 1 | 0 / 0 | `<venv-py> -m …`（环境准备） |
+| 2 | 0 | `<venv-py> -c …`（探针） |
+| **3** | **1** | `<venv-py> scripts/prepare_datasets.py …` |
+| 4~7 | 0 | `<venv-py> -c …`（探针 ×4） |
+| **8** | **0** | `<venv-py> -m scripts.prepare_datasets --datasets PenDigits MNIST F-MNIST COIL-20 --output_dir outputs/data_cache` |
+| **9** | **1** | `<venv-py> scripts/run_visualization_benchmarks.py --datasets … --methods UMAP TSNE PCA Isomap LaplacianEigenmaps --embedding_dim 2 --output_dir outputs/visualization` |
+| **10** | **0** | `<venv-py> -m scripts.run_visualization_benchmarks --datasets … --output_dir outputs/visualization` |
+| **11** | **1** | `<venv-py> scripts/run_knn_evaluation.py --datasets … --k_values 10 20 40 80 160 --output_dir outputs/knn_eval` |
+| 12 | 0 | `<venv-py> -m scripts.run_knn_evaluation …` |
+| **13** | **1** | `<venv-py> scripts/run_runtime_benchmarks.py …` |
+| 14 | 0 | `<venv-py> -m scripts.run_runtime_benchmarks …` |
+| **15** | **1** | `<venv-py> scripts/summarize_results.py …` |
+| 16 | 0 | `<venv-py> -m scripts.summarize_results …` |
+
+> ★ **规律逐条成立**：5 次失败**全部是 `python scripts/<name>.py` 形态**，紧随其后成功的**全部是 `python -m scripts.<name>` 形态**。这就是 **P-45 / R-S7-61** 的物证——**计划写的形态与实际跑通的形态不同，归一后不相等**。
+
+**`round_1.log` 全文（693 字节，逐字）**
+
+```
+[step#0 exit=0 timed_out=False cmd=<venv-py> -m scripts.summarize_results --visualization_dir outputs/visualization --knn_dir outputs/knn_eval --runtime_dir outputs/runtime --output_dir outputs/summary]
+[stdout]
+<METRICS>{"best_knn_accuracy": 0.8302814666666667, "fastest_runtime_sec": 0.07277125000000001, "visualization_runs": 20}</METRICS>
+
+
+[step#1 exit=0 timed_out=False cmd=<venv-py> -m py_compile scripts/prepare_datasets.py scripts/run_visualization_benchmarks.py scripts/run_knn_evaluation.py scripts/run_runtime_benchmarks.py scripts/summarize_results.py]
+```
+
+**`outputs/` 子目录 mtime（证明 round_1 的"成功指标"源自 round_0 产物）**
+
+| 目录 | mtime |
+|---|---|
+| `outputs/data_cache` | `2026-08-01 03:04:51` |
+| `outputs/visualization` | `2026-08-01 03:06:42` |
+| `outputs/knn_eval` | `2026-08-01 03:08:34` |
+| `outputs/runtime` | `2026-08-01 03:10:20` |
+| `outputs/summary` | `2026-08-01 03:10:37` |
+
+> `round_1.log` 的 mtime 为 `2026-08-01 03:12`、`report.md` 为 `03:12:04`。⇒ **round_1 只做了两件事：汇总已有产物 + 语法检查**，那个 `best_knn_accuracy=0.8303` 是 round_0 干出来的活。**这就是"做 2 件事比做 17 件事更容易被判成功"的完整链条。**
+
+### 56.2 受影响既有用例逐条定性表（T-S7-7-2 / CP-7.2-3 的对照基准；**已按 §49.0 变更 1 订正为 6 条**）
+
+> **⚠ 本表是 dev-plan 落盘时用非侵入探针预跑的结论，供 T-7-2 对照复核，不替代该任务。** 探针只落 `/tmp`（`pytest_configure` 钩子内 monkeypatch `_build_execution_result`），**仓库零触碰**。
+> **基线**：`2287 passed / 25 skipped / 58 deselected`（61.71s）。**本批真实口径 = 原变体 A**（`step_reconciliation.completed < planned` 收严 success）→ **6 failed**。
+> **⚠ 订正说明**：首版按"新增 `completion` 键"口径算出 9 条（6 夹具债 + 3 schema 债）。随 §49.0 变更 1 **不再新增任何键** ⇒ **3 条 schema 债全部消失**（`test_cp_e3_5_coding_digest_consumes_failure_contract` / `test_cp_2_6_4_main_constructor_all_new_keys` / `test_cp_2_6_4_degraded_path_all_new_keys` 三条**不受影响**）。
+
+| # | 用例 | 定性 | 根因 | 改法（**只准更严的正确值**） |
+|---|---|---|---|---|
+| 1 | `test_sprint4_e3.py::test_cp_e3_1_deduction_rounds_plus_metric_calls` | **夹具债** | `_run()` helper（`:102-112`）写死 `command=["python","x.py"]`，而计划步骤（`:130`）是 `{"command": "python train.py"}`；且假 run 不带 `step_ledger` 自报 ⇒ **规则①②都归属不上** | 让假 run 的 argv 与计划步骤自洽（给 `_run()` 加 `command` 形参，或把计划步骤改成 `python x.py`）。**断言 `success is True` 一字不动** |
+| 2 | `test_sprint4_e3.py::test_cp_e3_1_deduction_rounds_only_no_metric_call` | **夹具债** | 同上 | 同上 |
+| 3 | `test_sprint4_e3.py::test_cp_e3_3_success_from_real_exit_codes_and_metrics` | **夹具债** | 同上（两条 run 都是 `["python","x.py"]`） | 同上 |
+| 4 | `test_sprint4_e4_regression_gate.py::test_le401_fix_credential_inline_retry_success_single_round` | **夹具债** | 计划两步（`:104` `python prep_data.py` + 另一条），假 run argv 与之不自洽 | 同 #1 |
+| 5 | `test_sprint4_e4_regression_gate.py::test_le401_fix_inline_retry_without_interrupt_success` | **夹具债** | 同上（L-E4-01 的 effective-runs 语义**不受影响**，红的是完成度不是去重） | 同 #1。⚠ **不得因此改 `_effective_runs`** |
+| 6 | `test_sprint4_e2e.py::test_cp_g2_2_sentinel_zero_plaintext_in_code_report_caplog` | **夹具债** | 哨兵链 e2e 里 `assert obs["final_next"] == ()`（成功闭环到 END）依赖 `success=True`；场景内假 run 与计划步骤不自洽 | 同 #1（把场景里的执行命令补齐到覆盖计划步骤）。**"零明文"那批断言与本批无关，一字不动** |
+
+> **判定债 0 条、schema 债 0 条。** 若 T-7-2 实测出判定债，**回头改判定，不许改测试**。
+> **另有 3 处 `==` 数字断言会撞红**（`tests/test_s708_user_text_guard.py:122-124`）：`EXPECTED_TERM_LABELS_N` / `EXPECTED_CONSTANTS_N` / `EXPECTED_N`。**那是设计目的（新增用户可见文案必须过一次评审），不计入意外影响面**，账目改法见 CP-7.7-6。
+
+---
+
+### 56.3 S7-11 实施留痕（T-7-3 ~ T-7-8 收口，2026-08-01；**凡与本文规格有出入的一律如实登记**）
+
+**P-47（★ 设计项被实施撤回：标注析取项撞上既有 R-2 契约）**
+§49.2 第 9 条 (b) 原定给 `incomplete_execution` 标注补一条「`planned > 0 ∧ completed < planned`」析取项，理由是 `attribution_unavailable` 时 `unexecuted_steps` 被置空会出现"结论说没跑完、横幅不印"的反向矛盾。**实施时改完当场撞红两条既有用例**：`tests/test_sprint5_t33_conclusion.py::test_cp_3_3_2_attribution_unavailable_does_not_trigger` 与 `tests/test_sprint5_t34_report_render.py::test_cp_3_4_3_attribution_unavailable_honest_raw_commands`。复核后确认：**「归属不可用时不打未执行标注」是既有产品契约**（R-2 保守语义，`_reconcile_steps` docstring 与 `_determine_conclusion` docstring 双处明写，两条用例守着）。
+⇒ **撤回该设计项，标注条件一字不改**。推导：`exit_ok` 为真时全部 run 都是 exit 0，"某步未完成"等价于"该步一条命令都没跑"⇒ **归属可用时 `completed < planned` 与 `unexecuted_steps` 非空完全等价**，那条析取项**唯一新增的就是 attribution_unavailable 那一格**，而那一格正是既有契约明令不标注的。⇒ 撤回后既无功能损失、也不破红线。配套删除：横幅的"R-2 不印 0/N"例外分支（annotation 不点火则该分支不可达，留着是死代码）、`_plan_steps_unfinished` 辅助函数、**CP-7.7-3 / CP-7.7-4 两个检查点作废**（对应现象不再存在）。⚠ **判定层不受影响**：`attribution_unavailable` 时 `completed=0 < planned` 仍判不成功（§49.2 第 5(d) 条不变）。
+
+**P-48（★ 提示词字节门实际有两道，本文只登记了一道）**
+§49.2 第 10 条与 §48.1 只提到 `tests/test_sprint5_t14_execution_prompt.py::test_cp_6_2_1_execution_prompt_body_byte_baseline`。**实测还有第二道写死同一哈希的门**：`tests/test_sprint7_s710_exec_locality.py::test_cp_6_6_7_execution_prompt_hash_untouched_by_tool_layer_change`（S7-10 建的"改动没溢出到冻结区"门）。改 prompt 后**两道同时红**，两处基线均已更新为 `c73e1e6e3cfc1280` 并补写变更原因。⇒ **哈希三件套须改为"四件套"**：重算 + **两处写死** + §48.1 留档 + 验红。**日后改 execution 冻结区者必看这一条。**
+
+**P-49（影响面：预测的 6 条全中，但另有 3 处账目门未被预测）**
+§56.2 预测的 **6 条夹具债逐条命中、无一多余无一遗漏**（3 个文件），**判定债 0 条、schema 债 0 条**，与订正后的清单完全吻合。⚠ **另有 3 处"账目/覆盖面"断言撞红，§56.2 未预测**（探针只 monkeypatch 了 `_build_execution_result`，扫不到枚举与文案的覆盖面）：
+①`tests/test_sprint3_c3.py::test_cp_c3_1_importable_and_local_objects`（`AUTO_FIXABLE` 精确集合）；②`tests/test_sprint5_t35_term_map.py::test_cp351_covers_error_category_enum_plus_degraded_literal`（term_map 必须覆盖全部 `ErrorCategory`）；③`tests/test_sprint7_s708_reporting_scale.py::test_cp_5_9_5_...`（`len(TERM_LABELS)` 写死 42）。**三条都是"新增枚举/文案必须过一次评审"的设计目的，不是意外影响面**，处置同术语守门（同步为更严的正确值，`==` 形态一字不动）。**方法论教训**：非侵入探针能测出行为影响面，**测不出账目类守门**——下次做影响面评估时必须人工补一遍"新增枚举 / 新增用户可见文案会撞哪些计数断言"。
+
+**P-50（术语守门账目实际是 43 / 15 / 58，本文写的 43 / 13 / 56 是最小值）**
+§49.2 第 9(c) 条与 CP-7.7-6 给的是"至少 +1 常量"的最小值。**实测提了 3 个常量**：`reporting._SUCCESS_CRITERIA_NOTE` + `execution._INCOMPLETE_EXECUTION_SUMMARY_LEAD` / `_INCOMPLETE_EXECUTION_FIX_HINT`（后两条是改判文案，经 `fix_loop_history` 直达 UI 修复历程条，按红线必须进守门）⇒ `EXPECTED_TERM_LABELS_N` 42→**43**、`EXPECTED_CONSTANTS_N` 12→**15**、`EXPECTED_N` 54→**58**。**本文原文按"最小值、按实际结算"写，故不算出入，此处只登记实际值。**
+
+**P-51（★ CP-7.6-3 的验红手法在本文里是错的）**
+本文 CP-7.6-3 写"**把 `INCOMPLETE_EXECUTION` 从 `AUTO_FIXABLE` 摘掉 → 路由落 interrupt#2**"。**实测：摘掉后路由断言仍然绿**——因为 `_apply_incomplete_execution` 是**显式**传 `auto_fixable=True` 构造 `ExecutionFeedback` 的，路由读的是这个实例字段，不查集合。`AUTO_FIXABLE` 真正影响的是另外两处：`_map_category_to_error_type`（transient/permanent）与 `_feedback_from_committed_result`（guard 重入 round-trip）——摘掉后**这两处确实红**（实测 3 条红）。
+⇒ **能真正证明"没有 D 就会打断用户"的改坏方式是把 `auto_fixable=True` 改成 `False`**。已按此实做：路由断言由 `retry_coding` 翻转为 **`await_dev_loop_interrupt`**（即 interrupt#2），`test_da_9_all_four_fixes_landed_together` 报"修法 D 未落地"，共 3 条红。**这条红是"只上 C 不上 D 会把设计意图落反"的活体证明**（P-42 由推理升级为实证）。
+
+**P-52（CP-7.6-4 未实做）**：撞 `MAX_FIX_LOOP_COUNT` 上限走两段式 interrupt#2 的用例**本批未新增**（既有 sp4/sp5 用例覆盖的是别的分类走同一条路径，未针对新分类构造）。**如实登记为未完成检查点**，不勾选。
+
+**P-53（⚠ 环境事故与并发占用，须知悉）**
+①**主控在验红时误用 `git checkout core/nodes/execution.py` 做还原，把当时未提交的全部改动一次性冲掉**——不仅是本批的，还包括**并发运行的 S7-12 代理写在同一文件里的 shell 元字符拒绝块**。已按编辑记录逐条重建并逐项校验（prompt 哈希复算回到 `c73e1e6e3cfc1280`、S7-12 的 101 用例复绿）。**教训写死：验红还原一律用 `cp` 文件级备份 + `sha256` 校验，`git checkout` 在多代理共享工作区里是破坏性操作。**
+②**本批实施期间 `core/plan_checks.py` / `tests/test_sprint7_s712_shell_metachars.py` 由并发的 S7-12 代理持续改动**（时间戳 08:04 / 08:05），期间该文件一度 5 条红——**与本批无关**（已用"我方三个生产文件全部回退到 HEAD 后错误依旧"验证）。⇒ 本批的回归数字须**按时间点读**，见下方账目。
+
+**回归账目（逐条对平，无余数）**
+| 口径 | 数字 | 构成 |
+|---|---|---|
+| 开工基线（08:40 前，S7-12 测试文件尚未落盘） | **2287 passed / 25 skipped / 58 deselected** | 与主控给的基线逐字相符 |
+| 本批收口（排除并发代理的文件） | **2336 passed** | 2287 + **49**（`test_sprint7_s711_completion.py` 新增）= 2336，**无余数** |
+| 本批收口（全量，含并发代理已收口的 S7-12） | **2445 passed / 25 skipped / 58 deselected / 7 xfailed / 0 failed** | 2336 + 109（S7-12 代理的新文件）= 2445 |
+| `-m browser` | **12 passed** | 与基线一致，未加任何 retry |
+| `mypy` | **27 files，0 error**（`Success: no issues found in 27 source files`） | ⚠ 过程留档：一度报 `core/graph.py:189`（`add_node("paper_analysis", ...)` 无匹配重载）。先用"把本批三个生产文件全部回退到 HEAD 后错误依旧复现"证明**非本批引入**，再按 S7-12 TODO 条目记过的同址同款线索 `rm -rf .mypy_cache` → **消失**。⇒ **陈旧缓存误报，`core/graph.py` 零改动红线未破**。**教训：mypy 结论落档前先清一次缓存。** |
+
+**五道命门验红总账（每道均"改坏→红→`cp` 还原→`sha256` 校验→复绿"）**
+| 命门 | 改坏方式 | 红的条数 | 报错原文摘要 |
+|---|---|---|---|
+| ① 完成度合取项 | 删掉 `success` 里的 `and not _completion_insufficient(...)` | **6** | `修法 C 未落地` / 四格真值表 `assert True is False` / 路由断言 `KeyError: 'fix_loop_history'` |
+| ② 单点谓词 | 把 `success` 处换成内联比较（绕过谓词） | **1** | 打桩后只有 feedback 翻转、`success` 不翻：`assert True is not True` |
+| ③ 冻结区字节门 | 改 prompt 那一刻（**两道门同时红**） | **2** | `execution prompt 主体字节已变更（当前：c73e1e6e3cfc1280，基线：f82f3938cf31f882）` |
+| ③b 字节门复验 | 更新基线后主体内插一个空格 | **2** | `当前：421761ac1165dedd` |
+| ④ 改判路由（D） | `_apply_incomplete_execution` 的 `auto_fixable` 置 `False` | **3** | `assert 'await_dev_loop_interrupt' == 'retry_coding'` / `修法 D 未落地` |
+| ④b `AUTO_FIXABLE` 摘除 | 从集合里删掉新枚举 | **3** | 三处映射点：`_map_category_to_error_type` 非 transient + guard round-trip `auto_fixable` 为假 + 集合精确断言 |
+| ⑤ 术语守门 | `_GUARDED_CONSTANTS` 去掉一条 | **3** | `实际 14 条，EXPECTED_CONSTANTS_N=15` / `本次实际扫描 57 条，期望 58 条` |
+| 附 优先级靠顺序 | 把 `_apply_incomplete_execution` 挪到 `_apply_no_metrics` 之后 | **1** | 第三格由 INCOMPLETE 变 NO_METRICS |
+| 附 纯观测红线 | 把留痕函数的结论接进 `success` | **1** | `留痕结论绝不得影响 success` |
+
+**禁弱化自查（CP-7.8-2）**：本批改动的 4 个既有测试文件 `git diff` 中 **`>=` / `issubset` / `pytest.skip` / `xfail` / 删除断言 零新增**。唯一一处"断言对象"调整是 `test_sprint4_e2e.py` 里那条 `exit=128` 证据断言——由"每个含哨兵的历史帧都要有失败证据"改为"**exec#1 那一帧**要有"，理由：S7-11 起修复回合按计划全量重跑，exec#2 也会重跑 fetch（这次 exit=0，凭证已到手）⇒ 它同样含哨兵原文但**本就没有失败证据**。**订正的是断言的对象、不是断言的强度**（mask 阳性对照仍对每一帧成立，逐帧断言一字未动）。
+
+---
+
+*（S7-11 增补完（**2026-08-01 Maria 复审后已全面订正，见 §49.0**）：§49 概述（编号说明 / **§49.0 方案变更** / 需求目标 / 方案要点（含**第四层根因**与**采信自报 + 防伪留痕**） / 红线 / 前置事实 22 条亲验 / 关键风险）+ §50 任务总表（**9 任务 51 CP，~25h**）+ §51 批次划分 / 依赖图 / 顺序理由 / **单收口窗口** / 容量裁剪线 + §52 批次 7 任务详细规格 T-S7-7-1~9（含 CP 与**逐条验红要求**）+ §53 风险登记（**R-S7-59~65；R-S7-61 已作废、R-S7-65 新增**）+ §54 纪律汇总 + §55 CP 索引 / 编号速查 / DA 映射 / 交付物清单 + §56 落点勘误留档（**P-36~P-46**，其中 **P-42 第四层根因（路由死路）/ P-44 反向激励铁证 / P-46 方案变更留档** 三条为实质性）+ §56.1 **真跑现场取证表** + §56.2 **受影响用例逐条定性表（订正为 6 条）**。本增补不覆盖 §1~§48.4 既有内容。*
+*⚠ **本批与 S7-10 一样尚无 PRD 章节与架构章节**（Maria 2026-08-01 明确本批不走 PRD）。设计依据 = **Maria 两次拍板（2026-08-01 立项 + 同日复审变更）** + 架构师两轮裁决（Q-S7-25~31，**其中 Q-S7-25 的完成度算法部分已被 Maria 复审推翻**）⇒ 验收点用 **`DA-S7-11-N`**，不占用 `AC-S7-*` 号段。*
+*⚠ **与 S7-10 PRD §12（AC-S7-44~55）的核对结论：零冲突**。本批只在 execution 提示词内**新增**纪律并收窄纪律 4/5 的措辞，AC-S7-46 点名必须保留的三处（"不得写入或修改任何代码文件" / "交回代码生成环节修复" / "cd（限工作区内）"）与必须缺席的一处（"修正相对路径"）**全部原样维持**；AC-S7-51 的字节基线走三件套更新（属该 AC 明文要求的流程）；AC-S7-49 的术语守门 `==` 形态不放宽、只上调计数。*
+*⚠ **T-S7-7-9 真跑须 Maria 单独授权具体动作、严禁预授权**；批次边界逐批确认制照旧。*
+
+## 57. S7-12 概述（沙箱不认的 shell 元字符：把「悄悄不生效」改成「明说不支持」）
+
+> **⚠ 编号说明（务必先读）**：**S7-09** 已被占用（`docs/TODO.md:602` + `docs/sprint7/prd.md` §11「只读环境探测命令白名单放开」）；**S7-10** = 批次 6，已交付并 commit（HEAD `c480990`）；**S7-11** = 批次 7，计划已落本文件 §49~§56（2026-08-01 落盘，**尚未开工**，`core/` 零改动）。⇒ 本批取 **S7-12**、**批次 8**、任务号 **T-S7-8-N**（第二段是**批次号**不是需求号，批次 0~7 已用满）、检查点 **CP-8.x-y**、章节 **§57~§59**。
+>
+> **⚠ 本批不走 PRD**（Maria 2026-08-01 明确）：这是**主控代码审读挖出的纯缺陷修复**，按项目铁律纯 bug 修复可直接改。⇒ 验收点用 **`DA-S7-12-N`**，不占用 `AC-S7-*` 号段（与 S7-10 / S7-11 同款处置）。
+>
+> **⚠ 与批次 7 的文件撞车预告**：本批改 `core/nodes/execution.py`（函数体，`run_in_sandbox` 早退区），而 §51.4 给批次 7 立了 `execution.py` **单收口窗口**。本批先落地 ⇒ **批次 7 开工时须重新核对 §49.4 里所有 `execution.py` 行号**（本批在 `run_in_sandbox` 内净增约 10 行，其后所有行号下移）。两批改的函数不重叠（本批只碰 `make_run_in_sandbox_tool` 内的早退区，批次 7 碰 `_build_execution_result` / `_reconcile_steps` / 路由与 prompt 主体），**语义零冲突**。
+>
+> **本节及以下 §58~§59 为纯追加**，不覆盖 §1~§56.2 任何既有内容。
+
+### 57.1 需求目标（一句话）
+
+项目全局禁 `shell=True`，`core/nodes/execution.py:579` 的 `_split_top_level` 自己实现了一层**迷你 shell 解析**，**只认 `&&` 和 `;`**（外加 `cd` / `source` / glob / 裸 python·pip 改写）；**其余 shell 元字符（`>` `>>` `|` `2>&1` …）被静默当成普通 argv token 传给程序** ⇒ 一条**实际什么都没干成**的命令能以 **`exit_code=0`** 收场。本批把它从「**悄悄不工作**」改成「**明说不工作 + 告诉 agent 该怎么写**」——**识别后【拒绝】，不是识别后【支持】**。
+
+### 57.2 方案要点（Maria 2026-08-01 拍板，本批不重新决策）
+
+1. **危害是可靠性，不是安全**：没有 shell，这些字符是**哑弹**，零越界风险。真正的三条危害是——
+   ① **假 `exit_code=0` 污染成功判定链**（`execution.py:1882-1883` `exit_ok = prep_ok and all(r.exit_code == 0 for r in _effective_runs(run_results))`）：一条没干成事的命令被记成"这步通过了"；
+   ② **错误信号错位、毒害修复循环**：真因在第 3 步的 `>` 没生效，报错却发生在第 5 步的 `FileNotFoundError: train.log`，coder 会去查训练脚本而**永远查不到真因**——与项目已记录的「`No module named 'src'` 修复循环跑满 4 轮不自愈」同病；
+   ③ **agent 学不到教训**：返回 0 是正反馈，LLM 下次还这么写。
+2. **对照组说明为什么"拒绝"是对的**：shell **内建**命令（`export` 等）反而是**好的**——磁盘上无此程序，`_run_subprocess`（`sandbox/local_venv.py:358`，`:393-405` `except OSError`）兜底成 `exit_code=-1` + 明确 stderr，agent 能自己改。**本批就是把元字符这一类拉齐到内建命令这个水平。**
+3. **严禁去实现管道 / 重定向语义**（三条理由，不重开）：①那等于自己写一个完整 shell，**正是当初禁 `shell=True` 要逃离的东西**；②每支持一个就多一个越界面（`> /etc/passwd` 又得补路径校验）；③边界无穷（`>` `>>` `2>&1` `&>` `<<EOF` `|&` 支持不完）。
+4. **这不是"新增禁令"**：这些语法**现在就已经不工作了**。改动只是把静默失效变成显式失败，**功能上零变化**。
+5. **谓词落 `core/plan_checks.py`，与 `is_inline_code_write`（`:211`）做邻居**：同文件同风格、`core/` 顶层零项目内依赖（只 import `shlex` / `pathlib` / `typing`）⇒ 被 `core.nodes.execution` 与 `core.tools.run_command_tool` 双向 import **均不成环**。该文件的「零改动红线」**已在 S7-10 批次解除**（§41.2 第 4 条 + CP-6.5-8，Maria 2026-07-31 拍板），本批已上磁盘复核确认。
+6. **两个消费点都要接**：
+   - `core/nodes/execution.py::run_in_sandbox`（S7-10 内联写码硬拦截的**同一处早退区**）；
+   - `core/tools/run_command_tool.py::run_command` —— **它有完全相同的 bug**。docstring（`:79-80`）虽写了"管道 / 重定向 / && 等 shell 语法不可用"，代码（`:87`）同样 `shlex.split` 后直跑。**光靠 docstring 约束不住 LLM**，项目在 `RUN_COMMAND_TIMEOUT` 那里已吃过这个教训（结论是"**用机制封顶，不靠 docstring**"，见 `run_command_tool.py:12-14`）。
+7. **早退位置是硬要求**：`run_in_sandbox` 内必须放在写 `collector.run_results` / `collector.step_ledger` **之前**（现文件 `:1010-1014`），照抄 `is_inline_code_write` 那条早退的纪律（`:970-986` 注释已写明理由）——否则**这条防线会自己制造假绿**（污染 `exit_ok`、被步骤对账当成"完成"，即 R-S7-49 那类）。
+8. **匹配方式：整个 token 精确相等，不做子串 / 前缀匹配**。实测依据：`python -c "print(1>2)"` 经 `shlex.split` 后 `print(1>2)` 是**一整个 token**、不含裸 `>` ⇒ 精确相等零误伤；换成子串匹配当场打死这条完全合法的探针。
+9. **误判优先级：宁可漏判，不可误伤**。漏判 = 回到现状（**无损**），误伤 = 挡住合法复现命令（**有损**）。覆盖常见变体即可，**不为追求全覆盖引入模糊匹配**。
+10. **拒绝提示语必须通俗中文 + 可行动**：告诉 agent「该怎么做」而不只是「不能怎么做」。**这是本次改动净收益还是净损失的决定因素**——提示语烂会导致 agent 反复撞墙，比静默走偏更糟。关键事实（已上磁盘核实）：**stdout/stderr 本来就被自动完整捕获**——`run_in_sandbox` 侧逐条返回 `stdout_tail` / `stderr_tail`（`execution.py:832-847` `_run_result_to_payload`）**且每轮完整落盘**到 `<code_output_dir>/exec_logs/round_{N}.log`（`:1815 _persist_round_log` + `:1769 _EXEC_LOGS_SUBDIR`，内容是 `_build_error_first_log` 的**未截断原文**）；`run_command` 侧同样把 `stdout_tail` / `stderr_tail` 直接返回给 agent（`run_command_tool.py:121-132`）。⇒ **agent 用 `>` 是在重复造一个已存在、且被它造坏了的轮子**，提示语必须把这一点讲明白。
+
+### 57.3 红线（本批任一动作不得破）
+
+- **严禁实现管道 / 重定向 / heredoc 的任何语义**（§57.2 第 3 条）。识别后只能拒绝。
+- **严禁过度设计**：**一个常量集合 + 一个谓词函数 + 两处调用，就是全部**。**不引入配置项、不做多级分类枚举、不加开关、不加计数器、不加白名单机制**（Maria 最小设计纪律）。
+- **不做子串 / 前缀 / 正则模糊匹配**，只做整 token 精确相等。
+- **不覆盖 `&&` 与 `;`**：`run_in_sandbox` **真支持**它们（`_split_top_level` 拆成子命令），拒了会当场打死正常复合命令；`run_command` 侧确实不支持，但那是**另一件事**且失败可见（不构成本批要治的"假 exit 0"），**本批不扩围**。
+- **两处冻结区 prompt 一字不动**：`_PLANNING_SYSTEM_PROMPT_BODY`（`a7cad88cdb205c5f`）与 `_EXECUTION_SYSTEM_PROMPT_BODY`（`f82f3938cf31f882`）两道字节门必须**原样绿**。本批**不需要**改 prompt——execution 主体（`execution.py:1043`）只承诺"**支持顶层 && / ; 复合与 cd（限工作区内）**"，**从未授权重定向 / 管道** ⇒ **不存在"prompt 说可以、工具说不行"的矛盾**（R-S7-48 那个诱因在本批天然不成立）。
+- **不动执行通道本身**：`_split_top_level` / `_step_to_command` / `_run_step_subcommands` / `_resolve_cd` / `_rewrite_interpreter` / `_expand_globs` **一字不改**；`sandbox/local_venv.py` 零改动。
+- **不改 `core/graph.py` / `core/state.py` / `core/nodes/planning.py` / `coding.py` / `reporting.py` / `resource_scout.py` / `ui/`**：收口 `git diff` 逐一为空。
+- **新增测试不是本批的活**（Maria 2026-08-01 指定交测试工程师补测）。为自证正确性写的临时脚本只落 `/tmp`，**不得留在 `tests/` 下**。
+- **不 `git commit`、不 `git push`**（主控统一收口）；**不跑真实端到端**（耗 deepxiv 配额，须 Maria 单独授权具体动作）；**不设 `LANGSMITH_TRACING_IN_TESTS=1`**、不绕过 `tests/conftest.py:42` 的 LangSmith 屏蔽（免费额度 5000 条/月，2026-07-30 已被回归测试烧穿过一次）。
+
+### 57.4 前置事实（本节逐条上磁盘 Read / **实跑**核实，2026-08-01）
+
+1. **缺陷实跑复现，属实**（`.venv/bin/python` 实算）：
+   `_split_top_level('python train.py > train.log')` → `[(['python','train.py','>','train.log'], '')]`；
+   `_split_top_level('python train.py 2>&1 | tee log.txt')` → `[(['python','train.py','2>&1','|','tee','log.txt'], '')]`；
+   `_split_top_level('cat f.txt | head -3')` → `[(['cat','f.txt','|','head','-3'], '')]`。
+   **元字符全部原样进 argv。**
+2. **"假成功"实跑坐实**：`subprocess.run(['echo','hi','>','f.txt'], cwd=<tmpdir>)` → `returncode=0`、`stdout='hi > f.txt\n'`、**`os.listdir(tmpdir) == []`**（`f.txt` 根本没创建）。⇒ 一条没干成事的命令拿到 `exit_code=0`，被 `:1882` 的 `exit_ok` 计入。
+3. **精确相等不误伤，实跑坐实**：`_split_top_level('python -c "print(1>2)"')` → `[(['python','-c','print(1>2)'], '')]` ⇒ `print(1>2)` 是**一整个 token**，与集合内任何元素都不相等。
+4. **`&&` 确实被消费掉，属实**：`_split_top_level('python a.py && python b.py')` → 两条子命令、connector 为 `'&&'`（`execution.py:600-605`）⇒ `&&` **不会**以 token 形态出现在 `run_in_sandbox` 的判定输入里；`run_command` 侧（纯 `shlex.split`）则会 —— 这正是**不把 `&&` 收进集合**的理由。
+5. **早退范式与写台账的位置**（现文件行号，S7-10 之后已下移）：`run_in_sandbox` 定义在 `:942`；三处早退（无 venv `:966`、内联写码 `:984`、异常兜底 `:998`/`:1006`）**全部在 `:1010 collector.run_results.extend(results)` 与 `:1011-1014 collector.step_ledger.append(...)` 之前**。
+6. **`run_command` 同款缺陷，属实**：`core/tools/run_command_tool.py:87` `argv = shlex.split(command)` → `:110` `_run_subprocess(argv, ...)`，中间只有"空命令"与"cwd 越界"两道校验，**对元字符零处置**；docstring `:79-80` 写的"不可用"**没有任何机制在守**。
+7. **`plan_checks` 零依赖，属实**：`core/plan_checks.py:22-26` 只 import `annotations` / `shlex` / `PurePosixPath` / `typing`，**零项目内 import** ⇒ 双向被 import 不成环（`execution.py:63` 已 `from core.plan_checks import is_inline_code_write`，本批新增 `run_command_tool` 侧同款单向依赖）。
+8. **`plan_checks` 在 mypy strict 档，属实**：`mypy.ini` 的 `[strict 档]` 明列 `core.plan_checks`，`disallow_untyped_defs` + `disallow_incomplete_defs` + `warn_return_any` 全开 ⇒ **新增函数必须全签名标注，且不得靠加豁免蒙混**。
+9. **术语守门是 opt-in 白名单，不会被本批连带打红**：`tests/test_s708_user_text_guard.py:95-109` 的 `_GUARDED_CONSTANTS` 是**显式 12 条列表**（非全模块自动扫描），`EXPECTED_CONSTANTS_N=12` / `EXPECTED_N=54`。本批新增的拒绝文案是**给模型看的**（与 `_INLINE_CODE_WRITE_REJECTION` 同类，`execution.py:769-771` 已立此口径），**不入守门面、三个 `==` 数字一个不动**。
+10. **输出本来就被完整捕获，属实**：`_persist_round_log`（`:1815-1852`）每轮把 `_build_error_first_log` 的**未截断全文**写到 `<work_dir>/exec_logs/round_{fix_count}.log`；工具返回里另有逐条 `stdout_tail` / `stderr_tail`（`:832-847`，取尾 ~2000 字符 + `mask_value` 脱敏）。`run_command` 侧返回 JSON 同样含两路输出（`:121-132`）。
+11. **既有测试面零撞车**：全仓 `tests/` 下 grep 命令字面量，**没有任何一条用例给 `run_in_sandbox` / `run_command` 喂过含 `|` `>` `<` `2>&1` 的命令** ⇒ 本批理论影响面为零，回归应保持全绿。
+12. **`core/nodes/__init__.py` 显式 export 遮蔽陷阱仍在**（已知 bug 模式 #6）：测试 / 脚本访问 `core.nodes.execution` 模块属性必须走 `importlib.import_module(...)`。
+
+### 57.5 关键风险一句话
+
+**本批唯一能把事情做坏的方式是"把漏放修成误伤"**——漏判等于回到现状（无损），误伤会挡住合法复现命令（有损且当场可见）。因此**整 token 精确相等 + 拒绝提示语可行动**这两条是本批的全部要害；已知且被接受的残留（贴写形态 `>train.log`、引号内裸元字符 `grep '|' f.txt`、`$VAR` / `$(...)` 未展开）一律**登记不治**，**不得以它们为由引入模糊匹配**。
+
+---
+
+## 58. 批次 8：S7-12 沙箱 shell 元字符显式拒绝（单批单任务，`plan_checks.py` + 两处消费点）
+
+> **前置条件**：Maria 2026-08-01 授权（纯 bug 修复，不必先走 PRD）+ S7-10 已解除 `core/plan_checks.py` 零改动红线（§41.2 第 4 条 / CP-6.5-8）。
+> **产出**：agent 写出管道 / 重定向时**当场被拒并被告知正确写法**，不再拿到假 `exit_code=0`。
+> **文件边界**：`core/plan_checks.py` + `core/nodes/execution.py`（**仅 `run_in_sandbox` 函数体早退区**）+ `core/tools/run_command_tool.py`。
+> **零改动红线**：见 §57.3。
+
+### 任务 T-S7-8-1：`has_unsupported_shell_syntax` 谓词 + 两处消费点显式拒绝
+
+- **产出文件**：`core/plan_checks.py`（新增常量集合 + 谓词 + 拒绝文案）、`core/nodes/execution.py`（`run_in_sandbox` 早退 +1 分支）、`core/tools/run_command_tool.py`（`run_command` 早退 +1 分支）
+- **依赖项**：无（S7-10 已交付并 commit）
+- **预计复杂度**：低（1.5h；难点全在"取哪些元字符"与"提示语怎么写"，不在代码量）
+- **设计参考**：§57.2 全部 10 条；`is_inline_code_write`（`plan_checks.py:211`）的落点与早退范式
+
+**需要实现的内容**：
+
+1. **元字符集合**（模块级常量 `_UNSUPPORTED_SHELL_TOKENS`，`frozenset[str]`，**21 条**）：
+
+   | 类别 | token | 条数 |
+   |---|---|---|
+   | 管道 / 或 | `\|`、`\|\|`、`\|&` | 3 |
+   | 输出重定向 | `>`、`>>`、`1>`、`1>>`、`2>`、`2>>`、`&>`、`&>>` | 8 |
+   | 输入重定向 / heredoc | `<`、`<<`、`<<<` | 3 |
+   | 描述符合并 | `2>&1`、`1>&2`、**`>&`**、**`>&1`**、**`>&2`**、**`<>`** | 6 |
+   | 后台 | `&` | 1 |
+
+   > **⚠ 集合修订（Maria 2026-08-01 拍板，17 → 21）**：加粗的 4 个由**测试工程师代理**在补测时发现漏判（原 §58/§59 均未登记），实测 `has_unsupported_shell_syntax('echo err >&2')` → `False`。其中 `>&2`（等价 `1>&2`，把输出丢到标准错误）在脚本里相当常见。**补入的判据**：这 4 个是 `shlex` 之后的**独立 token** ⇒ 补进集合零成本、**不需要任何模糊匹配、零误伤**，与下方第 2 类"贴写形态"（覆盖它**必须**放宽成前缀匹配）性质根本不同，故**不归入已接受漏判**而是直接治掉。
+   >
+   > 另：本条散文原写「16 条」而同表格列 17 条、代码亦 17 条 —— 散文系笔误（测试工程师代理发现），已随本次订正为 21 条。
+
+   **刻意不覆盖（逐条给理由，这是本条的要害）**：
+   - **`&&` / `;`** —— `run_in_sandbox` **真支持**（`_split_top_level` 拆子命令，§57.4 事实 4），收进来会当场打死正常复合命令；`run_command` 侧不支持但**失败可见**（argv 里多几个怪参数通常直接非 0 退出），不属本批要治的"假 exit 0"。
+   - **贴写形态 `>train.log` / `2>err.txt`（无空格）** —— `shlex` 之后是单 token `>train.log`，精确相等匹配不到。要覆盖必须做前缀匹配，**违反"不做模糊匹配"**。⇒ **已知漏判，等于现状（无损）**。
+   - **引号内的裸元字符** —— `shlex` 剥引号后无法区分"引号内字面量"与"裸元字符"：`grep '|' f.txt` 会被**误判**（唯一已知误伤形态）。判定为**可接受**：复现命令里把裸 `|` 当参数传极罕见，且拒绝文案可行动、agent 一轮内能改写（如 `grep -F "|"` 仍是单 token `|`… 亦被拒，须改用脚本）。**登记在案，不为它引入模糊匹配。**
+   - **`$VAR` / `$(...)` / 反引号 / `~` 展开** —— 同样不生效，但它们**不会被 `shlex` 拆成独立 token**（`$(date)` 是一个 token），token 相等法则上就识别不了；且失败通常可见（程序收到字面量）。**本批不扩围**，登记为残留。
+
+2. **谓词**（纯函数，与 `is_inline_code_write` 同款签名与纪律）：
+   ```
+   def has_unsupported_shell_syntax(command: str) -> bool
+   ```
+   - **复用既有 `_split_top_level_argv`**（`plan_checks.py:184`）拿 token：它已带"未闭合引号退化为 whitespace split"的兜底，且**顺带把 `&&` / `;` 消费掉**——这正好落实"不覆盖连接符"这条取舍，无需另写分支。
+   - 任一子命令的任一 token **精确等于**集合内元素即 True。
+   - **任何输入都不抛异常**：非字符串 / 空串 / 空白一律 False。
+   - ⚠ **不得 import `core.nodes.execution`**（会成环），沿 `plan_checks` 顶层零依赖定位。
+
+3. **拒绝文案**（模块级常量 `UNSUPPORTED_SHELL_SYNTAX_MESSAGE`，两处消费点**共用同一份**）：
+   - **通俗中文、零内部枚举值 / 字段名 / 节点名 / 英文缩写**；
+   - 必须讲清三件事：①为什么不生效（不经过命令行解释器，符号被当普通参数）；②**输出本来就自动完整记录并返回**（§57.4 事实 10）；③**该怎么做**（直接跑命令；确需写文件在脚本里写）。
+   - 它是**给模型看的**文本（与 `_INLINE_CODE_WRITE_REJECTION` 同类）⇒ **不入 `tests/test_s708_user_text_guard.py` 守门面**，三个 `==` 数字不动（§57.4 事实 9）。
+   - **一处定义两处调用**，禁止在两个消费点各写一份（必然漂移）。
+
+4. **消费点 A：`core/nodes/execution.py::run_in_sandbox`** —— 在 `is_inline_code_write` 那条早退**之后**、`_run_step_subcommands` **之前**插入判定，命中即 `return _tool_error_json(UNSUPPORTED_SHELL_SYNTAX_MESSAGE, exit_code=-1, results=[], timed_out=False)`。
+   ⚠ **位置是硬要求**：必须在 `collector.run_results.extend(...)` / `collector.step_ledger.append(...)`（`:1010-1014`）**之前** ⇒ 被拒命令**不进台账、不污染 `exit_ok`、不被步骤对账当成"完成"**。
+   ⚠ **同时打 WARNING 日志**（已知 bug 模式 #3：禁止静默吞错），命令前缀走 `mask_value` 脱敏 + `_REJECT_LOG_COMMAND_CHARS` 截断，与内联写码拒绝路径**同款出口纪律**。
+   ⚠ 沿 `_tool_error_json` **既有形态**，**不新增返回字段**（BUG-S1-02 纪律：返回仍是合法 JSON）。
+
+5. **消费点 B：`core/tools/run_command_tool.py::run_command`** —— 在 `shlex` 解析 + 空命令校验**之后**、cwd 越界校验与 `_run_subprocess` **之前**插入判定，命中即 `return _error_json(UNSUPPORTED_SHELL_SYNTAX_MESSAGE)`（沿既有 `{"error", "exit_code": -1}` 形态，**不新增键**，Q-B1 红线 3「结构中无 metrics / success 语义键」不破）+ WARNING 日志（同款脱敏截断）。
+
+6. **刻意不做的（防止顺手扩围）**：
+   - **不改两处工具 docstring**：`run_command` 的 docstring 是**工具 schema 的一部分、参与 Prompt Cache 稳定前缀**（`run_command_tool.py:28-29` 明立此纪律），且它现在写的"不可用"**并没有说错**——本批只是给这句话补上机制。`run_in_sandbox` 的工具说明句在 `_EXECUTION_SYSTEM_PROMPT_BODY` 里（`execution.py:1043`），改它会打红字节门 `f82f3938cf31f882` ⇒ **一字不动**。
+   - **不改 `_split_top_level`**：它按设计只认 `&&` / `;`，本批不给它加语义。
+   - **不新增测试文件**（Maria 指定交测试工程师）。
+
+**自测检查点**：
+
+- [x] [2026-08-01] CP-8.1-1 **实测全过（19 条必命中 / 12 条必放行，零误差）**：必命中含 `> train.log` / `>> out.log` / `2> err.log` / `2>&1` / `1>&2` / `2>&1 \| tee log.txt` / `\| head -3` / `\|\|` / `\|&` / `< in.txt` / `<< EOF` / `<<< "hi"` / `&` / `&> all.log` / `&>> all.log` / `1> o.log` / `1>> o.log` / `2>> e.log`，另加**复合命令后半段命中**（`pip install numpy && python train.py > train.log`）；必放行含 `python train.py --epochs 1` / **`python -c "print(1>2)"`**（要害用例：`print(1>2)` 是一整个 token）/ `python -c "a and b"` / `pip install -e /a/b` / **`python a.py && python b.py`** / **`cd sub ; python x.py`** / `python -m pip install "numpy>=1.20"` / `git commit -m "a > b"`（引号内的 `>` 与其它字符同 token，不误伤）/ `source .venv/bin/activate` / `python -m py_compile x.py` / `python run_repro_basics.py --dataset digits` / `python -c "import sys; print(sys.version)"`。原文： **谓词真值表**：`python train.py > train.log` / `>> out.log` / `2> err.log` / `2>&1` / `\| tee log.txt` / `\|\|` / `< in.txt` / `<< EOF` / `&`（独立 token 形态）**逐条 True**；`python train.py --epochs 1` / `python -c "print(1>2)"` / `pip install -e /a/b` / `python a.py && python b.py` / `cd sub ; python x.py` **逐条 False**
+- [x] [2026-08-01] CP-8.1-2 **实测**：`""` / `"   "` / `None` / `123` / `["python"]` / `{"a": 1}` / `python -c "unclosed`（未闭合引号）**一律 False 且零异常**。
+- [x] [2026-08-01] CP-8.1-3 **实测（真造 `_SandboxRunCollector` + 真起工具）**：喂 `python train.py > train.log` → `json.loads` 通过、`tool_error is True`、`exit_code == -1`；**`collector.run_results == []` 且 `collector.step_ledger == []`**（调用前后各断一次）；另 spy 住 `_run_step_subcommands` 实证**底层 runner 一次都没被调用**。第二组独立实测（workspace 内真建 venv）：先跑两条正常命令让台账累计到 3 条，再喂 `python -c "print(1)" > out.txt` → 被拒、**台账仍是 3 条**、**`out.txt` 未被创建**。
+- [x] [2026-08-01] CP-8.1-4 **实测（spy 住 `_run_subprocess`）**：喂 `python -c 'import sys' > out.txt` → `json.loads` 通过、`exit_code == -1`、**`_run_subprocess` 调用数为 0**（不起子进程、不留任何执行痕迹）。
+- [x] [2026-08-01] CP-8.1-5 **不误伤实测**：消费点 A（workspace 内真建 venv，**真起子进程**）——`python -c "print(1>2)"` → **exit 0**、stdout `False`；`python -c "..." && python -c "print(7*6)"` → **exit 0**、两条子结果 `1` / `42`（⇒ **`&&` 复合命令未被本批打死**，这是"不覆盖连接符"那条取舍的活体验证）。消费点 B——`python -c "print('ok')"` → **exit 0**、stdout `ok`、`_run_subprocess` 正常被调 1 次。
+- [x] [2026-08-01] CP-8.1-6 **实测**：两处拒绝路径均打 WARNING（A：`工具拒绝含管道/重定向的命令（沙箱不经 shell，写了不生效）`；B：`run_command: 命令含管道/重定向，拒绝执行…`），命令前缀经 `mask_value` 脱敏 + `_REJECT_LOG_COMMAND_CHARS=120` 截断；两处返回体的 `error` 字段与 `UNSUPPORTED_SHELL_SYNTAX_MESSAGE` **`==` 成立**（同一常量，无第二份字面量）。
+- [x] [2026-08-01] CP-8.1-7 **实测**：`git status --short` 生产侧只有 `core/plan_checks.py` / `core/nodes/execution.py` / `core/tools/run_command_tool.py` **三个文件**；§57.3 列出的红线文件（`graph.py` / `state.py` / `planning.py` / `coding.py` / `reporting.py` / `resource_scout.py` / `sandbox/local_venv.py` / `ui/`）**逐一无改动**；`git diff core/nodes/execution.py` 只含「import 一行拆成多行」+「早退区 +16 行」两处 ⇒ `_split_top_level` / `_step_to_command` / `_run_step_subcommands` / `_resolve_cd` / `_rewrite_interpreter` / `_expand_globs` **一字未动**；两道 prompt 字节门（`a7cad88cdb205c5f` / `f82f3938cf31f882`）随全量回归**原样绿**。
+- [x] [2026-08-01] CP-8.1-8 **`mypy` → Success: no issues found in 27 source files**（`core.plan_checks` 在 strict 档，新增函数全签名标注、**零豁免、未动 `mypy.ini`**）。⚠ 期间复现了 CP-6.5-7 记过的那次 **陈旧缓存**误报（`core/graph.py:189 call-overload`），`rm -rf .mypy_cache` 后消失——**非本批引入**。
+- [x] [2026-08-01] CP-8.1-9 **账目逐字对平**：改前基线 `.venv/bin/pytest -q -p no:randomly` → **2299 passed, 25 skipped, 46 deselected, 3 warnings in 141.05s**；改后同口径 → **2299 passed, 25 skipped, 46 deselected, 3 warnings in 138.48s**；另跑一次**默认随机顺序**（`.venv/bin/pytest -q`）→ **2299 passed, 25 skipped, 46 deselected, 3 warnings in 141.35s**。**通过数完全相同**（本批不新增用例）。**全程未设 `LANGSMITH_TRACING_IN_TESTS`**。
+- [x] [2026-08-01] CP-8.1-10 **已清理**：自证脚本只落 `/tmp`（`s712_selfcheck.py` / `s712_posctl.py`），跑完即删；`git status --porcelain` 下 `tests/` **零新增文件**（唯一的 ` M tests/conftest.py` 是本批之前就在的 LangSmith 硬关闭）。
+- [x] [2026-08-01] CP-8.1-11 **已由测试工程师代理补齐**（原文：⚠ **本批未做、按 Maria 指定交测试工程师**：这条防线**目前一条测试都没有** ⇒ 上面 CP-8.1-9 的"回归全绿"**只证明零退化、不证明防线在守**。补测须含**两处消费点的行为断言**（不是源码子串检查，F2 教训）+ **命门验红**（两处拦截各改成 `if False and …` 死代码 → 对应用例必须当场红））。落地：`tests/test_sprint7_s712_shell_metachars.py`（31 函数 / **116 条用例**，单跑 **109 passed + 7 xfailed**，随机顺序同结果，零 e2e、零 LangSmith 上报。★ 此为 Maria 2026-08-01 拍板补入 4 个 token（P-52）后的最终值；补测交付时为 112 条 / 101 passed + 11 xfailed，差额 = 集合参数化 +4、缺口转正 +4）。**两处命门分别验红**：命门 A（`execution.py:998` 改 `if False and …`）→ **7 failed**（其中 `run_results` 断言的失败输出直接打印出 `SandboxRunResult(exit_code=0, command=[…,'train.py','>','train.log'])`，把「假 exit 0 进台账」原形逮住）、`run_command` 侧 19 条参数化照常绿；命门 B（`run_command_tool.py:106` 同法）→ **23 failed**、`run_in_sandbox` 侧照常绿 ⇒ **两处互不掩护**。还原后 `run_command_tool.py` sha256 逐字节相同（`73d5ba1c…`）、`grep MUTATION` 零残留、S7-12 早退区 16 行实读完好。台账硬约束按要求断的是**条数不变**（先攒 2 条正常记录再喂被拒命令 → 仍 2 条）而非只断返回值，并 spy 住 `_run_step_subcommands` 实证零调用。三条**已知缺口一条不掩盖**，全部以 `xfail(strict=True)` 显形（贴写形态 3 条 / 引号内误伤 2 条 / `$(…)` 1 条 / `run_command` 侧 `&&` 1 条，另配一条真绿断言实证该形态"失败可见"故 §59 P-49 不治成立）。**三处出入见报告；①②已由 Maria 2026-08-01 拍板处置，见 §59 P-52 / P-53**：①dev-plan §58 散文「16 条」实为 **17 条**（表格与代码均 17，散文笔误）⇒ **已订正为 21 条**；②★**新发现漏判形态 `>&2` / `>&1` / `>&` / `<>` §58/§59 均未登记**，且与"贴写形态"性质不同（它们是独立 token，补进集合零成本、不需模糊匹配）⇒ **已直接补入集合（17 → 21），对应 4 条 `xfail(strict=True)` 转正为真绿断言**；③全仓第 4 个 `shlex.split` 站点 `env_probe_tool` 靠整条 argv 白名单天然 fail-closed、无同族缺口，已固化成断言。全量回归 **9 failed / 2391 passed / 25 skipped / 46 deselected / 11 xfailed**，账目对平（2299 基线 + 101 新增 = 2400 = 2391+9），**9 条失败经单独复跑证实全部属并发施工的 S7-11（批次 7）改动**（`AUTO_FIXABLE` 新增 `INCOMPLETE_EXECUTION` + execution prompt 字节门被改），与 S7-12 无关。详见 `docs/sprint7/test-reports/2026-08-01_s712-shell-metachars.md`。
+
+---
+
+## 59. S7-12 落点勘误留档（本节落盘时 Read / **实跑**发现的出入）
+
+> 体例同 §48 / §56。**不自行改 PRD / 架构 / 全局文档**，如实标注。编号接续 §56 的 P-45，从 **P-46** 起。
+
+| 编号 | 主控派单描述 | 磁盘 / 实跑实际 | 影响 | 处置 |
+|---|---|---|---|---|
+| **P-46（行号漂移，轻微）** | 「`core/nodes/execution.py:908-1026`（`run_in_sandbox` 工具）」「早退位置…（≈`:978` 那段）」 | `:978` 现在是 **S7-10 内联写码拦截**那一行（`if is_inline_code_write(command):`）；写台账的两行实为 **`:1010` `collector.run_results.extend(results)`** 与 **`:1011-1014` `collector.step_ledger.append(...)`**。派单描述沿用的是 S7-10 **改动前**的行号（§41.4 事实 16 记的 `:978`） | 低（结论完全不变：早退区仍整体在写台账之前） | 本文一律引**现文件行号**，并在 §57.4 事实 5 逐条记清；§57 开头另加"与批次 7 撞车预告"，提醒批次 7 开工时重核 §49.4 行号 |
+| **P-47（行号 off-by-one，轻微）** | 「`execution.py:1815` `_persist_round_log`、`:1768` `_EXEC_LOGS_SUBDIR`」 | `_persist_round_log` 确在 **`:1815`**；`_EXEC_LOGS_SUBDIR` 实为 **`:1769`**（`:1768` 是其上方注释行） | 低 | 按实际行号引用，结论（输出自动落盘）**完全成立** |
+| **P-48（编号，须主控/Maria 知悉）** | 「编号自己按 `docs/TODO.md` 与 dev-plan 现有规则定（**批次 0~6 已用满**）」 | **批次 7 已被 S7-11 用掉**——本文件 §49~§56（2026-08-01 落盘、`docs/TODO.md:643-658` 同步、`git status` 显示未 commit），任务号 `T-S7-7-N` / CP `CP-7.x-y` 已占 | 中：照"批次 0~6 已用满"取号会与 S7-11 **正面撞车** | 本批取 **S7-12 / 批次 8 / `T-S7-8-N` / `CP-8.x-y` / §57~§59**。若 Maria 决定顺延或合并，全文只需替换 `S7-12` 与批次号两个 token |
+| **P-49（主控未提，新增取舍事实）** | 「覆盖常见变体即可（`>` `>>` `<` `2>` `&>` `2>&1` `\|` `\|\|` `&` `\|&` 之类）」 | 该清单**未含 `&&` / `;`**，而这两条恰是 `run_in_sandbox` **真支持**的（`_split_top_level` 消费成 connector）⇒ 主控的取舍**是对的**，但理由须写明，否则后人会"顺手补全"而打死复合命令。另：`run_command` 侧 `&&` **确实不支持且会被静默误传**，属**同族但不同风险等级**的缺口（失败可见、不构成假 exit 0） | 中：不写明理由 = 埋下"下次有人补 `&&`"的雷 | 集合注释与 §58 第 1 条**逐条写死不覆盖的理由**；`run_command` 侧 `&&` 缺口**登记不治**（本批不扩围） |
+| **P-50（已知误伤，登记接受）** | 「宁可漏判，不可误伤」 | 精确 token 相等仍有**一种真实误伤**：`shlex` 剥引号后无法区分 `grep '\|' f.txt` 的字面量 `\|` 与裸元字符 `\|`，前者会被误拒 | 低（复现命令里把裸 `\|` 当参数传极罕见；且拒绝文案可行动） | **登记接受，不为它引入模糊匹配**（模糊匹配的误伤面比它大得多）。写进 §57.5 与 §58 第 1 条 |
+| **P-51（主控判断复核结论：无误）** | 「危害不是安全问题（没有 shell，这些字符是哑弹，零安全风险）」「`export` 类内建反而是好的」 | **两条均实跑复核为真**：①`subprocess.run(['echo','hi','>','f.txt'])` 未创建任何文件、无 shell 参与；②`_run_subprocess` 的 `except OSError`（`local_venv.py:393-405`）确把"程序不存在"兜成 `exit_code=-1` + `subprocess start failed: ...` stderr | — | 无需处置，作为本批立项论据登记 |
+| **P-52（★ 测试工程师发现的漏判，已治，Maria 2026-08-01 拍板）** | 开发批次交付的集合为 **17 条**，`>&` / `>&1` / `>&2` / `<>` 均**不在**其中 | 实测 `has_unsupported_shell_syntax('echo err >&2')` → **False**（漏判）。`>&2`（等价 `1>&2`）在脚本里相当常见；`>& file` 在 bash 里等价 `&>` | 中：属"假 exit 0"同族病灶，不治则本批目标在该形态上落空 | **直接补入集合（17 → 21）**，不登记为已接受漏判。**判据**：这 4 个是 `shlex` 之后的**独立 token** ⇒ 零成本、零模糊匹配、零误伤，与"贴写形态"（覆盖它**必须**放宽为前缀匹配）性质不同。同步改动：§58 第 1 条表格 + 集合注释 + `tests/test_sprint7_s712_shell_metachars.py` 的内容锁与 4 条 `xfail(strict=True)` 转正 |
+| **P-53（散文笔误，已订正）** | §58 第 1 条散文写「**16 条**」 | 同条**表格**列 17 条（3+8+3+2+1）、生产代码亦 17 条 ⇒ 散文数字系笔误（测试工程师代理发现；其用例锁的是**内容**不是数量，故未受影响） | 低（不影响代码与测试，但会误导后人） | 随 P-52 一并订正为 **21 条**，并在表格中补「条数」列使数字可自校验 |
+
+---
+
+*（S7-12 增补完：§57 概述（**编号说明** / 需求目标 / 方案要点 10 条 / 红线 / **前置事实 12 条亲验** / 关键风险）+ §58 批次 8 单任务规格 T-S7-8-1（**21 条元字符集合 + 四类刻意不覆盖的逐条理由** + 11 个 CP）+ §59 落点勘误留档（**P-46~P-53**，其中 **P-48 编号撞车 / P-49 `&&` 不覆盖的理由 / P-50 已知误伤 / P-52 `>&N` 漏判已治** 四条为实质性）。本增补不覆盖 §1~§56.2 既有内容。*
+*⚠ **本批是纯缺陷修复、不走 PRD**（Maria 2026-08-01 授权）⇒ 验收点用 `DA-S7-12-N`，不占用 `AC-S7-*` 号段。*
+*⚠ **新增测试交测试工程师代理补测**（Maria 2026-08-01 指定）；本批只保证既有回归零退化。*
+*⚠ **不 commit / 不 push / 不真跑端到端 / 不开 LangSmith**，均须 Maria 单独授权。）*

@@ -15,6 +15,12 @@ S7-10（约束 A/B/C 落点对齐）新增职责：本模块额外承载 **`is_i
 工具层硬拦截）**各查一次，一处定义两处调用**，不是造两套机制。谓词住这里的理由是
 本模块位于 `core/` 顶层、零项目内依赖，被 `core.nodes.execution` import 不成环。
 
+S7-12（沙箱 shell 元字符）沿同一条落点纪律再放一条共用纯谓词：
+`has_unsupported_shell_syntax` —— 沙箱禁 shell，管道 / 重定向这类元字符**现在就已经
+不生效**（被静默当普通参数传给程序，还回 exit_code=0）。该谓词由 execution 与 coding
+两处工具层共用，**命中即拒**，把「悄悄不工作」改成「明说不工作 + 指路」。它**不参与
+check_plan 的任何一条 W 规则**（计划期不产警示），住这里只为"一处定义两处调用"。
+
 误报防线（R-S6-A5）：关键词宁窄勿宽；警示不阻断审批；纯函数调用方决定展示方式。
 S7-10 补一条：W4/W5 同样**只产警示、不阻断审批**——人在回路的计划审核本身就是硬门；
 约束 C 的**硬**保证在工具层（命中即拒、不进台账），本模块只负责把它前移成可见告警。
@@ -23,7 +29,7 @@ from __future__ import annotations
 
 import shlex
 from pathlib import PurePosixPath
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 关键词静态小表（宁窄勿宽——宁漏报不误报）
@@ -246,6 +252,108 @@ def is_inline_code_write(command: str) -> bool:
         payload = _inline_python_payload(argv)
         if payload is not None and len(payload) > _INLINE_PY_MAX_CHARS:
             return True
+    return False
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# S7-12：沙箱不认的 shell 元字符（共用纯谓词，execution / coding 两处工具层共用）
+#
+# 背景：项目全局禁 shell=True，`execution._split_top_level` 自己实现了一层迷你 shell
+# 解析，**只认 `&&` 和 `;`**。其余元字符会被静默当成普通 argv token 传给程序 ⇒
+# `python train.py > train.log` 实跑得到 **exit_code=0**、stdout 里原样打印
+# `> train.log`、而 train.log **根本没被创建**。危害不是安全（没有 shell，这些字符是
+# 哑弹），而是可靠性三连：①假 exit 0 污染成功判定（execution.py 的 exit_ok）；
+# ②错误信号错位（真因在第 3 步，报错却发生在第 5 步的"文件不存在"）毒害修复循环；
+# ③返回 0 是正反馈，agent 下次还这么写。
+#
+# ⚠ 本模块的处置是**识别后拒绝**，不是识别后支持。绝不在这里实现管道 / 重定向语义
+#   ——那等于自己写一个完整 shell，正是当初禁 shell=True 要逃离的东西，且边界无穷。
+#   这也不是"新增禁令"：这些语法**现在就已经不工作了**，本条只是把「悄悄不工作」
+#   改成「明说不工作 + 告诉 agent 该怎么写」，功能上零变化。
+# ──────────────────────────────────────────────────────────────────────────────
+
+#: 沙箱执行通道**不支持**的 shell 元字符（整个 token 精确相等才算命中，见谓词说明）。
+#:
+#: **刻意不覆盖的四类，逐条写死理由（后人别顺手补全）**：
+#:   1. ``&&`` / ``;`` —— ``run_in_sandbox`` **真支持**它们（``_split_top_level`` 把它们
+#:      消费成子命令连接符），收进来会当场打死正常的复合命令。``run_command``（coding
+#:      侧）确实不支持，但那属另一件事且**失败可见**（多出的怪参数通常直接非 0 退出），
+#:      不构成本条要治的"假 exit 0"。
+#:   2. **贴写形态**（``>train.log`` / ``2>err.txt``，无空格）—— shlex 之后是单个 token
+#:      ``>train.log``，精确相等匹配不到。要覆盖必须做前缀匹配，**违反"不做模糊匹配"**
+#:      这条纪律 ⇒ 已知漏判，等于现状（无损）。
+#:   3. **引号内的裸元字符** —— shlex 剥引号后无法区分 ``grep '|' f.txt`` 的字面量与真
+#:      元字符，前者会被误拒。这是唯一已知的误伤形态，**登记接受**（复现命令里把裸
+#:      ``|`` 当参数传极罕见），**不为它引入模糊匹配**。
+#:   4. ``$VAR`` / ``$(...)`` / 反引号 / ``~`` 展开 —— 同样不生效，但它们不会被 shlex
+#:      拆成独立 token（``$(date)`` 是一个 token），token 相等法则上识别不了；且失败
+#:      通常可见（程序收到字面量）。本批不扩围。
+#:
+#: 误判优先级：**宁可漏判，不可误伤**。漏判 = 回到现状（无损）；误伤 = 挡住合法复现
+#: 命令（有损）。故只做整 token 精确相等 —— 实测 ``python -c "print(1>2)"`` 经 shlex
+#: 之后 ``print(1>2)`` 是一整个 token，与本集合任何元素都不相等，零误伤。
+_UNSUPPORTED_SHELL_TOKENS: FrozenSet[str] = frozenset({
+    # 管道 / 或
+    "|", "||", "|&",
+    # 输出重定向
+    ">", ">>", "1>", "1>>", "2>", "2>>", "&>", "&>>",
+    # 输入重定向 / heredoc
+    "<", "<<", "<<<",
+    # 描述符合并（`>&2` 等价 `1>&2`、`>&1` 等价 `1>&1`；`>& file` 在 bash 里等价 `&>`；
+    # `<>` 是读写双向打开。均为 shlex 之后的**独立 token** ⇒ 补入零成本、零模糊匹配、
+    # 零误伤，故与上文第 2 类"贴写形态"性质不同，不归入已接受漏判。）
+    "2>&1", "1>&2", ">&", ">&1", ">&2", "<>",
+    # 后台
+    "&",
+})
+
+#: 命中上表时返回给 agent 的拒绝说明（execution / coding 两处工具层**共用同一份**）。
+#:
+#: 这是**给模型看的**文本（不是给用户看的 UI 文案）⇒ 不入 tests/test_s708_user_text_guard.py
+#: 守门面，判定口径与 execution 的 `_INLINE_CODE_WRITE_REJECTION` 一致。
+#:
+#: ⚠ **必须可行动**：告诉 agent「该怎么做」而不只是「不能怎么做」——提示语烂会让它反复
+#: 撞墙，比静默走偏更糟。关键事实：**命令输出本来就被自动完整捕获**（工具返回里逐条带
+#: stdout/stderr 尾部，执行环节还把每轮完整原文落盘到 exec_logs/round_{N}.log）⇒ agent
+#: 用 `>` 是在重复造一个已存在、且被它造坏了的轮子，文案必须把这一点讲明白。
+UNSUPPORTED_SHELL_SYNTAX_MESSAGE: str = (
+    "这条命令用到了管道或重定向（例如 | 和 >），已被拒绝执行："
+    "命令不经过命令行解释器，这些符号只会被当成普通参数原样传给程序，写了不会生效，"
+    "还会让一条其实没干成事的命令返回成功、把问题拖到后面几步才暴露。"
+    "命令的输出（正常输出和报错）都会被自动完整记录下来并返回给你，"
+    "不需要自己把输出转存到文件——直接运行命令即可；"
+    "确实需要生成文件时，请让脚本自己去写。"
+)
+
+
+def has_unsupported_shell_syntax(command: str) -> bool:
+    """命令串里是否出现了**沙箱执行通道不支持**的 shell 元字符（管道 / 重定向 / 后台）。
+
+    判定对象是**命令字符串本身** ⇒ 纯函数、零 IO、零时序、可单测（与
+    :func:`is_inline_code_write` 同款纪律）。
+
+    单一规则：**先按顶层 ``&&`` / ``;`` 拆分再逐条看 token**，任一 token
+    **精确等于** :data:`_UNSUPPORTED_SHELL_TOKENS` 中的某一项即为 True。
+
+      * **精确相等、不做子串 / 前缀 / 正则匹配** —— ``python -c "print(1>2)"`` 经 shlex
+        之后 ``print(1>2)`` 是一整个 token，不含裸 ``>``，因此不会被误伤；
+      * 复用 :func:`_split_top_level_argv` 拿 token，顺带把 ``&&`` / ``;`` 消费掉 ——
+        这正好落实"**连接符不在覆盖范围内**"这条取舍（``run_in_sandbox`` 真支持它们）；
+      * 未闭合引号等解析失败退化为 whitespace split（同上游 helper），**宁可漏判不抛异常**。
+
+    Args:
+        command: 单条命令字符串（可含顶层 ``&&`` / ``;`` 复合）。
+
+    Returns:
+        True 表示命中不支持的 shell 语法。非字符串 / 空串 / 空白一律 False，
+        **任何输入都不抛异常**。
+    """
+    if not isinstance(command, str) or not command.strip():
+        return False
+    for argv in _split_top_level_argv(command):
+        for token in argv:
+            if token in _UNSUPPORTED_SHELL_TOKENS:
+                return True
     return False
 
 

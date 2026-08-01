@@ -106,22 +106,31 @@ _GUARDED_CONSTANTS: Tuple[Tuple[str, str], ...] = (
     # S7-10 / T-S7-6-5：计划期两条确定性告警的文案，经 plan_review 的 st.warning 直达用户。
     ("core.plan_checks", "_W4_MESSAGE"),
     ("core.plan_checks", "_W5_MESSAGE"),
+    # S7-11 / T-S7-7-7：报告里的"代码跑通"判定口径说明（此前是内联 f-string，因而
+    # 从未被本守门扫到——"（B 档）"这个内部分档术语就是这么裸露到用户面前的）。
+    ("core.nodes.reporting", "_SUCCESS_CRITERIA_NOTE"),
+    # S7-11 / T-S7-7-6：步骤没跑完时的改判文案，经 fix_loop_history 进 UI 修复历程条。
+    ("core.nodes.execution", "_INCOMPLETE_EXECUTION_SUMMARY_LEAD"),
+    ("core.nodes.execution", "_INCOMPLETE_EXECUTION_FIX_HINT"),
 )
 
 # --------------------------------------------------------------------------- #
-# EXPECTED_N 对账（2026-07-31 上磁盘实测，S7-10 / T-S7-6-5 后）：
-#   - ui/term_map.py::TERM_LABELS 全量值 …………………………… 42 条
-#     （dev-plan §32.4 事实 9 记 41 条为 T-5-9 加 `annotation:scale_reduced` 之前的值）
-#   - 上表具名常量 ………………………………………………………… 12 条
-#     （S7-08 收口时 10 条；S7-10 加 core.plan_checks 的 W4 / W5 两条 message）
+# EXPECTED_N 对账（2026-08-01 上磁盘实测，S7-11 / T-S7-7-7 后）：
+#   - ui/term_map.py::TERM_LABELS 全量值 …………………………… 43 条
+#     （dev-plan §32.4 事实 9 记 41 条为 T-5-9 加 `annotation:scale_reduced` 之前的值；
+#      S7-10 后为 42 条；S7-11 加 `error_category:incomplete_execution` 一条 ⇒ 43）
+#   - 上表具名常量 ………………………………………………………… 15 条
+#     （S7-08 收口时 10 条；S7-10 加 core.plan_checks 的 W4 / W5 两条 message ⇒ 12；
+#      S7-11 加 3 条：reporting._SUCCESS_CRITERIA_NOTE +
+#      execution._INCOMPLETE_EXECUTION_SUMMARY_LEAD / _INCOMPLETE_EXECUTION_FIX_HINT）
 #                                                     ------
-#   合计 EXPECTED_N …………………………………………………… 54 条
+#   合计 EXPECTED_N …………………………………………………… 58 条
 #
 # ⚠ 三个数字必须 `==`，**禁止改成 `>=`**（理由见模块 docstring）。
 # --------------------------------------------------------------------------- #
-EXPECTED_TERM_LABELS_N: int = 42
-EXPECTED_CONSTANTS_N: int = 12
-EXPECTED_N: int = EXPECTED_TERM_LABELS_N + EXPECTED_CONSTANTS_N  # == 54
+EXPECTED_TERM_LABELS_N: int = 43
+EXPECTED_CONSTANTS_N: int = 15
+EXPECTED_N: int = EXPECTED_TERM_LABELS_N + EXPECTED_CONSTANTS_N  # == 58
 
 # 既有守门黑名单的核心词（只做"没被掏空"的下界校验，
 # 不写成相等——日后清理那 16 处时 `_BLACKLIST` 可能合法扩充）。

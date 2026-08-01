@@ -38,10 +38,17 @@ from typing import Dict, Optional
 
 import config
 from config import SANDBOX_PIP_CACHE_DIR
+from core.plan_checks import (
+    UNSUPPORTED_SHELL_SYNTAX_MESSAGE,
+    has_unsupported_shell_syntax,
+)
 from core.secrets_store import mask_value
 from sandbox.local_venv import _require_within_workspace, _run_subprocess
 
 logger = logging.getLogger(__name__)
+
+# 拒绝日志里回显的命令前缀长度（脱敏后截断，避免把超长命令整段刷进日志）。
+_REJECT_LOG_COMMAND_CHARS: int = 120
 
 
 def _error_json(message: str) -> str:
@@ -89,6 +96,19 @@ def make_run_command_tool(base_dir: str, extra_env: Optional[Dict[str, str]] = N
             return _error_json(f"命令解析失败: {exc}")
         if not argv:
             return _error_json("空命令")
+
+        # 1.5) S7-12：沙箱不认的 shell 元字符（管道 / 重定向 / 后台）⇒ 命中即拒。
+        #    本工具同样 shlex 解析后直跑（不经 shell），这些符号会被静默当成普通参数
+        #    传给程序：一条实际没干成事的命令照样返回 exit_code=0，agent 学不到教训。
+        #    docstring 里早写了"不可用"，但**光靠 docstring 约束不住 LLM**——
+        #    RUN_COMMAND_TIMEOUT 那次的结论就是"用机制封顶，不靠 docstring"。
+        #    必须在 _run_subprocess 之前早退：不起子进程、不产生任何执行痕迹。
+        if has_unsupported_shell_syntax(command):
+            logger.warning(
+                "run_command: 命令含管道/重定向，拒绝执行（不经 shell，写了不生效）: %s",
+                mask_value(command[:_REJECT_LOG_COMMAND_CHARS]) or "",
+            )
+            return _error_json(UNSUPPORTED_SHELL_SYNTAX_MESSAGE)
 
         # 2) 护栏：cwd 锚定 base_dir 并校验在 WORKSPACE_DIR 下
         #    （越界抛 SandboxCreationError → 捕获转结构化错误 + WARNING）。

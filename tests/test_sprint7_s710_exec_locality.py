@@ -641,12 +641,19 @@ def test_cp_6_6_7_execution_prompt_hash_untouched_by_tool_layer_change() -> None
 
     与 `tests/test_sprint5_t14_execution_prompt.py` 的字节基线互为双保险：
     那边锁哈希，这边锁"改动没有溢出到冻结区"。
+
+    ⚠ S7-11 / T-S7-7-4 更新基线：`f82f3938cf31f882` → `c73e1e6e3cfc1280`（1698 → 1979
+    字符）。**本次是刻意改冻结区**（修法 B：`step_index` 声明升为必须 + 纪律 4/5 收窄
+    + 新增"修复回合全量重跑"纪律），走的是 dev-plan §48.1 的哈希三件套。**改动本身
+    没有溢出到 S7-10 的关注面**：AC-S7-46 点名保留的三句仍在、点名禁止的"修正相对
+    路径"仍不存在（下方 T-6-4 的正负向用例全绿即为证）。
     """
     import hashlib
 
     actual = hashlib.sha256(_EXECUTION_BODY.encode("utf-8")).hexdigest()[:16]
-    assert actual == "f82f3938cf31f882", (
-        f"execution 冻结区在 T-6-6 之后又变了（{actual}）—— 本任务只该动函数体"
+    assert actual == "c73e1e6e3cfc1280", (
+        f"execution 冻结区又变了（{actual}）—— 改冻结区必须走哈希三件套"
+        "（重算写死 + dev-plan §48.1 留档 + 验红）"
     )
 
 

@@ -286,6 +286,12 @@ def _determine_conclusion(
         if isinstance(reconciliation, dict)
         else None
     )
+    # ⚠ S7-11（T-S7-7-7）曾计划在此补一条"planned > 0 且 completed < planned"的析取
+    # 项，**实施时撤回**：exit_ok 为真时"某步未完成"等价于"该步一条命令都没跑"，
+    # 该析取项唯一新增的只有 attribution_unavailable 那一格——而"归属不可用时不打
+    # 未执行标注"是既有产品契约（R-2 保守语义，_reconcile_steps docstring 明写，
+    # tests/test_sprint5_t33_conclusion.py 与 t34_report_render.py 两处守着）。
+    # ⇒ 标注条件一字不改（dev-plan §56 P-47）。
     if bool(unexecuted) or result.get("budget_truncated") is True:
         annotations.append("incomplete_execution")
 
@@ -536,6 +542,21 @@ _SCALE_REDUCED_DECLARATION: str = (
 
 #: 缩规模适配说明的引出语（模型自述原文的前导句，同受新术语守门覆盖）。
 _SCALE_REDUCED_NOTE_LEAD: str = "本次是怎么缩的、这台机器够不够（计划阶段的说明原文）："
+
+#: S7-11（T-S7-7-7）："代码跑通"的判定口径说明，直达用户。
+#: 两处订正（dev-plan §49.2 第 9 条 (a)）：
+#:   ①**去掉"（B 档）"** —— 内部分档术语裸露给用户，违反
+#:     docs/product-design-specification.md:479 的红线；它一直没被守门扫到，只是因为
+#:     此前是内联 f-string、不在受控常量清单内（S7-06 同款失效模式）⇒ 顺手提为具名
+#:     常量并登记进 tests/test_s708_user_text_guard.py 的 _GUARDED_CONSTANTS；
+#:   ②**补第三个条件** —— S7-11 起"计划里的步骤全部跑完"进入 success 判定，
+#:     不改这句会出现文档与实现不符（原句只写了退出码与指标两条）。
+#: "指标对比表仅供参考、不做硬性判定"那半句**逐字保留**。
+_SUCCESS_CRITERIA_NOTE: str = (
+    "判定口径：执行退出码正常、至少解析出 1 个指标、且计划里的步骤全部跑完，"
+    "三条都满足才视为代码跑通。下方指标对比表仅做论文值与复现值的并列展示，"
+    "仅供参考对比，**不做硬性结论判定**。"
+)
 
 
 def _credential_purpose_map(state: GlobalState) -> Dict[str, str]:
@@ -831,9 +852,7 @@ def _render_full_success(state: GlobalState, conclusion: Dict[str, Any]) -> List
         lines.append("> ☑️ **代码跑通（工程复现），论文实验结论未验证**：代码已在"
                      f"隔离环境中成功执行并解析出指标，但论文的实验结论尚未得到验证（{pointer}）。")
     lines.append(">")
-    lines.append("> 判定口径（B 档）：执行退出码正常且至少解析出 1 个指标即视为代码跑通。"
-                 "下方指标对比表仅做论文值与复现值的并列展示，仅供参考对比，"
-                 "**不做硬性结论判定**。")
+    lines.append(f"> {_SUCCESS_CRITERIA_NOTE}")
     lines.append("")
 
     # 计划目标回验（AC-S5-08）+ 步骤对账（AC-S5-10）

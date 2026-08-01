@@ -175,7 +175,9 @@ def test_cp_c3_1_importable_and_local_objects():
     assert not hasattr(st, "ErrorCategory"), "ErrorCategory 不应出现在 core/state.py"
     assert not hasattr(st, "ExecutionFeedback"), "ExecutionFeedback 不应出现在 core/state.py"
     assert not hasattr(st, "AUTO_FIXABLE"), "AUTO_FIXABLE 不应出现在 core/state.py"
-    # AUTO_FIXABLE 集合内容正确（S6-B2 新增 NO_METRICS，T-S6-2-4）。
+    # AUTO_FIXABLE 集合内容正确（S6-B2 新增 NO_METRICS，T-S6-2-4；
+    # S7-11 新增 INCOMPLETE_EXECUTION，T-S7-7-6——"计划步骤没跑完"须回 coding 补跑，
+    # 不进 AUTO_FIXABLE 就会落到 interrupt#2 直接打断用户，设计意图落反）。
     assert AUTO_FIXABLE == {
         ErrorCategory.SYNTAX,
         ErrorCategory.IMPORT,
@@ -183,6 +185,7 @@ def test_cp_c3_1_importable_and_local_objects():
         ErrorCategory.PATH,
         ErrorCategory.RUNTIME,
         ErrorCategory.NO_METRICS,
+        ErrorCategory.INCOMPLETE_EXECUTION,
     }
 
 

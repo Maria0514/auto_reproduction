@@ -104,11 +104,22 @@ def _run(
     stdout: str = "",
     stderr: str = "",
     timed_out: bool = False,
+    command: Optional[List[str]] = None,
 ) -> SandboxRunResult:
+    """假的一次沙箱执行。
+
+    ⚠ S7-11（T-S7-7-8）：默认命令由 ``["python", "x.py"]`` 改为
+    ``["python", "train.py"]`` —— 与 ``_base_state`` 里那份计划的唯一执行步骤
+    （``{"command": "python train.py"}``）**保持自洽**。原来的写法是一个自相矛盾的
+    夹具：假 run 跑的命令根本不在计划里、也不带 step_index 自报，因此步骤对账**本就
+    归属不上**；只是在 S7-11 之前"计划步骤跑完没有"不进 success 判定，这笔账才一直
+    没被撞出来。**这是把夹具改成自洽的正确值，不是放宽断言**（各用例的
+    ``success is True`` 一字未动）。
+    """
     return SandboxRunResult(
         exit_code=exit_code, stdout=stdout, stderr=stderr,
         duration_seconds=0.1, timed_out=timed_out,
-        output_truncated=False, command=["python", "x.py"],
+        output_truncated=False, command=list(command or ["python", "train.py"]),
     )
 
 
