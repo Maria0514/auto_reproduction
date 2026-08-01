@@ -68,7 +68,12 @@ from core.plan_checks import (
 from core.nodes.coding import _FIX_NOTE_MAX_CHARS
 from core.react_base import _repair_truncated_json_prefix, create_react_subgraph
 from core.secrets_store import build_credential_env, load_all_secrets, mask_value
-from core.state import ExecutionResult, FixLoopRecord, GlobalState
+from core.state import (
+    ExecutionResult,
+    FixLoopRecord,
+    GlobalState,
+    completion_denominator as _completion_denominator,
+)
 from core.tools.interaction_tools import make_request_user_input_tool
 from sandbox.local_venv import (
     SandboxPrepareResult,
@@ -1701,6 +1706,12 @@ def _reconcile_steps(
     """
     steps = list(plan_steps or [])
     planned = len(steps)
+    # BUG-S7-11-01（2026-08-01）：完成度分母必须是**可执行步数**，不是原始步数。
+    # planned 仍是原始步数——它是 ① 自报下标的合法区间（下标恒对原始步序有效，
+    # 两套编号绝不可混用）与 ② 报告"计划共 N 步"的口径；新增的 planned_actionable
+    # 才是判定分母（详见 _is_actionable_step / _completion_denominator）。
+    actionable_idx = {i for i, s in enumerate(steps) if _is_actionable_step(s)}
+    planned_actionable = len(actionable_idx)
     effective = _effective_runs(list(run_results or []))
 
     # 归属规则①：台账合法声明 map（命令 tuple → step_index，最后一次声明为准）。
@@ -1714,6 +1725,10 @@ def _reconcile_steps(
             continue
         if idx == -1:
             continue  # 未声明（计划外/无标签），交给规则②/③
+        # ⚠ 越界判据用**原始步数** planned（不是 planned_actionable）：agent 自报的
+        # step_index 指向的是它看到的那份计划的原始步序，剔除不可执行步骤只影响分母、
+        # 不重排步序。用 actionable 数做上界会把靠后的合法声明误丢（BUG-S7-11-01 修复
+        # 时的头号混淆点）。
         if not (0 <= idx < planned):
             logger.warning(
                 "[%s] 对账台账 step_index 越界丢弃: index=%d planned=%d cmd=%s",
@@ -1761,14 +1776,19 @@ def _reconcile_steps(
         )
         unexecuted: List[Dict[str, Any]] = []
     else:
+        # BUG-S7-11-01：不可执行的步骤不进"未执行清单"——它不是"agent 该跑却没跑"，
+        # 而是"压根没有可跑的命令"。留在清单里会让 reporting 的 incomplete_execution
+        # 标注在 success=True 时照样点火，制造 CP-7.9-3 明令禁止的自相矛盾报告
+        # （"判定成功"却横幅说"没跑完"），同时给 coder 一条它变不出命令的伪修复目标。
         unexecuted = [
             {"index": i, "step_name": mask_value(_step_display_name(steps[i], i)) or ""}
             for i in range(planned)
-            if i not in step_runs
+            if i not in step_runs and i in actionable_idx
         ]
 
     return {
         "planned": planned,
+        "planned_actionable": planned_actionable,
         "executed": len(step_runs),
         "completed": completed,
         "unexecuted_steps": unexecuted,
@@ -1798,25 +1818,32 @@ def _completion_insufficient(recon: Optional[Dict[str, Any]]) -> bool:
     **两处必须都调它**，禁止各写一遍比较——否则日后必漂移出"改判了但 success 还是
     True"这种最隐蔽的假绿（dev-plan §49.3 单点谓词红线，CP-7.6-2 打桩守门）。
 
-    - 语义：``planned > 0 and completed < planned``（**单轮全量**口径——``run_results``
+    - 语义：``planned_actionable > 0 and completed < planned_actionable``（**单轮全量**
+      口径——``run_results``
       / ``step_ledger`` 逐轮重置是正确设计，跨轮取并集等于"把上轮代码下的通过当成本轮
       代码下的通过"，是与本次修复初衷同型的假绿，Q-S7-25(0) + Maria 双重否决）；
-    - ``planned == 0``（无计划步骤）→ ``False``，既有语义零变化；
+    - ``planned_actionable == 0``（无计划步骤，**或计划里一条可执行命令都没有**）→
+      ``False``，既有语义零变化（BUG-S7-11-01 修复：架构原裁决要求这一格恒真让位）；
     - 入参非 dict / 缺键 / 键值非 int（旧 checkpoint、畸形快照，R-6）→ ``False``：
       宁可漏判也不误判红——判红会把用户推进修复循环，代价方向更差；
+    - ★ 分母走 ``_completion_denominator``（``planned_actionable`` 优先、回落
+      ``planned``）：**不可执行的步骤**（无 ``command`` 键 / 空串 / 纯 ``cd``）永远进不了
+      分子，把它们算进分母会让 ``success`` **不可达**——agent 完全照做也恒判未完成、
+      烧满 ``MAX_FIX_LOOP_COUNT`` 轮、每次真跑都被推到 interrupt#2，且下一轮 coding
+      变不出"查看图表"的命令 ⇒ **循环无解**（BUG-S7-11-01，2026-08-01 独立验收发现）；
     - ``attribution_unavailable``（R-2 保守语义）**不特殊对待**：它只置空
       ``unexecuted_steps``（展示层保守），``completed`` 照常为 0 ⇒ 判不成功。
       "跑了一堆计划外命令、一步计划都没归属上"本就不该判成功。
     """
     if not isinstance(recon, dict):
         return False
-    planned = recon.get("planned")
+    denominator = _completion_denominator(recon)
     completed = recon.get("completed")
-    if not isinstance(planned, int) or isinstance(planned, bool):
+    if denominator is None:
         return False
     if not isinstance(completed, int) or isinstance(completed, bool):
         return False
-    return planned > 0 and completed < planned
+    return denominator > 0 and completed < denominator
 
 
 def _plan_step_keys(step: Any) -> set:
@@ -1832,6 +1859,30 @@ def _plan_step_keys(step: Any) -> set:
         if key:
             keys.add(key)
     return keys
+
+
+def _is_actionable_step(step: Any) -> bool:
+    """该计划步骤是否**有可执行命令**（完成度分母判据，BUG-S7-11-01）。
+
+    判据完全确定性、与 ``_plan_step_keys`` **同一取数点**（它正是归属规则②建索引用的
+    那套解析），因此"进得了分母"与"进得了分子"用的是同一把尺子——这是修复的关键：
+    只要一条步骤能被归属，它就在分母里；归属不上的（下列三形态）才被剔除。
+
+    判 ``False`` 的三种形态（逐条可单测，边界清晰）：
+        - 无 ``command`` / ``cmd`` / ``run`` 键（``_extract_command_str`` 返回 ``None``）；
+        - ``command`` 为空串或纯空白（同上）；
+        - 拆顶层 ``&&`` / ``;`` 后**只剩** ``cd`` / ``source`` / ``.`` 子命令（执行侧本就
+          不产生 run，归属规则②也显式跳过）。
+
+    ⚠ **判 ``True`` 但 agent 其实跑不了的一类：``command`` 写成自然语言描述**
+    （"人工查看 outputs/figures 下的图是否正常"）。**本函数刻意不去识别它**——它与
+    "真命令写错/拼错"（``pyhton train.py``）在字符串层面**没有确定性判据**可分，任何
+    启发式（英文词表、可执行文件存在性、非 ASCII 头 token）都会把真步骤误剔出分母，
+    那是往**假绿**方向退（正是 S7-11 本身要修的东西）。⇒ 取舍：**宁可算进分母**。
+    该形态的残留后果与本 bug 同型（恒判未完成），根治出口在 planning 侧强制每步
+    ``command`` 可执行（跨节点契约，本批不扩围），已登记 dev-plan §56.3。
+    """
+    return bool(_plan_step_keys(step))
 
 
 def _audit_declared_steps(
@@ -1954,7 +2005,10 @@ def _apply_incomplete_execution(
     ):
         return feedback
     recon = recon if isinstance(recon, dict) else {}
-    planned = recon.get("planned")
+    # ⚠ 分母走 _completion_denominator（与 _completion_insufficient 同一口径）：
+    # 判定说"没跑完"、文案却按原始步数报另一个分母，会让 coder 与用户看到两个数
+    # （BUG-S7-11-01 修复，dev-plan §49.2 第 7 条单一完成度数据源）。
+    planned = _completion_denominator(recon)
     completed = recon.get("completed")
     summary = f"{_INCOMPLETE_EXECUTION_SUMMARY_LEAD}（已跑完 {completed}/{planned} 步）"
     names = [

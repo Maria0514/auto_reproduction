@@ -3351,7 +3351,7 @@ S7-11 有**四处**改动落在 `core/nodes/execution.py`：
 - [x] **CP-7.5-1** **谓词真值表 + 防御**：`{"planned":9,"completed":2}` → `True`；`{"planned":9,"completed":9}` → `False`；`{"planned":0,"completed":0}` → **`False`**（空计划不得被判永久红）；`None` / `{}` / `{"planned":"x","completed":1}` → **`False` 且零异常**。**验红**：把 `<` 改成 `<=` → 第二格红；把防御分支去掉 → 畸形入参格红（抛异常）；均还原。
 - [x] **CP-7.5-2** **UMAP 同型场景**：用 §56.1 存的真跑现场数字构造 `{"planned":9,"executed":2,"completed":2}` → `_completion_insufficient` 为 `True`；round_0 的 `{"planned":9,"executed":8,"completed":3}` → 同样 `True`。**验红**：把谓词改成恒 `False` → 两格皆红；还原。
 - [x] **CP-7.5-3** **★ 防伪留痕正负两向**：①agent 声明 `step_index=0` 但实跑命令与计划第 0 步完全不同 → **有 WARNING，含"自报"字样与不符条数**；②agent 声明 `step_index=0` 且命令与计划第 0 步一致 → **零 WARNING**；③agent 用 `python -m scripts.x` 重跑计划里写 `python scripts/x.py` 的第 0 步 → **有 WARNING（这是设计内的观测命中，不是缺陷）**；④计划第 0 步无 command → **零 WARNING**。**验红**：把判据反向（∈ 时告警）→ ①②同时翻转变红；还原。
-- [x] **CP-7.5-4** **★ 纯观测守门（本任务的红线机制化）**：`_audit_declared_steps` 的**返回值为 `None`**；monkeypatch 打桩使其内部记到大量不符 → `_build_execution_result` 产出的 `success` 与 `feedback.category` **一字不变**；`ExecutionResult` 键集合仍为 **11 键**（零新增）。**验红**：临时把它的返回值接进 `success` 计算 → 打桩断言红；还原。
+- [x] **CP-7.5-4** **★ 纯观测守门（本任务的红线机制化）**：`_audit_declared_steps` 的**返回值为 `None`**；monkeypatch 打桩使其内部记到大量不符 → `_build_execution_result` 产出的 `success` 与 `feedback.category` **一字不变**；`ExecutionResult` 键集合仍为 **11 键**（零新增）。**验红**：临时把它的返回值接进 `success` 计算 → 打桩断言红；还原。⚠ **2026-08-01 补强（§56.3 P-54「假绿②」）**：该守门原先只断言成功场景的 `success` 与 `errors`，可被「返回值接进 **feedback**」完整绕过（成功场景下 feedback 不进 `ExecutionResult`）。已改为**打桩前后整份节点输出快照逐字节相同**（黑名单式：除 `runtime_seconds` / 各 `timestamp` 外全纳入，新增 state 键自动覆盖），并覆盖 success / incomplete / failed 三场景。
 - [x] **CP-7.5-5** **行为零变更 + 脱敏**：本任务收口时全量回归**零新增红**（`success` 语义与改动前逐条一致）；WARNING 日志中的命令与步骤名**已过 `mask_value`**（构造一条内嵌假 token 的命令，断言日志里不出现明文）。**验红**：去掉 `mask_value` → 脱敏断言红；还原。
 
 ---
@@ -3389,8 +3389,8 @@ S7-11 有**四处**改动落在 `core/nodes/execution.py`：
 
 - [x] **CP-7.6-1** **★ 四格真值表逐格**（`exit_ok=True` 前提）：有指标+完成足→NONE/`success=True`；有指标+不足→**INCOMPLETE**；无指标+不足→**INCOMPLETE**（**不是 NO_METRICS**）；无指标+完成足→NO_METRICS。**验红**：把 `_apply_incomplete_execution` 移到 `_apply_no_metrics` **之后** → 第三格变成 NO_METRICS ⇒ 断言红；还原（**这条红正是"优先级靠顺序拿"的活体证明**）。
 - [x] **CP-7.6-2** **★ 单点谓词守门**：`monkeypatch` 打桩 `_completion_insufficient` 使其恒 `True` → `success` 与 feedback 改判**必须同时**翻转；恒 `False` → 两者**同时**回落。**验红**：把 `success` 那处改成内联比较（不调谓词）→ 打桩后只有 feedback 翻转、`success` 不翻 ⇒ 断言红；还原。（**这一条是本批最重要的守门** —— 它拦的是"改判了但 success 还是 True"这种最隐蔽的假绿。）
-- [x] **CP-7.6-3** **★ 路由正确（修法 D 的命门）**：`exit_ok ∧ metrics≥1 ∧ 完成度不足` → `_dev_loop_route == _ROUTE_RETRY_CODING`、`fix_loop_count` +1、`fix_loop_history[-1]["error_category"] == "incomplete_execution"`、`fix_loop_history[-1]["error_summary"]` 非空。**验红**：把 `INCOMPLETE_EXECUTION` 从 `AUTO_FIXABLE` 摘掉 → 路由落 interrupt#2 ⇒ 断言红；还原。（**这条红证明的正是"没有 D 就会打断用户"**。）
-- [ ] **CP-7.6-4** **撞上限走既有两段式 interrupt#2**：`fix_loop_count == MAX_FIX_LOOP_COUNT` 时 → `already_committed` 语义**零退化**（先落盘 + self-loop 重入 → 函数体内 interrupt）。**验红**：把 `already_committed` 分支短路 → 断言红；还原。
+- [x] **CP-7.6-3** **★ 路由正确（修法 D 的命门）**：`exit_ok ∧ metrics≥1 ∧ 完成度不足` → `_dev_loop_route == _ROUTE_RETRY_CODING`、`fix_loop_count` +1、`fix_loop_history[-1]["error_category"] == "incomplete_execution"`、`fix_loop_history[-1]["error_summary"]` 非空。**验红**：⚠ **本文原写的手法是错的，见 §56.3 P-51**——正确手法是把 `_apply_incomplete_execution` 的 `auto_fixable=True` 置 `False`（路由由 `retry_coding` 翻为 `await_dev_loop_interrupt`，3 条红）。「从 `AUTO_FIXABLE` 摘掉」这一手法在测试工程师补了两条一致性守门后**已重新有效**（会红在一致性门上）。（**这条红证明的正是"没有 D 就会打断用户"**。）
+- [x] **CP-7.6-4**（**2026-08-01 由测试工程师代理补齐**，见 §56.3 缺口③：`tests/test_sprint7_s711_gap_audit.py` 3 条——撞 `MAX_FIX_LOOP_COUNT` / 预算不足一回合 / 子预算触顶，均落 `_ROUTE_AWAIT_INTERRUPT` 两段式；**验红**：把 `fix_count < MAX_FIX_LOOP_COUNT` 放宽成 `<=` → 该 2 条红而开发交付的 49 条全绿）**撞上限走既有两段式 interrupt#2**：`fix_loop_count == MAX_FIX_LOOP_COUNT` 时 → `already_committed` 语义**零退化**（先落盘 + self-loop 重入 → 函数体内 interrupt）。**验红**：把 `already_committed` 分支短路 → 断言红；还原。
 - [x] **CP-7.6-5** **guard 重入 round-trip**：落盘 `errors[0]` 的 `[error_category=incomplete_execution]` 前缀经 `_feedback_from_committed_result` 还原为 `INCOMPLETE_EXECUTION` 且 `auto_fixable=True`（**证明该函数零改动即正确**）。**验红**：把枚举值字符串改成一个 `ErrorCategory` 里不存在的值 → 还原落到 `RUNTIME` ⇒ 断言红；还原。
 - [x] **CP-7.6-6** **早停不误触**：连续 3 轮 `error_category == "incomplete_execution"` 的 `fix_loop_history` → `_no_metrics_stalled` 恒 `False`（新类别天然不进 NO_METRICS 早停）。**验红**：把 `_no_metrics_stalled` 的 gate 从 NO_METRICS 放宽成"任意 auto_fixable" → 断言红；还原。
 - [x] **CP-7.6-7** **三处映射点零改动实测**：`_map_category_to_error_type(INCOMPLETE_EXECUTION) == "transient"`；`_feedback_from_committed_result` round-trip（CP-7.6-5 已覆盖）；`_no_metrics_stalled` 不点火（CP-7.6-6 已覆盖）。**且这三个函数的函数体 `git diff` 为空**。**验红**：临时给 `_map_category_to_error_type` 加一条针对新枚举的显式分支 → `git diff` 非空 ⇒ 该判据有效；还原。
@@ -3713,7 +3713,72 @@ S7-11 有**四处**改动落在 `core/nodes/execution.py`：
 本文 CP-7.6-3 写"**把 `INCOMPLETE_EXECUTION` 从 `AUTO_FIXABLE` 摘掉 → 路由落 interrupt#2**"。**实测：摘掉后路由断言仍然绿**——因为 `_apply_incomplete_execution` 是**显式**传 `auto_fixable=True` 构造 `ExecutionFeedback` 的，路由读的是这个实例字段，不查集合。`AUTO_FIXABLE` 真正影响的是另外两处：`_map_category_to_error_type`（transient/permanent）与 `_feedback_from_committed_result`（guard 重入 round-trip）——摘掉后**这两处确实红**（实测 3 条红）。
 ⇒ **能真正证明"没有 D 就会打断用户"的改坏方式是把 `auto_fixable=True` 改成 `False`**。已按此实做：路由断言由 `retry_coding` 翻转为 **`await_dev_loop_interrupt`**（即 interrupt#2），`test_da_9_all_four_fixes_landed_together` 报"修法 D 未落地"，共 3 条红。**这条红是"只上 C 不上 D 会把设计意图落反"的活体证明**（P-42 由推理升级为实证）。
 
-**P-52（CP-7.6-4 未实做）**：撞 `MAX_FIX_LOOP_COUNT` 上限走两段式 interrupt#2 的用例**本批未新增**（既有 sp4/sp5 用例覆盖的是别的分类走同一条路径，未针对新分类构造）。**如实登记为未完成检查点**，不勾选。
+**★ 根因补记（2026-08-01 @全栈开发代理，独立验收后回填；此前本条只记了现象）**：
+上面那句"路由读的是实例字段、不查集合"只说了**表象**。根因是 **`auto_fixable` 有两个真值源**：
+- **首跑路径**：`_apply_incomplete_execution` / `_apply_no_metrics` **硬编码** `auto_fixable=True` 构造 `ExecutionFeedback`；
+- **guard 重入路径**：`_feedback_from_committed_result` 从落盘结果的 `[error_category=...]` 前缀重建 feedback，用 **`category in AUTO_FIXABLE` 推导**。
+
+⇒ 两者可以静默漂移：**摘掉集合之后，同一份落盘结果在首跑路径照样回 coding、在 guard 重入路径却被判成不可修复**。这既是"摘集合验红无效"的原因，也是一个**真实的一致性缺陷**（不只是验红手法问题）。测试工程师已补两条一致性守门（`test_gap_apply_chain_auto_fixable_agrees_with_the_auto_fixable_set` / `test_gap_first_pass_and_guard_reentry_agree_on_auto_fixable`）把缺口机制化——补完后"摘集合"这种改坏方式重新会红，本文 CP-7.6-3 原设想的验红手法恢复有效。
+
+**是否收敛为单一真相源的评估（结论：本批不改，登记为遗留）**：
+- 收敛方向很清楚——把 `_apply_*` 的 `auto_fixable=True` 改成 `auto_fixable=(category in AUTO_FIXABLE)`。
+- **不在本轮做的理由**：①它会改动 `_apply_no_metrics` 的函数体，而"`_apply_no_metrics` 函数体一行不改"是 Q-S7-30 拿到优先级的结构前提、CP-7.6-8 明文守着；②`AUTO_FIXABLE` 同时喂着 `_map_category_to_error_type` 的 transient/permanent 判定，改推导来源等于把路由行为挂到一个更远的集合上，收益（消掉一处漂移）小于风险（动到已被两轮裁决锁定的优先级结构）；③**两条一致性守门已经把漂移变成"当场红"**——双真相源的**危害**已被封死，剩下的只是形态不美。
+⇒ **登记为遗留项，不强行收敛**；日后若要动 `_apply_*` 的构造方式，必须连同 Q-S7-30 的优先级结构一起重议。
+
+---
+
+**P-54（★ BUG-S7-11-01 修复：完成度分母由「原始步数」改为「可执行步数」，2026-08-01 @全栈开发代理）**
+
+**缺陷**（测试工程师独立验收发现，主控复核属实）：`_reconcile_steps` 的 `planned = len(steps)` 是原始步数，`_completion_insufficient` 直接拿它做分母。计划里只要有一条 agent 无从执行的步骤，它**永远进不了分子** ⇒ 即便 agent 完全照做、全 exit 0、指标齐全、诚实自报 `step_index`，也恒判 INCOMPLETE、烧满 `MAX_FIX_LOOP_COUNT=20`、推到 interrupt#2；而下一轮 coding 变不出"查看图表"的命令 ⇒ **循环无解**。
+**性质**：**设计对、实现错**——本文 §49.2 第 6 条与 §53 R-S7-59 正文两处逐字写的都是 `completed < planned_actionable`（**actionable**），实现落成了 `planned`。
+
+**修法（生产改动三处，全部局部）**：
+1. `core/state.py` 新增 **`completion_denominator(recon)`**：取 `planned_actionable`，缺失/非 int 时**回落 `planned`**（旧 checkpoint 兼容 R-6，回落 = 退回修复前口径，是保守行为不是新语义）。**放在 `core.state` 而不是 `execution`**，因为 reporting 有纯度红线（CP-3.3-4：不得 import 带 LLM 的模块，`test_sprint5_t33_conclusion.py::test_cp_3_3_4_purity_no_llm_in_reporting_module` 守着，实测 import execution 当场红）。
+2. `core/nodes/execution.py`：新增 `_is_actionable_step`（= `_plan_step_keys` 的布尔投影）；`_reconcile_steps` 输出新增 `planned_actionable` 键、且**不可执行步骤不进 `unexecuted_steps`**；`_completion_insufficient` 与 `_apply_incomplete_execution` 的文案分母改走 `completion_denominator`。
+3. `core/nodes/reporting.py`：横幅与对账节的"已完成 N/M"分母改走同一函数；`planned` 与分母不等时补一句「其中 X 步没有可执行的命令、不计入完成度」。
+
+**四个设计判断（逐条给理由，不含糊）**：
+
+- **(a) 分母判据 = `_plan_step_keys(step)` 非空**。确定性、可单测、边界清晰，判 `False` 的三形态：无 `command`/`cmd`/`run` 键、`command` 空串或纯空白、拆顶层 `&&`/`;` 后只剩 `cd`/`source`/`.`。**关键在于它与归属规则②建索引用的是同一把尺子**——"进得了分母"与"进得了分子"共用一套解析，结构上杜绝了"某步永远进不了分子却算在分母里"。已立守门 `test_actionable_predicate_shares_one_parser_with_attribution_rule_2`（任何人另写一遍等价判据都会红）。
+- **(b) `command` 写成自然语言描述这一类：★ 刻意判 `True`（算进分母）**。**不能确定性识别**——"人工查看 outputs/figures 下的图是否正常"与"真命令写错/拼错"（`pyhton train.py`）在字符串层没有可靠判据可分。试过的启发式（英文词表 / 可执行文件存在性 / 非 ASCII 头 token）都会把**真步骤**误剔出分母，那是往**假绿**方向退——正是 S7-11 本身要修的东西。⇒ **取舍：宁可算进分母**（保守方向与 R-2 一致：宁可误红不可误绿）。**残留风险如实登记**：该形态的后果与本 bug 同型（恒判未完成），本次**未消除**；根治出口在 planning 侧强制每步 `command` 可执行，属跨节点契约问题（`plan_checks.py` 对空命令目前是 `continue` 放行），**本批不扩围**（且该文件当时由并发的 S7-12 会话占用）。已用 `test_bug_s711_01_natural_language_command_is_the_same_trap`（测试工程师原用例，修复后**仍绿、一字未动**）把这个取舍钉住。
+- **(c) 越界丢弃逻辑仍用原始步数 `planned`**。agent 自报的 `step_index` 指向的是它看到的那份计划的**原始步序**，剔除不可执行步骤只改分母、不重排步序。用 actionable 数做上界会把靠后步骤的合法自报误丢（这是修复时最容易混淆的一点）。已立守门 `test_reconcile_exposes_both_numbers_and_never_confuses_them` / `test_out_of_range_declaration_still_uses_raw_step_count`。
+- **(d) 展示层 `planned` 的处置：`planned` 键保持原始步数不变，但"已完成 N/M"的 **M 跟着判定走**（= actionable）**。理由两条：①本文 §49.2 第 7 条已经立过规矩——"全系统只有一个完成数，判定、报告横幅、步骤对账节全部取它，报告内不可能再自相矛盾"；分母若分叉，用户会看到"判定成功"配"已完成 1/2 步"。②`planned` 本身仍有独立用途（"计划共 N 步"陈述 + 自报下标合法区间），删不得 ⇒ 两个数并存但**语义不同、文案上分别表述**：M 是分母，N 只出现在"计划 N 步"里，且两者不等时显式给出差额理由，用户不需要自己猜。**连带处置**：不可执行步骤**也不进 `unexecuted_steps`** ——否则 reporting 的 `incomplete_execution` 标注（条件是 `unexecuted_steps` 非空）会在 `success=True` 时照样点火，正好制造 CP-7.9-3 明令为零的那种自相矛盾报告；而且把它列进"还没跑的有…"是给 coder 一个它变不出命令的**伪修复目标**。
+
+**验红实据（每处均 `cp` 备份 → 改坏 → 红 → `cp` 还原 → `sha256sum -c` 校验 → 复绿；全程零 `git checkout`/`restore`/`stash`）**：
+| # | 改坏方式 | 红的条数 | 报错摘要 |
+|---|---|---|---|
+| ① | `completion_denominator` 的取数序列由 `("planned_actionable","planned")` 改回 `("planned",)`（即退回缺陷口径） | **12** | `assert 5 == 3`（真值表）/ `assert False is True`（3 形态 × 2 组）/ `assert '已跑完 1/2 步' in '…已跑完 1/3 步…'` / `assert True is False`（谓词层） |
+| ② | `_is_actionable_step` 恒返 `True`（判据被架空） | **12** | `assert 2 == 1`（planned_actionable）/ 真值表 `assert True is False` / 报告 `已完成 1/1 步` 不在 |
+| ③ | 展示层自写一份**逐字节等价**的 `completion_denominator`（双真相源） | **1** | `assert <function completion_denominator at 0x…> is <function completion_denominator at 0x…>` —— **连等价实现都红**，这是反 P-51 式漂移的最强形态 |
+| ④a | 把留痕结论接进 **feedback**（测试工程师发现的假绿形态） | **2** | `留痕函数（incomplete/failed 场景）的结论泄漏进了判定 / 路由 / 落盘` |
+| ④b | 把留痕结论写进一个**全新 state 键**（第三条泄漏路径） | **3**（新投影） / **0**（旧白名单投影，同一处改坏，实测对照） | 同上，三场景全红 |
+
+**假绿②补强的充分性复核（缺陷二）**：测试工程师的 `_projection` 是**白名单**（`execution_result` 全键 + route + fix_loop_count + fix 分类 + node_error **类型**），仍有三条路能躲过：① `degraded_nodes` 根本不在投影里；② `node_errors` 的 **message / 文案**（只取了 `error_type`）；③ **任何新增的 state 键**。已实测证实路径③：同一处泄漏在旧投影下 **3 passed**、在改成**黑名单式整份输出快照**（除 `runtime_seconds` / 各 `timestamp` 外全纳入）后 **3 failed**。⇒ 投影已由白名单改黑名单，新增键自动被覆盖（**强度提升，不是放宽**）。
+⚠ 顺带澄清一处：`success` 场景下把留痕接进 feedback **确实不红，且不是漏网**——`success` 由 `exit_ok ∧ metrics ∧ not _completion_insufficient` 独立算出、**不读 feedback**，而 `errors` 只在 `not success` 时填 ⇒ 该场景下 feedback 对节点输出**零影响**，没有可观测的泄漏。红线由 incomplete / failed 两个场景守住即可（任一红即整条用例红）。
+**已知残留**：日志与磁盘写入不在投影范围内（留痕本就该打日志），若日后有人让留痕函数写文件并被别处读回，本守门看不见——属可接受残留，不另造机制。
+
+**受影响的既有用例处置（禁弱化自查）**：
+- 测试工程师的 3 条 `xfail(strict=True)` **已转正为常规断言**（只摘 `@pytest.mark.xfail` 标记，**断言原文一字未动**）；
+- 4 条"现状钉死（characterization）"用例按设计**必然翻红**，已改为断言修复后的正确行为：`test_bug_s711_01_unrunnable_plan_step_forces_endless_fix_loop`（3 参数，断言由 3 条增至 6 条）+ `test_bug_s711_01_predicate_level_reproduction`（补断 `planned_actionable` 与回落语义）。**零删除、零弱化**（无新增 `>=` / `issubset` / `skip` / `xfail`）；
+- `test_bug_s711_01_natural_language_command_is_the_same_trap` **一字未动且仍绿**——它正是 (b) 那条取舍的钉子。
+
+**新增守门**：`tests/test_sprint7_s711_actionable_denominator.py`（**15 条**：判据同源 1 + 两套编号不混用 2 + 单一取数点 1 + 分母真值表 8 + 判定/报告不分叉 2 + 旧 checkpoint 回落 1）；`tests/test_sprint7_s711_gap_audit.py` 追加 1 条判据真值表（**33 → 34 条**）。
+
+**回归账目（对平，无余数）**：
+| 口径 | 数字 | 构成 |
+|---|---|---|
+| 修复前基线（含测试工程师补的 33 条） | **2475 passed / 25 skipped / 58 deselected / 10 xfailed / 0 failed**（62.26s） | 与主控、测试工程师双实测逐字相符 |
+| 修复后全量 | **2494 passed / 25 skipped / 58 deselected / 7 xfailed / 0 failed**（62.20s） | 2475 **+3**（3 条 strict-xfail 转正为 passed）**+1**（gap_audit 新增真值表）**+15**（新守门文件）= 2494；xfailed **10 − 3 = 7** |
+| `-m browser` | **12 passed**（79.87s） | 与基线一致，**未加 retry** |
+| `mypy` | **Success: no issues found in 27 source files** | 零错误 |
+- **未跑 e2e**（须 Maria 单独授权），**未 commit / push**。
+- **并发红线遵守**：全程零 `git checkout` / `git restore` / `git stash`；`core/tools/run_command_tool.py` / `tests/test_sprint7_s712_shell_metachars.py` / `core/plan_checks.py` / S7-12 测试报告**一次都没有被修改**（`git status` 收口时这四者零 diff）。
+
+**对 T-S7-7-9 真跑的影响**：测试工程师"BUG-S7-11-01 裁决前不应真跑"的阻塞理由已消除。⚠ 但 §5 里那条判读建议仍然成立且更重要了——真跑观测量①出现"恒判未完成"时，**先量计划里有几条自然语言 `command`**（见上文 (b) 的残留风险）再下结论，顺序反了会把 planning 侧的契约问题误记成"agent 提示词服从率不够"（与 R-S7-57 / BUG-S7-10-01 同型误判风险）。
+
+**CP-7.8-2 口径订正**（测试工程师独立核实）：本文下方"本批改动的 **4 个**既有测试文件"应为 **8 个 + `tests/conftest.py`**；**结论不变**（弱化零新增）。
+
+**P-52（CP-7.6-4 未实做 —— ⚠ 2026-08-01 已由测试工程师代理补齐 3 条，检查点已勾选）**：撞 `MAX_FIX_LOOP_COUNT` 上限走两段式 interrupt#2 的用例**本批未新增**（既有 sp4/sp5 用例覆盖的是别的分类走同一条路径，未针对新分类构造）。**如实登记为未完成检查点**，不勾选。
 
 **P-53（⚠ 环境事故与并发占用，须知悉）**
 ①**主控在验红时误用 `git checkout core/nodes/execution.py` 做还原，把当时未提交的全部改动一次性冲掉**——不仅是本批的，还包括**并发运行的 S7-12 代理写在同一文件里的 shell 元字符拒绝块**。已按编辑记录逐条重建并逐项校验（prompt 哈希复算回到 `c73e1e6e3cfc1280`、S7-12 的 101 用例复绿）。**教训写死：验红还原一律用 `cp` 文件级备份 + `sha256` 校验，`git checkout` 在多代理共享工作区里是破坏性操作。**

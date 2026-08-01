@@ -161,8 +161,11 @@ class ExecutionResult(TypedDict):
 
     Sprint 5 新增 4 键（架构 sp5 §7.6 / §7.10 / §8 总表；仅此处做 TypedDict 键声明，
     execution.py 两处构造点补齐默认值属 T-S5-2-6）：
-        - step_reconciliation: 步骤对账 {"planned": int, "executed": int, "completed": int,
+        - step_reconciliation: 步骤对账 {"planned": int, "planned_actionable": int,
+          "executed": int, "completed": int,
           "unexecuted_steps": [{"index": int, "step_name": str}], "extra_commands": [str]}；
+          ⚠ planned 是**原始步数**（"计划共 N 步"陈述 + agent 自报 step_index 的合法区间），
+          planned_actionable 是**可执行步数**——完成度分母只认后者（BUG-S7-11-01）；
         - budget_truncated: 执行因轮次预算截断（reporting 截断声明，AC-S5-12）；
         - metrics_groups: 多组指标 {组名: {指标: 值}}（execution _collect_grouped_metrics 写）；
         - degraded_credentials: 本次执行降级的凭证 purpose_key 列表（自 state 快照）。
@@ -313,6 +316,32 @@ class GlobalState(TypedDict):
     # ``.get("local_env_facts", "")`` 兜底，不 KeyError。
     # 值 = 预渲染多行字符串（本机实测环境事实），空串表示"未知"。
     local_env_facts: str
+
+
+def completion_denominator(recon: Any) -> Optional[int]:
+    """``step_reconciliation`` 完成度分母的**单一取数点**（BUG-S7-11-01，2026-08-01）。
+
+    取 ``planned_actionable``（可执行步数）；该键缺失 / 非 int（旧 checkpoint 快照、
+    手工构造的对账 dict，R-6）时回落 ``planned``——回落即"退回修复前口径"，是保守行为
+    不是新语义。两者都取不到 → ``None``（调用方一律按"无从判定"处理）。
+
+    ⚠ **判定层与展示层必须都走这一个口径**：
+        - 判定：``execution._completion_insufficient`` / ``_apply_incomplete_execution``；
+        - 展示：``reporting._render_annotation_notices`` / ``_render_reconciliation``。
+    dev-plan §49.2 第 7 条「全系统只有一个完成数、报告内不可能再自相矛盾」；两份实现
+    必然漂移出"判定说成功、横幅说没跑完"的自相矛盾报告（CP-7.9-3 明令该组合为零）。
+
+    放在本模块（而非 ``execution``）是因为 ``reporting`` 有纯度红线（CP-3.3-4：不得
+    import 任何带 LLM 的模块），而 ``core.state`` 是两侧都已依赖的无副作用契约层；
+    ``step_reconciliation`` 的键契约也正声明在本文件的 ``ExecutionResult`` docstring 里。
+    """
+    if not isinstance(recon, dict):
+        return None
+    for key in ("planned_actionable", "planned"):
+        v = recon.get(key)
+        if isinstance(v, int) and not isinstance(v, bool):
+            return v
+    return None
 
 
 def _is_legacy_llm_config(value: Any) -> bool:

@@ -71,7 +71,12 @@ from typing import Any, Dict, List, Optional
 
 from config import WORKSPACE_DIR
 from core.honesty_audit import audit_code_dir
-from core.state import ExecutionMode, GlobalState
+# ★ 完成度分母只有一个取数点（BUG-S7-11-01 / dev-plan §49.2 第 7 条）：判定层
+# （execution）与展示层（本模块）共用 core.state 里的 completion_denominator，绝不在此
+# 另写一份 planned 读取——两份实现必然漂移出"判定说成功、报告说没跑完"这种自相矛盾的
+# 报告（CP-7.9-3 明令为零）。放在 core.state 而非 execution，是为了不破坏本模块的纯度
+# 红线（CP-3.3-4：reporting 不得 import 任何带 LLM 的模块）。
+from core.state import ExecutionMode, GlobalState, completion_denominator
 
 logger = logging.getLogger(__name__)
 
@@ -666,7 +671,8 @@ def _render_annotation_notices(
         lines.append("### 执行不完整")
         lines.append("")
         recon = result.get("step_reconciliation")
-        planned = recon.get("planned") if isinstance(recon, dict) else None
+        # 分母与判定层同口径（可执行步数；旧快照回落原始步数）——BUG-S7-11-01。
+        planned = completion_denominator(recon)
         completed = recon.get("completed") if isinstance(recon, dict) else None
         if isinstance(planned, int) and isinstance(completed, int):
             lines.append(f"> ⚠️ 计划步骤未全部执行完成（已完成 {completed}/{planned} 步），"
@@ -765,6 +771,9 @@ def _render_step_reconciliation(exec_result: Any) -> List[str]:
     lines.append("")
     if recon is not None:
         planned = recon.get("planned")
+        # 分母与判定层同口径（BUG-S7-11-01）：planned 只用于"计划共 N 步"的陈述，
+        # "已完成 N/M" 的 M 一律取可执行步数，否则会出现"判定成功却显示 1/2 步"。
+        denominator = completion_denominator(recon)
         executed = recon.get("executed")
         completed = recon.get("completed")
         if recon.get("attribution_unavailable") is True:
@@ -784,12 +793,20 @@ def _render_step_reconciliation(exec_result: Any) -> List[str]:
                 lines.append("- （无命令记录）")
             lines.append("")
         else:
-            if isinstance(planned, int) and isinstance(completed, int):
+            if isinstance(planned, int) and isinstance(completed, int) \
+                    and denominator is not None:
                 executed_note = (
                     f"，可归属执行 {executed} 步" if isinstance(executed, int) else ""
                 )
+                # 计划里含"没有可执行命令"的步骤（如"人工查看图表"）时显式说明它们
+                # 为什么不在分母里，避免用户看到 M 与"计划 N 步"对不上而生疑。
+                skipped_note = (
+                    f"，其中 {planned - denominator} 步没有可执行的命令、不计入完成度"
+                    if planned > denominator else ""
+                )
                 lines.append(
-                    f"- 已完成 {completed}/{planned} 步（计划 {planned} 步{executed_note}；"
+                    f"- 已完成 {completed}/{denominator} 步（计划 {planned} 步"
+                    f"{skipped_note}{executed_note}；"
                     "\"已完成\"= 该步归属的全部命令均成功退出）。"
                 )
             unexecuted = recon.get("unexecuted_steps") or []
