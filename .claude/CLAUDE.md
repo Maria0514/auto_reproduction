@@ -6,6 +6,11 @@
 - 依赖关键路径：`config.py` + `core/state.py` + `core/errors.py` → `core/llm_client.py` + `core/checkpointer.py` + `core/react_base.py` + `core/secrets_store.py` → `core/tools/*`（deepxiv/git/pwc/code_fs/run_command/interaction）→ `core/nodes/*`（7 节点）→ `core/graph.py` → `app.py`/`ui/`
 - 每个 Sprint 的文档在 `docs/sprint{N}/` 下（prd.md、architecture.md、dev-plan.md），进度跟踪在 `docs/TODO.md`，测试执行报告归档在 `docs/sprint{N}/test-reports/`（由测试工程师代理在每次跑测试后落盘，详见 `.claude/agents/test-engineer.md` "测试报告归档规范"）
 
+# 工程记忆
+- `docs/MEMORY.md` 记录了只存在于协作经验中、无法从代码和 git 历史反推的工程约定与踩坑结论（多代理并行的隔离规则、Python 环境的失败症状、流程铁律、设计取向、对外表述纪律）
+- **所有 agent 在开始任务前必须先读 `docs/MEMORY.md`**，其中的约定与本文件同等效力
+- 新踩到的坑、用户新给的工作方式纠正，若属于"换台机器仍然成立、但代码里看不出来"的知识，追加进 `docs/MEMORY.md`；只与本机环境绑定的内容（CLI 版本、磁盘配额、SSH 配置、端口转发）不要写进去
+
 # 与用户的每次对话均需要显式称呼用户为Maria
 
 # 与用户的沟通均使用中文
