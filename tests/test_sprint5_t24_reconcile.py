@@ -343,14 +343,24 @@ def test_cp_2_4_3_no_runs_not_conservative():
 
 
 def test_cp_2_4_4_steps_attempted_not_consumed_structural():
-    """结构守门：字面量 steps_attempted 在模块源码中只允许出现在冻结 prompt 常量内
-    （零代码消费点 → 自报字段结构性无法参与任何判定，产品红线）。"""
+    """结构守门：字面量 steps_attempted 在模块源码中只允许出现在**声明常量**内
+    （零代码消费点 → 自报字段结构性无法参与任何判定，产品红线）。
+
+    S7-13 起允许的声明常量有两个：冻结 prompt 主体 + ``EXECUTION_OUTPUT_SCHEMA``
+    （`create_react_subgraph(result_schema=…)` 的输出契约）。**两者都只是"告诉模型
+    可以填什么"，都不是消费点**——`_run_execution_agent` 只从 `<result>` 里取
+    ``metrics``，`steps_attempted` 一个读取点都没有。断言仍是**精确相等**：任何
+    第三处出现（哪怕只是取值）都会当场红。
+    """
     src = inspect.getsource(execution_module)
     literal = "steps_" + "attempted"  # 避免本断言自身被计入源码扫描面
     prompt_count = execution_module._EXECUTION_SYSTEM_PROMPT_BODY.count(literal)
+    schema_count = json.dumps(
+        execution_module.EXECUTION_OUTPUT_SCHEMA, ensure_ascii=False
+    ).count(literal)
     assert prompt_count >= 1, "prompt 常量应保留自报字段（仅供参考）"
-    assert src.count(literal) == prompt_count, \
-        "steps_attempted 出现在 prompt 常量之外 → 存在代码消费点，违反产品红线"
+    assert src.count(literal) == prompt_count + schema_count, \
+        "steps_attempted 出现在两个声明常量之外 → 存在代码消费点，违反产品红线"
 
 
 def test_cp_2_4_4_ledger_authoritative_and_masked(monkeypatch):

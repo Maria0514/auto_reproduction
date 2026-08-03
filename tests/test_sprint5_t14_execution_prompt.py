@@ -219,18 +219,20 @@ def test_cp_6_2_1_execution_prompt_body_byte_baseline():
     actual_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
 
     # 基线值见 dev-plan §48.1（execution prompt 主体字节基线留档表）。
-    # 当前基线：S7-11 修法 B **之后**（主体长 1979 字符，2026-08-01）。
-    # 变更内容 = ①工具说明把 step_index 声明由"可选提示"升为**必须**并写明漏报后果
-    # （S7-11 起完成度直接采信该自报值）；②工作纪律 4 收窄"如实收尾"授权（限"确实
-    # 无法继续时"，并要求收尾前把没跑过的步骤跑完或跑到失败为止）；③工作纪律 5 的
-    # "禁止空转"限定为**同一回合内**；④新增工作纪律 6「修复回合从第一步开始按顺序
-    # 全量重跑」——判定层的完成度合取项硬依赖这条；⑤成功判定纪律补"少跑步骤不会被
-    # 判成功"；⑥输出契约 steps_attempted 注释明确为"本回合"。
+    # 当前基线：S7-13 **之后**（主体长 2550 字符，2026-08-02）。
+    # 变更内容 = 输出契约新增 metrics 数组（name / value / group / source）+ 三条填写
+    # 纪律：①group 与 name 必须用 HumanMessage 里 expected_results 的原文写法（不得
+    # 改成产物目录名或代码字段名）；②同组指标一起列、同组同指标只报一条；③只汇报
+    # 真实读到的数值，宁可少报不得编造。配套 EXECUTION_OUTPUT_SCHEMA 经
+    # create_react_subgraph(result_schema=…) 生效。**零插值、零论文级动态值。**
     # 历史基线：0dbe4143dc836e91（1560 字符，sp4~sp7 未被锁定的值）→
-    #           f82f3938cf31f882（1698 字符，S7-10 / T-S7-6-4）→ 本值。
+    #           f82f3938cf31f882（1698 字符，S7-10 / T-S7-6-4）→
+    #           c73e1e6e3cfc1280（1979 字符，S7-11 / T-S7-7-4）→ 本值。
     # 本门建立于 S7-10 / T-S7-6-2，S7-11 改 prompt 时**当场红**，报错逐字为
-    # "当前：c73e1e6e3cfc1280，基线：f82f3938cf31f882"（CP-7.4-1 活体证明）。
-    EXPECTED_HASH = "c73e1e6e3cfc1280"
+    # "当前：c73e1e6e3cfc1280，基线：f82f3938cf31f882"（CP-7.4-1 活体证明）；
+    # S7-13 改 prompt 时**再次当场红**，报错逐字为
+    # "当前：2843778a159215c3，基线：c73e1e6e3cfc1280"（CP-9.1-8① 活体证明）。
+    EXPECTED_HASH = "2843778a159215c3"
 
     assert actual_hash == EXPECTED_HASH, (
         f"execution prompt 主体字节已变更（当前：{actual_hash}，基线：{EXPECTED_HASH}）"

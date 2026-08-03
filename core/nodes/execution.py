@@ -1067,6 +1067,79 @@ def make_run_in_sandbox_tool(
 # _map_execution_result）按本函数返回的 rounds_used 单点显式做（落点 B）。
 
 
+# S7-13（T-S7-9-1）：execution 侧 ReAct 输出契约。体例照 coding.CODING_OUTPUT_SCHEMA。
+#
+# 立项事实：`_run_execution_agent` 此前调 `create_react_subgraph` **不传第 5 个参数
+# result_schema**（react_base.py:509 一直支持，coding.py:894 传了）⇒ execution 的 agent
+# 全程在场、跑完全部步骤，但**系统从设计上没给它留汇报的出口**，收尾只从工具收集器
+# 取原始数据，指标归属靠代码猜（"取最后一块" / "只收顶层标量" / "组名子串匹配"三处
+# 猜测在 2026-08-01 真跑里全部猜错）。本 schema 就是那个出口：让它汇报，代码只管判定。
+#
+# 字段集刻意保持最小（MEMORY §4.1 反对过度工程）：
+#   - metrics[].group **必须填计划预期（expected_results）里出现的写法**，不是产物目录名
+#     ——名字对不上的问题由此**被绕过而非修补**（实测：计划写 "t-SNE"、目录叫
+#     baselines/tsne，`reporting._match_metrics_group("t-SNE", …)` 返回 None）；
+#   - metrics[].group 为空/缺省 ⇒ 主实验指标（进 ExecutionResult.metrics）；
+#   - metrics[].source 记产物文件相对路径：它是**给模型的锚**（逼它把值指回一个真实
+#     文件而不是凭印象写），**当前无代码消费点**。刻意不做"拿 source 回磁盘核对"——
+#     它只能拦"报了不存在的数"、拦不住"数取错了"，且 2026-08-01 真跑实测零编造
+#     ⇒ 没有证据前那是过度工程（沿 Q-S7-27 同款裁决）。真跑发现对不上再加。
+# required 刻意**不含 metrics**：零指标回合它就是空数组，若列为必填会被
+# `react_base._missing_required_fields` 判成"缺失"→ 每次都白烧一次 schema 重生成调用。
+EXECUTION_OUTPUT_SCHEMA: Dict[str, Any] = {
+    # title 字段是 langchain_openai.with_structured_output 的强制要求（函数名）。
+    "title": "ExecutionAgentReport",
+    "description": "execution 节点输出契约：本回合执行情况 + 真实跑出来的指标汇报。",
+    "type": "object",
+    "properties": {
+        "steps_attempted": {
+            "type": "integer",
+            "description": "本回合实际执行的命令条数。",
+        },
+        "all_exit_zero": {
+            "type": "boolean",
+            "description": "已执行命令是否全部 exit_code=0（如实填写）。",
+        },
+        "summary": {
+            "type": "string",
+            "description": "执行过程与结果的中文如实描述。",
+        },
+        "notes": {
+            "type": ["string", "null"],
+            "description": "降级 / 遗留问题等元信息（可选）。",
+        },
+        "metrics": {
+            "type": "array",
+            "description": "本回合真实跑出来的指标逐条列出；没有则为空数组。",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "指标名，优先用计划预期里出现的写法。",
+                    },
+                    "value": {
+                        "type": ["number", "string", "boolean"],
+                        "description": "指标值，直接取自产物文件，不得口算或估计。",
+                    },
+                    "group": {
+                        "type": ["string", "null"],
+                        "description": "该指标属于哪一组实验，用计划预期里的写法；主实验指标留空。",
+                    },
+                    "source": {
+                        "type": ["string", "null"],
+                        "description": "该值来自哪个产物文件（相对 work_dir 的路径）。",
+                    },
+                },
+                "required": ["name", "value"],
+            },
+        },
+    },
+    "required": ["steps_attempted", "all_exit_zero", "summary"],
+    "additionalProperties": True,
+}
+
+
 # Prompt Cache 方案 A：主体常量，零论文级 / 任务级动态变量（CP-E2-1 字节级一致断言）。
 # 动态上下文（work_dir / execution_steps / 修复回合反馈）一律走 HumanMessage。
 _EXECUTION_SYSTEM_PROMPT_BODY = """你是复现执行工程师，负责在隔离沙箱中执行论文复现代码并收集真实运行结果。HumanMessage 提供 work_dir、execution_steps 与环境依赖信息；修复回合时额外提供上一轮错误摘要。
@@ -1095,8 +1168,19 @@ _EXECUTION_SYSTEM_PROMPT_BODY = """你是复现执行工程师，负责在隔离
     "steps_attempted": int,        // 本回合实际执行的命令条数
     "all_exit_zero": bool,         // 已执行命令是否全部 exit_code=0（如实填写）
     "summary": str,                // 执行过程与结果的中文如实描述
-    "notes": str | null            // 降级/遗留问题等（可选）
+    "notes": str | null,           // 降级/遗留问题等（可选）
+    "metrics": [                   // 本回合真实跑出来的指标，逐条列出；没有就写 []
+      {
+        "name": str,                    // 指标名
+        "value": number | str | bool,   // 指标值，直接抄自产物文件，不得口算或估计
+        "group": str | null,            // 该指标属于哪一组实验；主实验指标留 null
+        "source": str | null            // 该值来自哪个产物文件（相对 work_dir 的路径）
+      }
+    ]
   }
+- metrics 的 group 与 name 必须使用 HumanMessage 里 expected_results 的原文写法：计划怎么称呼那一组方法、怎么称呼那个指标，你就怎么填，不要改成产物目录名或代码里的字段名。expected_results 没提到的指标，按产物文件里的原名填。
+- 一条命令跑完写出的产物文件，请用同一组名把该组的各项指标都列出来；同一组同一指标只报一条。
+- 只汇报你本回合真实读到的数值；产物文件里没有的一律不填，宁可少报也不得编造。
 - 不得捏造未执行的命令；不要在 <result> 之外再夹杂其它 JSON 块。
 """
 
@@ -1118,6 +1202,13 @@ class ExecAgentOutput:
       代理判据 rounds_used >= effective_max_rounds ⇔ force_finish 截断路径）；
       _run_execution_agent 单点产出（架构 §8 总表），随 exec_result 一次 commit。
       带默认值 False：降级路径（rounds_used=0）与既有构造点天然为 False。
+    - reported_metrics（S7-13，T-S7-9-1）：agent <result>.metrics 的**原样透传**
+      （list of dict，未清洗）。这是"让 agent 汇报、代码只管判定"的唯一入口；清洗
+      与拆分在 `_split_reported_metrics`（步骤 4.4）单点做，本 dataclass 不加工。
+      ⚠ 它是**自报**通道：绝不进 `_reconcile_steps` / `_completion_insufficient` /
+      `exit_ok` 任何一处（R-S4-01 红线），且主实验指标合并受"三档主通道非空"门控
+      （见 execution() 步骤 4.4 注释）——`len(metrics) >= 1` 这个成功合取项的
+      **分子来源不因本批变化**。带默认值 []：降级路径与既有构造点天然为空。
     """
 
     prep: Optional[SandboxPrepareResult]
@@ -1126,6 +1217,7 @@ class ExecAgentOutput:
     llm_calls: int
     step_ledger: List[Tuple[int, List[str], int]] = field(default_factory=list)
     budget_truncated: bool = False
+    reported_metrics: List[Any] = field(default_factory=list)
 
 
 def _format_execution_task_context() -> str:
@@ -1276,6 +1368,18 @@ def _build_execution_agent_context(
     # 生产路径上 plan 恒等于 state["reproduction_plan"]（node 主体 → _run_execution_agent 透传）。
     if isinstance(plan, dict) and plan.get("scale_reduced") is True:
         payload["scale_reduced_directive"] = _SCALE_REDUCED_DIRECTIVE
+
+    # S7-13（T-S7-9-1）：计划预期送到执行 agent 眼前。
+    # 在此之前本函数只传 execution_steps + environment，**从未传 expected_results**
+    # ⇒ agent 无从知道计划管那一组方法叫 "t-SNE"、管那个指标叫 "k-NN classifier
+    # accuracy"，`<result>.metrics` 里的 group / name 就只能按产物目录名与代码字段名
+    # 填，回到"名字对不上"的老路（实测：`_match_metrics_group("t-SNE", …)` → None）。
+    # 不补这一处，EXECUTION_OUTPUT_SCHEMA 里"用计划写法"那条约束直接落空。
+    # 沿 credential_degradations / scale_reduced_directive 同款"非空才注入"范式：
+    # 无 expected_results 的计划下 payload 与 sp7 基线字节零扰动。
+    expected_results = plan.get("expected_results")
+    if expected_results:
+        payload["expected_results"] = expected_results
 
     return payload
 
@@ -1504,11 +1608,15 @@ def _run_execution_agent(
         dev_calls_so_far = state.get("_dev_loop_llm_calls", 0) or 0
         remaining_sub_budget = max(0, MAX_DEV_LOOP_LLM_CALLS - dev_calls_so_far)
         effective_max_rounds = max(1, min(base_rounds, remaining_sub_budget))
+        # S7-13（T-S7-9-1）：补传 result_schema —— 在此之前本处**不传第 5 个参数**，
+        # 而 react_base.py:509 一直支持、coding.py:894 一直在传 ⇒ execution 的 agent
+        # 全程在场却没有汇报出口，指标只能靠代码从原始 stdout / 产物文件里猜。
         subgraph = create_react_subgraph(
             node_name=NODE_NAME,
             system_prompt=system_prompt,
             tools=tools,
             max_rounds=effective_max_rounds,
+            result_schema=EXECUTION_OUTPUT_SCHEMA,
         )
         # 装配项 3：ReActState 初始化。
         initial: Dict[str, Any] = {
@@ -1566,10 +1674,20 @@ def _run_execution_agent(
     )
     prep = prep_results[-1] if prep_results else None
 
+    # S7-13（T-S7-9-1）：取 agent 自报的指标数组（schema 通道，原样透传不清洗）。
+    # `final_state["result"]` 由 react_base finalize_node / force_finish_node 写入
+    # （schema 优先，标签解析兜底）。非 dict / 非 list 一律降级空数组——**不打
+    # WARNING**：零指标回合是合法常态（跑失败、只跑了 prepare），打了就是噪声。
+    agent_result = final_state.get("result") if isinstance(final_state, dict) else None
+    raw_reported = agent_result.get("metrics") if isinstance(agent_result, dict) else None
+    reported_metrics: List[Any] = list(raw_reported) if isinstance(raw_reported, list) else []
+
     logger.info(
-        "[%s] execution agent 完成: rounds=%d, prep_success=%s, run_results=%d",
+        "[%s] execution agent 完成: rounds=%d, prep_success=%s, run_results=%d, "
+        "reported_metrics=%d",
         NODE_NAME, rounds_used,
         (prep.success if prep is not None else None), len(run_results),
+        len(reported_metrics),
     )
     return ExecAgentOutput(
         prep=prep,
@@ -1578,6 +1696,7 @@ def _run_execution_agent(
         llm_calls=rounds_used,
         step_ledger=list(collector.step_ledger),
         budget_truncated=budget_truncated,
+        reported_metrics=reported_metrics,
     )
 
 
@@ -1637,6 +1756,98 @@ def _collect_grouped_metrics(work_dir: str) -> Dict[str, Dict[str, Any]]:
             # 其余（dict/list/None/超长 str）：只收顶层标量，跳过。
         groups[path.parent.relative_to(outputs_dir).as_posix()] = fields
     return groups
+
+
+# ---------------------------------------------------------------------------
+# 步骤 4.4（sp7 S7-13，T-S7-9-1）：agent 自报指标拆分（主实验 / 分组）
+# ---------------------------------------------------------------------------
+
+
+def _coerce_reported_value(value: Any) -> Tuple[bool, Any]:
+    """标量收编，口径与 `_collect_grouped_metrics` 完全一致。
+
+    返回 ``(是否可收, 收编后的值)``——用 tuple 而不是 ``Optional`` 是因为 ``None``
+    与 ``""`` / ``0`` / ``False`` 都是合法取值，单靠返回值无法区分"不可收"。
+    """
+    if isinstance(value, bool) or isinstance(value, (int, float)):
+        return True, value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text or len(text) > _GROUP_METRIC_STR_MAX_LEN:
+            return False, None
+        # 生成代码的输出理论上可能内嵌敏感值，脱敏出口纪律同 §9.3。
+        return True, (mask_value(text) or "")
+    return False, None
+
+
+def _split_reported_metrics(
+    reported: Any,
+) -> Tuple[Dict[str, Any], Dict[str, Dict[str, Any]]]:
+    """把 agent `<result>.metrics` 数组拆成 ``(主实验指标, 分组指标)``。
+
+    确定性纯函数（零 LLM、零磁盘 IO），是 S7-13「让 agent 汇报、代码只管判定」的
+    唯一清洗点：
+
+        - ``group`` 缺省 / null / 去空白后为空 ⇒ **主实验指标**（第一个返回值）；
+        - ``group`` 非空 ⇒ 落 ``{组名: {指标名: 值}}``（第二个返回值），组名**保持
+          agent 填的原文**（它填的是计划预期里的写法，`reporting._match_metrics_group`
+          归一后正好与 ``trend.greater`` / ``trend.lesser`` 对得上——名字对不上的问题
+          在这里是被**绕过**的，不是被修补的）；
+        - 值只收标量（口径同 `_collect_grouped_metrics`），str 过 ``mask_value`` +
+          120 字符上限；
+        - 同一 (组, 指标名) 重复：**先到先得**，绝不后覆盖前（"后覆盖前"正是本批要治
+          的病：把某一步的值冒充成另一步的）；取值不同的重复打 WARNING 留痕；
+        - 畸形条目（非 dict / 无 name / 值非标量）跳过并**打 WARNING**（已知 bug 模式
+          #3：禁止静默吞错）；
+        - 产出按组名、指标名 ``sorted``，同一份输入连跑逐字节相同。
+
+    ⚠ 本函数的输出属**agent 自报**，绝不得进入 `_reconcile_steps` /
+    `_completion_insufficient` / `exit_ok` 任何一处（R-S4-01 红线）。
+    """
+    main: Dict[str, Any] = {}
+    groups: Dict[str, Dict[str, Any]] = {}
+    if not isinstance(reported, list) or not reported:
+        return main, groups
+
+    collected: Dict[str, Dict[str, Any]] = {}
+    skipped: List[str] = []
+    conflicts: List[str] = []
+    for item in reported:
+        if not isinstance(item, dict):
+            skipped.append(f"非对象条目({type(item).__name__})")
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            skipped.append("name 缺失或为空")
+            continue
+        ok, value = _coerce_reported_value(item.get("value"))
+        if not ok:
+            skipped.append(f"{name}: value 非标量或超长")
+            continue
+        raw_group = item.get("group")
+        group = str(raw_group).strip() if isinstance(raw_group, str) else ""
+        bucket = collected.setdefault(group, {})
+        if name in bucket:
+            if bucket[name] != value:
+                conflicts.append(f"{group or '(主实验)'}::{name}")
+            continue  # 先到先得
+        bucket[name] = value
+
+    if skipped:
+        logger.warning(
+            "[%s] agent 自报指标：%d 条畸形条目已跳过（%s）",
+            NODE_NAME, len(skipped), "; ".join(skipped[:5]),
+        )
+    if conflicts:
+        logger.warning(
+            "[%s] agent 自报指标：%d 处同名异值重复，保留首次出现值（%s）",
+            NODE_NAME, len(conflicts), "; ".join(sorted(set(conflicts))[:5]),
+        )
+
+    main = dict(sorted(collected.get("", {}).items()))
+    for group_name in sorted(k for k in collected if k):
+        groups[group_name] = dict(sorted(collected[group_name].items()))
+    return main, groups
 
 
 # ---------------------------------------------------------------------------
@@ -2725,11 +2936,31 @@ def execution(state: GlobalState) -> dict:
     # 步骤 4：metrics 三档解析（档 3 LLM 抽取按实际次数回写预算）。
     metrics, llm_calls_used = _parse_metrics(run_results, plan, state)
 
-    # 步骤 4.5（sp5 S5-10，T-S5-2-6）：多组指标确定性收编（零 LLM；<METRICS> 三档
-    # 主通道语义不变——metrics 仍是主实验指标，metrics_groups 按 outputs/ 目录分组）。
+    # 步骤 4.4（sp7 S7-13，T-S7-9-1）：agent 自报指标拆分。
+    reported_main, reported_groups = _split_reported_metrics(agent_out.reported_metrics)
+    if metrics and reported_main:
+        # 主实验指标合并，**真实 stdout 解析值优先**（同名键 agent 自报不得覆盖），
+        # agent 自报只填补主通道没解析到的键——真跑现场档 1 只取到收尾脚本的
+        # mean_timing_seconds，科学指标 best_knn_accuracy 就是这样被补回来的。
+        metrics = {**reported_main, **metrics}
+    elif reported_main:
+        # ★ 门控（本批最要紧的一条自律）：三档主通道零指标时**不采信**自报。
+        # 否则 `len(metrics) >= 1` 这个成功合取项的分子就变成了 agent 自报——
+        # 代码一个字没改，语义却被悄悄换掉，正是 S7-11 立项时那类反向激励。
+        logger.warning(
+            "[%s] 主通道零指标，agent 自报的 %d 个主实验指标不采信"
+            "（成功判定的指标分子只认真实 stdout 解析）",
+            NODE_NAME, len(reported_main),
+        )
+
+    # 步骤 4.5（sp5 S5-10，T-S5-2-6）：多组指标收编。
+    # S7-13：**agent 汇报优先，磁盘扫描降为兜底**（agent 一组都没报时才扫盘）。
+    # 刻意**不合并**两个来源——实测合并会把回验打坏：磁盘组名 "umap" 与 agent 组名
+    # "UMAP" 归一后同为 "umap"，`reporting._match_metrics_group` 精确匹配命中 2 条
+    # 判歧义返 None，本来能匹配上的组反而匹配不上（一条"符合"退回"未验证"）。
     # 幂等纪律③同 4.6：在 _build_execution_result 之前算好、随 exec_result 一次
     # commit，guard 命中路径复用已落盘结果零重算。
-    metrics_groups = _collect_grouped_metrics(work_dir)
+    metrics_groups = reported_groups or _collect_grouped_metrics(work_dir)
 
     # 步骤 4.6（sp5 S5-06，T-S5-2-4/2-5）：确定性步骤对账 + 降级凭证快照 + 截断标记。
     # 幂等纪律③（架构 §9.2）：必须在 _build_execution_result 之前完成、随 exec_result

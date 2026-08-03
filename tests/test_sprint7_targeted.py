@@ -374,8 +374,13 @@ def _install_agent_harness(monkeypatch) -> Dict[str, Any]:
         def invoke(self, initial: Dict[str, Any]) -> Dict[str, Any]:
             return {"messages": [], "round": 0, "result": None}
 
-    def fake_create_react_subgraph(*, node_name, system_prompt, tools, max_rounds):
+    # result_schema 是 S7-13 起 execution 侧补传的第 5 个参数（EXECUTION_OUTPUT_SCHEMA）；
+    # 这里同步放宽签名并**记录下来**，使"到底传没传 schema"仍可被断言，而不是靠 **kwargs 吞掉。
+    def fake_create_react_subgraph(
+        *, node_name, system_prompt, tools, max_rounds, result_schema=None
+    ):
         captured["subgraph_max_rounds"] = max_rounds
+        captured["subgraph_result_schema"] = result_schema
         return _FakeSubgraph(max_rounds)
 
     _real_ctx = execution_module._build_execution_agent_context

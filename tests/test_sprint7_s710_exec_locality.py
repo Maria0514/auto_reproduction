@@ -647,11 +647,16 @@ def test_cp_6_6_7_execution_prompt_hash_untouched_by_tool_layer_change() -> None
     + 新增"修复回合全量重跑"纪律），走的是 dev-plan §48.1 的哈希三件套。**改动本身
     没有溢出到 S7-10 的关注面**：AC-S7-46 点名保留的三句仍在、点名禁止的"修正相对
     路径"仍不存在（下方 T-6-4 的正负向用例全绿即为证）。
+
+    ⚠ S7-13 / T-S7-9-1 再次更新基线：`c73e1e6e3cfc1280` → `2843778a159215c3`
+    （1979 → 2550 字符）。改的是**输出契约**（`<result>` 新增 metrics 数组 + 三条
+    填写纪律），同样走哈希三件套。工具说明与工作纪律 1~6 一字未动 ⇒ S7-10 的关注面
+    （内联写码 / `cd` 表述 / 不得写代码文件）零触碰，下方正负向用例仍是活体证明。
     """
     import hashlib
 
     actual = hashlib.sha256(_EXECUTION_BODY.encode("utf-8")).hexdigest()[:16]
-    assert actual == "c73e1e6e3cfc1280", (
+    assert actual == "2843778a159215c3", (
         f"execution 冻结区又变了（{actual}）—— 改冻结区必须走哈希三件套"
         "（重算写死 + dev-plan §48.1 留档 + 验红）"
     )

@@ -2889,6 +2889,8 @@ graph TD
 | **验红记录（S7-11）** | ✅ **两次实做**：①改 prompt 那一刻该门**当场红**，报错逐字为 `execution prompt 主体字节已变更（当前：c73e1e6e3cfc1280，基线：f82f3938cf31f882）`，同文件另 12 用例仍绿（**CP-7.4-1 活体证明**）；②更新基线后 13 passed，再在主体内插一个空格 → 复红（`当前：421761ac1165dedd`）→ `sha256` 校验逐字节还原 → 复绿 13 passed（CP-7.4-2） | **不验红等于没建门** |
 | **变更原因** | S7-10 的**一次性静态变更**：`:1018` 工作纪律第 4 条收窄（删「修正相对路径」这一内联写码授权口 + 补「不得写入或修改任何代码文件；代码本身有问题时如实收尾，由编排层交回代码生成环节修复」）；`:1011` `run_in_sandbox` 工具说明补「本工具不用于写代码」+ **Q-S7-22 的形态表述**（行内 `-c` 只用于简短探针 / 超长载荷会被直接拒绝，**刻意不写阈值数字**——避免与 `_INLINE_PY_MAX_CHARS` 形成无机械绑定的双源真相，那是 R-S7-41 换层皮） | 判 bug 的标准是"是否引入论文级 / 任务级动态值"，不是"是否修改过"（沿 §40.1 与架构 §18.4(1) 同款口径）。**动态值仍一律走 HumanMessage**。`cd（限工作区内）` 表述**保留未删**（AC-S7-46 明令） |
 | **验红记录** | ✅ **三次全部实做**：①T-6-2 建门后（改前基线 `0dbe4143dc836e91` 当场 13 passed）body 末尾临时插一个空格 → 该断言变红、**同文件另 12 用例仍绿**、逐字节还原后复绿（CP-6.2-2）；②T-6-4 一改 prompt 该门**当场红**——报错逐字为 `当前：f82f3938cf31f882，基线：0dbe4143dc836e91`（CP-6.4-1，**这就是"门是真的"的活体证明**）；③更新基线后 25 passed，再在主体内插一个空格 → 复红 → 还原复绿（CP-6.4-5） | **不验红等于没建门** |
+| **改后基线（2026-08-02 T-S7-9-1 / S7-13 实测）** | `sha256[:16] = 2843778a159215c3`，主体长 **2550 字符**（改前 1979，+571） | 已写死进 `tests/test_sprint5_t14_execution_prompt.py::test_cp_6_2_1_execution_prompt_body_byte_baseline` 与 `tests/test_sprint7_s710_exec_locality.py::test_cp_6_6_7_...`（**两处同步更新**）。**变更原因**：S7-13 给 `<result>` 输出契约**新增 `metrics` 数组**（`name` / `value` / `group` / `source`）+ 三条填写纪律——①`group` 与 `name` **必须用 HumanMessage 里 `expected_results` 的原文写法**，不得改成产物目录名或代码字段名（这是整个方案成立的关键：名字对不上的问题由此**被绕过而非修补**）；②同组指标一并列出、同组同指标只报一条；③只汇报真实读到的数值，宁可少报不得编造。配套常量 `EXECUTION_OUTPUT_SCHEMA` 经 `create_react_subgraph(result_schema=…)` 生效。**改动只落"输出要求"一段**：可用工具说明、工作纪律 1~6、成功判定纪律**逐字未动** ⇒ S7-10 / S7-11 的关注面零触碰。**零插值、零论文级动态值**（正则 `\d{4}\.\d{4,5}` 主体零命中） |
+| **验红记录（S7-13）** | ✅ **两次实做**：①改 prompt 那一刻**两道门同时当场红**，报错逐字为 `execution prompt 主体字节已变更（当前：2843778a159215c3，基线：c73e1e6e3cfc1280）` 与 `execution 冻结区又变了（2843778a159215c3）`；②更新两处基线后 58 passed，再在"输出要求"末行后插一个空格 → **两门同时复红**（`当前：6dfe0ded16d8a5a9`）、`2 failed / 58 passed` → `cp` 还原 + `sha256sum -c` 逐字节校验 → 复绿（**全程禁用 `git checkout`**） | **不验红等于没建门** |
 | **后人须知** | 本表与 §40.1 合起来覆盖 planning + execution 两个冻结区。**coding / resource_scout 两侧的 system prompt 主体目前仍无字节基线守门**——本批不扩围（超范围），**登记为遗留项**，日后改那两处时须一并补 | 与 §40.1「后人须知」同款纪律 |
 
 ### 48.2 共享克隆缓存残留存证（T-S7-6-7 / CP-6.7-1，**先存证后清理**）
@@ -4018,3 +4020,502 @@ LangGraph 默认 `recursion_limit=25`；`MAX_FIX_LOOP_COUNT=20` × (coding+execu
 *⚠ **本批是纯缺陷修复、不走 PRD**（Maria 2026-08-01 授权）⇒ 验收点用 `DA-S7-12-N`，不占用 `AC-S7-*` 号段。*
 *⚠ **新增测试交测试工程师代理补测**（Maria 2026-08-01 指定）；本批只保证既有回归零退化。*
 *⚠ **不 commit / 不 push / 不真跑端到端 / 不开 LangSmith**，均须 Maria 单独授权。）*
+
+## 60. S7-13 概述（指标链路两条失效线：主通道只取最后一块 + 产物通道整塌）
+
+> **⚠ 编号说明（务必先读，本节落盘时逐条上磁盘复核过，非照抄派单）**：
+>
+> | 号段 | 复核方式 | 结论 |
+> |---|---|---|
+> | 需求号 **S7-13** | `grep -rn "S7-13" docs/` 全仓 8 处命中**全部是** `A-S7-13` / `Q-S7-13` / `AC-S7-13` / `R-S7-13` 的子串，**裸 `S7-13` 作需求号零占用** | ✅ 可用。⚠ 但**四个同号异段并存**（假设 / 开放问题 / 验收 / 风险各有一个 13），本节及后续引用**必须带前缀写全**，禁止简写"13" |
+> | 批次 **9** | `grep -o "批次 [0-9]*"` → 0~8 已用满（批次 8 = S7-12，§57~§59） | ✅ 可用 |
+> | 任务号 **`T-S7-9-N`** | 全仓 `T-S7-9-` 唯一命中在 §48 的 **P-17**，是当年"**否决**用 `T-S7-9-N`"的留档，**非占用** | ✅ 可用（第二段是**批次号**不是需求号，与 P-17 的体例裁决一致） |
+> | 检查点 **`CP-9.x-y`** | `CP-8.1-1~11` 已用（批次 8），`CP-9.*` 零占用 | ✅ 可用 |
+> | 章节 **§60 起** | `grep -n "^## "` 末节为 §59 | ✅ 可用 |
+> | 风险 **R-S7-66 起** | 现有最大 `R-S7-65` | ✅ 可用 |
+> | 勘误 **P-60 起** | 现有最大 `P-59` | ✅ 可用 |
+> | 验收点 **`DA-S7-13-N`** | 已用 `DA-S7-10` / `DA-S7-11` / `DA-S7-12` 三族 | ✅ 可用 |
+>
+> **⚠ 本批不走 PRD**（Maria 2026-08-02 明确：两条都是纯缺陷）：按项目铁律（`docs/MEMORY.md` §3.1）纯 bug 修复可直接改。⇒ 验收点用 **`DA-S7-13-N`**，**不占用 `AC-S7-*` 号段**（与 S7-10 / S7-11 / S7-12 同款处置）。
+>
+> **本节及以下 §61~§63 为纯追加**，不覆盖 §1~§59 任何既有内容。落盘前基线 **4020 行**，交付时以 `git diff --numstat` 自证（应为 `N 0`）。
+
+---
+
+> ### ⚠⚠ 60.0 方案变更（Maria 2026-08-02 拍板，**已决，本批不再议**；§60.1~§63 已按此就地订正）
+>
+> **一句话**：原方案是「给三处猜测各打一个补丁」，**整条路线作废**；新方案是「**让 agent 汇报，代码只管判定**」。
+>
+> **为什么变**（Maria 三次主张、主控三次挡回，三次都被证明挡错）。今日挖出的三条失效线追到底是**同一个病**——代码在猜，而每一次 **agent 都知道答案**（目录是它建的、命令是它发的、产物是它写的）：
+>
+> | 原以为的三条独立缺陷 | 代码实际在猜什么 | 猜的结果 |
+> |---|---|---|
+> | `_extract_metrics_block` 只取最后一块 | 哪一块是主实验指标 | 猜错（取到收尾脚本的运行时元数据） |
+> | `_collect_grouped_metrics` 只收顶层标量 | 产物文件长什么样 | 猜错（5 个 `summary.json` 全被跳过或收空） |
+> | `reporting._match_metrics_group` 组名归一 + 子串 | `t-SNE` 和 `tsne` 是不是一回事 | 猜错（返回 `None`） |
+>
+> **被三方一致忽略的立项事实（主控发现、开发上磁盘复核属实）**：`execution.py` 调 `create_react_subgraph` 时**从来没传第 5 个参数 `result_schema`**（`react_base.py:509` 一直支持、`coding.py:894` 一直在传）⇒ **execution 的 agent 全程在场、跑完全部 12 步，但系统从设计上没给它留汇报的出口**，收尾只能从工具收集器取原始数据自己猜。
+>
+> **变更 1（★ 新增出口）**：新增 **`EXECUTION_OUTPUT_SCHEMA`**（体例照 `coding.CODING_OUTPUT_SCHEMA`），核心是一个 `metrics` 数组，每项 `name` / `value` / `group` / `source`；`create_react_subgraph(...)` **补传 `result_schema=EXECUTION_OUTPUT_SCHEMA`**。字段集**保持最小**，不留"将来可能用得上"的扩展点（`docs/MEMORY.md` §4.1）。
+>
+> **变更 2（★ 整个方案成立的关键）**：`group` 与 `name` **必须填「计划预期里出现的写法」而不是目录名 / 字段名**。⇒ 名字对不上的问题**被绕过而非修补**。配套：`expected_results` **必须进 execution 的 agent 上下文**（此前 `_build_execution_agent_context` 只传 `execution_steps` + `environment`，**从未传 expected_results** ⇒ agent 无从知道计划的写法，本条直接落空）。
+>
+> **变更 3（★ 明确不做）**：**不做「拿 `source` 回磁盘核对」**。理由四条：①它只能拦"报了磁盘上不存在的数"，拦不住"数取错了"（归属挂错照样核对通过）；②今日真跑实测**零编造**（9/9 成绩单格式全对、自报步骤序号零告警、跳过数据集老实写进去了）；③代价是浮点误差容忍 + 就近校验 + 留痕三处会出错的逻辑，**为一个没有证据的风险**；④沿 Q-S7-27 同款裁决体例。⇒ **先只上 schema，真跑后若发现报数与磁盘对不上再加，那时才有证据。**
+>
+> **作废清单（供审阅）**：
+>
+> - **作废**：§60.4 **评估 A** 的「同值折叠 + 异值前缀消歧」修法（`_extract_metrics_block` **一字不改**，`b3::num_runs` 这类前缀键**永不出现**）——评估过程与四条残留代价**保留备查**，但**不再驱动本批**；
+> - **作废**：原 §60.6 方案要点第 1/3/4/5/6 条（改解析规则 / 补 coding 产物格式约定 / 放宽 `_collect_grouped_metrics` / 双保险论证 / 新建 coding 字节门）；
+> - **作废**：**决策点 D-1**（成因 B 折不折进本批）与 **决策点 D-2**（撞名消歧的步骤标识取什么）——前者**已被新方案自动消解**（§60.3-订正 实测），后者随评估 A 一并消失；
+> - **作废**：原任务 **T-S7-9-2**（coding 侧补契约 + 新建 coding prompt 字节门）与 **T-S7-9-3**（`_collect_grouped_metrics` 放宽）；**`core/nodes/coding.py` 本批零改动**；
+> - **T-S7-9-1 全文重写**（见 §61），CP 号段 `CP-9.1-N` **换发新内容**（沿 §49.0「删原内容→换发新 CP」先例）；
+> - **保留且仍然成立**：§60.2 前置事实 20 条、§60.3 的失效线归属实测、§60.5 **评估 B** 的改结构代价实测（**结论强化**：本批零 state / schema 变更，评估 B 的 20+ 文件代价一分未付）、§63 勘误 P-60~P-68、以及 **CP-9.3-7 那条诚实守门**（**期望值已变，见 §60.3-订正 与 CP-9.1-7**）。
+>
+> **风险登记同步**：**R-S7-67 / R-S7-69 / R-S7-70 作废**（分别绑定前缀消歧、coding 字节门、聚合口径三条已作废的修法）；**R-S7-66 保留但期望值订正**；新增 **R-S7-72 / R-S7-73**（见 §62）。
+
+### 60.1 需求目标（一句话）
+
+> **⚠ 已按 §60.0 订正**：下段是**变更前**的目标表述，保留备查。**现行目标一句话**：把 execution agent 缺失的汇报出口补上（`EXECUTION_OUTPUT_SCHEMA` + `result_schema` 补传 + `expected_results` 进上下文），让**跑出来的指标由跑它的人报**，代码只做清洗与判定——三条失效线（主指标被吞 / 产物通道整塌 / 组名失配）因此**一并被绕过**，而不是各打一个补丁。
+
+2026-08-01 UMAP 端到端真跑（T-S7-7-9）挖出**指标链路两条独立失效线**：**线一**——`<METRICS>` 主通道把 12 个步骤的 stdout 串成一份后**只取最后一个块**，真指标（k-NN 准确率）被汇总脚本的运行时元数据顶掉；**线二**——产物文件通道 `_collect_grouped_metrics` 只认 `summary.json` 顶层标量，而**产物格式要求从未告知过 coding agent**（契约缺失），5 个产物文件全被跳过。本批**只治这两条纯缺陷**，把"真跑出来的科学指标能进报告""产物文件能被收编到数据"两件事做对。
+
+**定性**：两条均**非 S7-11 引入、非回归**，是 S7-11 把「少跑步骤却判成功」堵上之后浮出的下一层（完整报告见 `docs/sprint7/test-reports/2026-08-02_s711-real-run.md` §6）。
+
+### 60.2 前置事实（**逐条上磁盘亲验**，与派单描述的出入单列在 §63）
+
+> 派单原文明确要求"不要照抄任何数字、行号、结论"。以下每条都由本节落盘时 Read / grep / **在真跑现场跑生产函数**核实；探针一律只落 `/tmp`（`PYTHONPATH=/tmp/s713probe`），**仓库零触碰**。核实时点：2026-08-02，`git status --porcelain` 为空（干净工作区）。
+
+| # | 事实 | 核实方式 | 结论 |
+|---|---|---|---|
+| 1 | `core/nodes/execution.py:530` `stdout = "\n".join((r.stdout or "") for r in run_results)`，作用于 `_effective_runs(run_results)`（:529）——**步骤归属在此丢失** | Read :517-548 | ✅ 属实 |
+| 2 | `_extract_metrics_block` **def 在 :402**、docstring 在 **:403**（"取最后一个，容忍中途打印"），`for raw in reversed(matches)` 在 **:407** | Read :402-423 | ✅ 属实（派单写 `:403 _extract_metrics_block` 指的是 docstring 行，def 实为 :402） |
+| 3 | 该循环**并非"命中即返回"**：`:415` 要求 `isinstance(parsed, dict) and parsed`，`:419` 只留标量值，`:421` `if out: return out` ⇒ 值**全部为非标量**的块会被跳过、继续往前找 | Read :415-423 | ⚠ **派单表述不精确**，见 §63 **P-60** |
+| 4 | 真跑 `round_2.log` 实际含 **9 个** `<METRICS>` 块，**9/9 全部合法 JSON** | 用生产 `_METRICS_TAG_PATTERN` 实扫真跑日志 | ✅ 属实 |
+| 5 | 真指标在**第 7 块**（`best_knn_accuracy=0.987037037037037` / `mean_knn_accuracy=0.8005689090450995` / `num_evaluated_runs=21`） | 同上 | ✅ 属实 |
+| 6 | 生产函数 `_extract_metrics_block(整份 round_2.log)` 实际返回 **`{"mean_timing_seconds": 44.81399595737457, "num_result_records": 12}`**（第 9 块 `summarize_results` 的元数据） | 直接调用生产函数 | ✅ 属实，**症状精确复现** |
+| 7 | 收全 9 块后 union 共 **11 个标量键** | 实测 | ✅ 属实 |
+| 8 | 撞名情况：`mean_timing_seconds` 被 **5 个块**争用（#3/#4/#5/#6/#9）、`num_runs` 被 **4 个块**争用（#3/#4/#5/#6）、`skipped_datasets` 被 **4 个块**争用（#3~#6，**四次同值 = 1**） | 实测逐块统计 | ❌ **与派单不符**（派单/报告 §6.1 写"4 个 / 2 个"，且**漏报了 `skipped_datasets` 也撞名**），见 §63 **P-61** |
+| 9 | 朴素"后覆盖前"会让 `num_runs` 印 **3**（块 #6 基线的），而主实验（块 #3）实跑 **12** | 实测 | ✅ 属实，**张冠李戴成立** |
+| 10 | `_collect_grouped_metrics` **def 在 :1592**；`:1625-1630` 顶层非 dict → WARNING + `continue`；`:1631-1637` 只收顶层 `bool/int/float` 与 ≤120 字符 `str` | Read :1592-1639 | ✅ 属实 |
+| 11 | 真跑 5 个 `summary.json`：`outputs/eval/` 顶层是 **list（21 条、含 `knn_accuracy`）**；其余 4 个顶层是 dict 但**两个字段 `completed_runs` / `skipped_datasets` 全是 list** | 逐文件解析 | ✅ 属实 |
+| 12 | 生产函数 `_collect_grouped_metrics(真跑 work_dir)` 实际返回 **`{"baselines/laplacian_eigenmaps": {}, "baselines/pca": {}, "baselines/tsne": {}, "umap": {}}`**——**4 个键、值全空**，`eval` 整份被跳过 | 直接调用生产函数 | ❌ **与派单不符**：派单与报告 §6.2 均写 `metrics_groups={}`，**实为非空 dict、`bool()` 为 `True`** ⇒ `reporting.py:188` 的首句短路**根本没触发**。见 §63 **P-62（本批最关键的一条勘误）** |
+| 13 | `core/nodes/coding.py` 内 **`summary.json` / `outputs/` 零命中** | `grep -n "summary.json\|outputs/" core/nodes/coding.py` → 空 | ✅ 属实，**契约缺失成立** |
+| 14 | `coding.py:183-185` 对 `<METRICS>` 有明确规定（格式 + 例子 + "无可计算指标时打印 `<METRICS>{}`，不要省略该行"） | Read :179-186 | ✅ 属实 |
+| 15 | `_CODING_SYSTEM_PROMPT_BODY` 在 `coding.py:150` 定义，**长 3052 字符**，`sha256[:16] = 37ec6ee2b1606715`；`<METRICS>` 段位于主体 **58% 处**（字符偏移 1782） | 实算 | ✅ 新增事实 |
+| 16 | **coding system prompt 主体没有任何字节门**。planning 有（`test_sprint6_b1_prompt_guards.py:70`，`EXPECTED_HASH="ef6d267030fd2a0c"`）、execution 有（`test_sprint5_t14_execution_prompt.py:219` / `test_sprint7_s710_exec_locality.py:653`），**coding 没有** | 全仓 `grep -rn "hexdigest" tests/` 仅 3 处命中，无一是 coding；**并用非侵入探针实证**：在 `<METRICS>` 段后插入一整段产物格式约定并确认补丁真的进了 `_build_coding_system_prompt` 的组装结果（`assert "PROBE_SENTINEL_XYZ" in built` → `True`），全量跑 → **2506 passed / 0 failed，零红** | ⚠ **新增事实，派单未提**，见 §63 **P-64** |
+| 17 | `ExecutionResult.metrics` 声明在 `core/state.py:175`（`Dict[str, Any]`）；消费方确为 **3 个**：`execution.py:2221` `len(metrics) >= 1`（success 合取项）、`reporting.py:963` `_flatten_mapping(result.get("metrics"))`、`ui/pages/result_report.py:178` | grep + Read | ✅ 派单推测**属实**（另有第 4 处内部消费：`execution.py:2047` `not metrics` 的 NO_METRICS 改判） |
+| 18 | `docs/sprint5/architecture.md:321` 确为 `### 7.10 S5-10 指标多组解析 + 渲染修复（P1）`，弃选理由原文三条：「需改 coding 产出约定、对已有回归样本不可用、且解析仍依赖 agent 服从度」 | Read :321-330 | ✅ 属实 |
+| 19 | 当前全量回归基线（本节落盘时实测）：**2506 passed / 25 skipped / 46 deselected / 7 xfailed / 0 failed，144.41s** | `.venv/bin/pytest -q` | ✅ 新基线（S7-11 交付时记的 2494 已过时） |
+| 20 | `core/nodes/__init__.py` 的显式 export **确实会遮蔽子模块**——探针里 `import core.nodes.execution as ex` 拿到 callable，`ex._build_execution_result` 抛 `AttributeError: 'function' object has no attribute '_build_execution_result'` | 探针首跑实际撞上并已改用 `importlib.import_module` | ✅ 已知坑 #6 **在本仓库现存有效**，本批一切测试/探针**必须**用 `importlib.import_module` |
+
+### 60.3 ★★ 本批**不解决**什么（最重要的一节，先读这里再读方案）
+
+> 这一节是本次落盘挖出的、**派单与真跑报告都判错的东西**。不写进计划，本批会以"回验修好了"交付，而下一次真跑照样 5 条全"未验证"，白烧一次配额。
+
+**派单把缺陷二的危害表述为「计划预期回验从未执行」，并隐含「修好产物通道 ⇒ 回验就能跑起来」。这个隐含前提，实测为假。**
+
+本节落盘时做了一次**零配额模拟**：把 `_collect_grouped_metrics` 假想成**被完美修好**（顶层 list 直接收编、dict 内 list-of-dict 字段逐数值列聚合成标量），据此重造 `metrics_groups`（5 组全部非空、含 `mean_knn_accuracy` / `mean_timing_seconds` / `completed_runs_count` 等），再用**生产的** `_verify_expected_results` / `_verify_trend` 重跑真跑那份计划的 5 条 `expected_results`：
+
+| # | 预期条目 | 现状 | **产物通道完美修好后** | 死在哪一道门 |
+|---|---|---|---|---|
+| 1 | UMAP 应产生可分簇的二维嵌入… | 未验证 | **仍未验证** | `trend` 为 `None`——planning 侧 LLM 根本没产出 trend 结构 |
+| 2 | k-NN accuracy 上 UMAP 不弱于线性基线 | 未验证 | **仍未验证** | 门 2 过（`UMAP→umap`、`PCA→baselines/pca`），**死在门 3**：`metric="k-NN classifier accuracy"` 归一为 `k_nn_classifier_accuracy`，产物字段是 `knn_accuracy` / `mean_knn_accuracy` ⇒ **指标名失配** |
+| 3 | UMAP 全局结构展示比 t-SNE 更清晰… | 未验证 | **仍未验证** | `trend` 为 `None` |
+| 4 | 运行时间上 UMAP 应体现效率优势 | 未验证 | **仍未验证** | **死在门 2**：`"t-SNE"` 归一为 `t_sne`，组名 `baselines/tsne` 归一为 `baselines_tsne`；精确不等、双向子串均不含 ⇒ **组名失配**（且 `metric="runtime"` 与字段 `timing_seconds` 同样对不上） |
+| 5 | 调大 n_neighbors / 调小 min_dist 的效应… | 未验证 | **仍未验证** | `trend` 为 `None` |
+
+**⇒ 结论（硬证据，非推断）：本批按派单范围把两条缺陷全部修好，「计划目标回验」在这个靶上的用户可见产出是 5/5 未验证，一条都不会变。**
+
+拆解成三条**互相独立**的成因：
+
+- **成因 A（3/5 条）**：`expected_results` 里 **`trend` 字段缺失**。planning 的 LLM 只给了 `description`、没给 `{metric, greater, lesser}` 结构 ⇒ `_verify_expected_results:236-240` 直接判未验证。**与产物通道完全无关，属 planning 侧契约问题。**
+- **成因 B（1/5 条）**：**组名归一化失配**。`_normalize_group_key` 把连字符压成下划线（`t-SNE → t_sne`），而产物目录名无连字符（`tsne`），双向子串判据（`reporting.py:151-157`）跨不过这一格。**属 reporting 侧匹配规则缺陷（第三条独立失效线，派单完全未识别）。**
+- **成因 C（1/5 条）**：**指标名失配**。`trend.metric` 是 planning 侧 LLM 的自由文本（"k-NN classifier accuracy"），产物字段名是 coding 侧 LLM 的自由文本（`knn_accuracy`），**两端之间没有任何契约把它们绑定**。
+
+**⇒ 更深一层的判断（建议记入后续架构评审）**：回验能不能跑起来，取决于 **planning 的 `trend.metric`/`greater`/`lesser` 三个名字，与 coding 写出的目录名、字段名，能不能对上**。产物**格式**只是其中一环——**把格式说清楚是必要条件，远不是充分条件**。派单把线二的根因收敛为"产物格式契约缺失"是对的但不完整：真正的契约缺口是 **planning ↔ coding ↔ reporting 三方名字对齐**。
+
+**本批处置（**变更前**的表述，保留备查）**：成因 A / B / C 全部登记不修、不扩围。但必须：①写明"回验产出不会变"；②把成因 B 与 A/C 分开登记（决策点 D-1）。
+
+---
+
+#### 60.3-订正 ★★ 新方案下三条成因的实测归属（**上磁盘实跑，非推理；直接决定 CP-9.1-7 的期望值**）
+
+> 方法：用**真跑那份** `reproduction_plan.json`（`/data/myproj/.umap_evidence/run4_20260801/reproduction_plan.json`，5 条 `expected_results` 逐字未改）+ **生产的** `reporting._verify_expected_results`，分别喂三种 `metrics_groups`。探针只落 `/tmp`。
+
+| 喂进去的 `metrics_groups` | 5 条回验实测产出 |
+|---|---|
+| **现状**（磁盘扫描：4 组、值全空） | `['未验证','未验证','未验证','未验证','未验证']` |
+| **agent 按计划写法汇报**（组名 `UMAP` / `PCA` / `t-SNE`，指标名 `k-NN classifier accuracy` / `runtime`） | **`['未验证','符合','未验证','符合','未验证']`** |
+| **两来源合并**（磁盘 + agent） | `['未验证','未验证','未验证','未验证','未验证']` ← **比不合并更差**，见下 |
+
+**⇒ 三条成因的归属结论（改口，且是硬证据）**：
+
+- **成因 B（组名失配，1 条）→ 被消解。** 实测 `_match_metrics_group("t-SNE", {"UMAP":…,"PCA":…,"t-SNE":…})` = `"t-SNE"`（归一后精确命中）。**本批不改 `reporting` 一个字**，B 靠"让 agent 用计划写法"绕过去了。
+- **成因 C（指标名失配，1 条）→ 同样被消解。** `trend.metric = "k-NN classifier accuracy"`，agent 用同一写法报 ⇒ `_lookup_metric_value` 精确命中。这正是"`group` 要用计划写法"这条约束**同时管住 `name`** 的价值——原方案只想过组名，没想过指标名。
+- **成因 A（`trend` 缺失，3 条）→ 不变，仍全部"未验证"。** 三条 `trend` 是 `null`（planning 侧 LLM 只给了 `description`），`_verify_expected_results:236-240` 直接判未验证。**属 planning 侧契约问题，本批不治、也治不了。**
+
+**⇒ CP-9.3-7 的期望值随之改口（本条是本次订正最要紧的一处）**：
+
+- **旧期望**（§60.9 R-S7-66 / 原 CP-9.3-7）：「本批修完 **5 条一条不变**」——**已作废**；
+- **新期望**：**3 条恒"未验证"（成因 A，与本批无关）+ 2 条取决于 agent 服从度**。
+- ⚠ **诚实守门的形态也必须跟着改**：旧写法是"断言仍是 5 条未验证"，那是一条**可以写死的确定性断言**；新方案下那 2 条的产出**不是确定性的**（取决于 agent 填不填计划写法），**不得写成"断言 2 条符合"**——那会把一条服从度假设伪装成回归门。⇒ 新的守门拆成两半（CP-9.1-7）：**A 半：3 条 trend 缺失的恒"未验证"，写死断言**（这半是确定性的，且是"本批不解决什么"的可执行事实）；**B 半：喂一份"agent 按计划写法汇报"的合成 `metrics_groups`，断言那 2 条能被判定** ⇒ 证明**机制通了**，而不是证明**agent 一定会照做**。
+- **⇒ 交付表述必须是**：「本批**打通了**回验链路的下半段（组名 / 指标名对齐），真跑能不能兑现取决于 agent 服从度；**3 条 `trend` 缺失的一条都不会变**，那是规划环节的事。」
+
+**★ 附带实测（本次订正挖出的新事实，直接决定"agent 汇报与磁盘扫描"怎么处置）**：把两个来源**合并**会**把回验打坏**——磁盘组名 `umap` 与 agent 组名 `UMAP` 归一后同为 `umap`，`_match_metrics_group` 的**精确匹配命中 2 条 ⇒ 判歧义返 `None`**（`reporting.py:150`），本来能匹配上的第 2 条从"符合"**退回"未验证"**。⇒ **禁止合并**，见 §60.6-订正 裁决 1。
+
+### 60.4 ★ 评估 A：撞名键怎么办（不改数据结构的最不坏方案 + 残留代价）
+
+> **⚠ 本节修法已作废（§60.0 变更），全节保留备查。** `_extract_metrics_block` 本批**一字不改**（已逐函数字节比对自证），`b3::num_runs` 这类前缀键**永不出现**，四条残留代价一条都不会产生。
+>
+> **撞名问题在新方案下怎么消失的**：它本来就是"把 12 个步骤的产出硬塞进一个扁平 dict"的产物。新方案下**分组指标走 `metrics_groups`（agent 填 `group`）、主实验指标走 `metrics`（`group` 留空）**，`num_runs` / `mean_timing_seconds` 各自待在自己那一组里，**根本不发生撞名**——不是把撞名消歧了，是把撞名的成因去掉了。
+
+**约束**：`ExecutionResult.metrics: Dict[str, Any]`，值为标量。Maria 已否决"撞名直接丢弃"，原话：「都要保留，不同 step 的结果会覆盖本身就是不合理的设计。要把每个 step 的结果区分开并且都展示」。
+
+**方案（在不改结构前提下最不坏）：同值折叠 + 异值键名前缀消歧**
+
+1. 收**全部**合法块（不再只取最后一个），按键聚合出 `{键: [(块序, 值), …]}`；
+2. 某键在所有出现处**取值完全相同** → **折叠成单键，保持裸键名**（无信息损失、无误导）；
+3. 某键在不同块中**取值不同** → **全部保留**，每个出现写成一条 `{步骤标识}::{原键名}`，且**裸键名不再单独出现**（关键：不能既留裸键又留前缀键，否则裸键仍是"某一步的值冒充全局值"，等于没修）；
+4. 步骤标识取**块序号 + 计划步骤名归一后的短标识**（确定性、可单测，不引入新 state）。
+
+**在真跑数据上的实测效果**：11 键 → **18 键**。`skipped_datasets` 四次同值 ⇒ **折叠为 `skipped_datasets: 1`**（P-56 / 报告 §6.3 关心的那个字段，以最干净的形态回到判定层）；`num_runs`（12/3/3/3）与 `mean_timing_seconds`（5 个值）**全部带前缀展开、零覆盖**；`best_knn_accuracy` / `mean_knn_accuracy` **裸名回归**。
+
+**四条残留代价（如实写明，不粉饰）**：
+
+| # | 残留 | 机制 | 本靶上的实际代价 |
+|---|---|---|---|
+| ① | **带前缀的键与论文 baseline 的并集匹配必然失配** | `reporting._render_metrics_comparison`（:979-980）指标名全集 = 复现 ∪ baseline，`step::metric` 永远匹配不上 baseline 的 `metric` ⇒ 该行只有复现值、没有论文值 | **本靶为零**——撞名的 3 个键（`mean_timing_seconds`/`num_runs`/`skipped_datasets`）全是运行时元数据、本就无 baseline。⚠ **属靶况偶然，不可作一般性结论** |
+| ② | **键名列语义漂移** | 报告里该列叫"指标名"；加前缀后变成"指标名 **或** 步骤限定的指标名"，两种口径混一列，用户需额外解释。若步骤标识取自计划的 `step_name`（agent 自由文本），会把计划原始措辞直接搬进报告表格 ⇒ 触碰 `docs/MEMORY.md` §4.2「用户可见文本禁内部术语」 | 需配套 `ui/term_map.py` 或渲染层加一句口径说明 |
+| ③ | **三档之间键名口径不一致** | 档 2 正则（`_regex_scan_metrics`）与档 3 LLM 抽取产出的键**不带前缀**（它们没有"块"的概念）。同一字段走档 1 可能带前缀、走档 2 一定不带 | 下游任何按键名做的逻辑要同时认两种形态 |
+| ④ | **"区分开"只到键名层，到不了展示层** | flat dict 能做到"都展示"（都在一张表里），做不到"**分区**展示"——表格行结构由键名的扁平集合决定，**没有可供分组的层级信息** | 这一条无法靠 flat dict 缓解 |
+
+**★ 论证结论（这正是 Maria 判断要不要立 PRD 的依据）**：
+
+> **在不改数据结构的前提下，"既保留全部、又不误导"做得到**（上述方案）；**但"按步骤分区展示"做不到**——它结构上要求分层数据。
+>
+> Maria 原话是一个复合诉求：「**区分开**」+「**都展示**」。flat dict 能满足"都展示 + 不覆盖 + 键名可辨"，**满足不了"分区展示"**。
+>
+> ⇒ **二选一是 Maria 的决策点，开发不代拍**：(a) 接受"全部保留 + 单表内以前缀区分"⇒ 本批即可闭合；(b) 要完整的原话诉求（按步骤分区、每区内指标名保持纯净）⇒ **必须立 PRD 改结构**，代价见 §60.5。
+
+### 60.5 ★ 评估 B：改 `ExecutionResult.metrics` 数据结构的真实代价（**实测，非推测**）
+
+> 方法：非侵入探针（沿 S7-11 先例）——`/tmp/s713probe/conftest_probe.py`，`pytest_configure` 钩子内用 `importlib.import_module` 取模块，把 `_build_execution_result` 产出的 `metrics` 由扁平改成 `{"step_0": {…}}` 分层形态，`PYTHONPATH=/tmp` 加载。**仓库零文件改动、零 `git checkout`**。
+
+**生产侧落点（4 文件 / 约 9 个函数级落点）**
+
+| 文件 | 落点 | 说明 |
+|---|---|---|
+| `core/state.py` | `:175` `metrics: Dict[str, Any]` | TypedDict 键声明改类型 |
+| `core/nodes/execution.py` | `_extract_metrics_block`(:402) / `_regex_scan_metrics`(:426) / `_llm_extract_metrics`(:452) / `_parse_metrics`(:517) / `_apply_no_metrics`(:2033 的 `not metrics`) / `_build_execution_result`(:2221 的 `len(metrics) >= 1`、:2244 的落盘) | **6 个函数 + success 合取项**。⚠ `len(metrics) >= 1` 在分层后语义**静默改变**（数的是步骤数不是指标数），**不报错但判定口径变了** |
+| `core/nodes/reporting.py` | `:963` `_flatten_mapping(result.get("metrics"))` | 1 读取点 |
+| `ui/pages/result_report.py` | `:178` 取值 + `:186` / `:198` 渲染 | 1 读取点 + 2 渲染点 |
+
+⇒ **派单推测的"波及 success 判定 / reporting 对比表 / 结果页三个消费方"属实**（另有第 4 处内部消费 `_apply_no_metrics`）。
+
+**测试侧撞红规模（探针实测）**：**9 条红 / 7 文件**
+
+```
+tests/test_sprint3_c3.py::test_cp_c3_2_b_grade_success
+tests/test_sprint3_c3_reinforce.py::test_r1b_retry_round_reentry_reruns_sandbox
+tests/test_sprint3_e2e.py::test_f2_e2e_1_happy_path_b_grade_success_full_mode
+tests/test_sprint4_e2e.py::test_cp_g2_2_sentinel_zero_plaintext_in_code_report_caplog
+tests/test_sprint4_e3.py::test_cp_e3_3_success_from_real_exit_codes_and_metrics
+tests/test_sprint4_e4_regression_gate.py::test_cp_e4_2_interrupt3_resume_sandbox_side_effect_exactly_once
+tests/test_sprint4_e4_regression_gate.py::test_le401_fix_credential_inline_retry_success_single_round
+tests/test_sprint4_e4_regression_gate.py::test_le401_fix_inline_retry_without_interrupt_success
+tests/test_sprint5_t26_grouped_metrics.py::test_cp_2_6_1_e2e_metrics_groups_and_main_channel_intact
+```
+
+**测试侧编辑面（静态扫描，探针看不见的部分）**：探针只能捕获**生产者侧**耦合；大量测试是**手搓 `ExecutionResult` 形态的 fixture** 直接喂给 reporting / UI，它们在探针下不红、但在真改结构时**必须逐个改**：
+
+- 非空扁平 `"metrics": {…}` fixture：**36 处 / 16 文件**
+- 广义 ExecutionResult 形态 fixture（含 `execution_result` / `metrics_groups` / `step_reconciliation` 三者之一 + `"metrics"`）：**42 文件**
+
+**⚠ 探针查出的一条隐性风险（值得单列）**：`reporting._flatten_mapping` → `_flatten_entries` **本就做嵌套降维**（AC-S5-20 的设计）⇒ 分层后**报告不会崩，会静默把层级拍平**。这是"改了以为没事"的危险形态：**改结构时 reporting 侧不报错但语义丢失**，必须专门立守门，不能靠既有用例兜。
+
+**⇒ 量化估计**：生产 **4 文件 / ~9 函数级落点**；测试**确定性撞红 9 条（7 文件）** + **需人工审阅 36 处 fixture（16 文件）**；合计触及 **20+ 文件**。**属中等偏大改动，不是"多改几行"**，且带一个静默降级风险点。**⇒ 若走 (b) 分层路线，走 PRD + 架构评审是必要的，不是流程洁癖。**
+
+### 60.6-订正 ★ 方案要点（**现行**，本批实做范围）
+
+> 下方原 §60.6 八条**已作废，保留备查**。以下为**现行**方案，含派单点名要开发裁决的三点，每条都附上磁盘实测依据。
+
+**实做范围（全部落在 `core/nodes/execution.py` 一个文件）**：
+
+1. 新增 **`EXECUTION_OUTPUT_SCHEMA`**（`title` / `steps_attempted` / `all_exit_zero` / `summary` / `notes` / `metrics[]`）。`metrics` 项字段**恰为四个**：`name` / `value` / `group` / `source`。⚠ **`required` 刻意不含 `metrics`**——零指标回合它就是空数组，若列为必填会被 `react_base._missing_required_fields`（`:496` "必填的 list/dict 为空容器视为缺失"）判成缺失，**每个零指标回合白烧一次 schema 重生成调用**。
+2. `create_react_subgraph(...)` **补传 `result_schema=EXECUTION_OUTPUT_SCHEMA`**。
+3. `_run_execution_agent` 从 `final_state["result"]["metrics"]` **原样透传**进 `ExecAgentOutput.reported_metrics`（新字段，默认 `[]`）。非 dict / 非 list 一律降级空数组，**且不打 WARNING**（零指标是合法常态，打了就是噪声）。
+4. 新增确定性纯函数 **`_split_reported_metrics`**（+ 标量收编 helper `_coerce_reported_value`）：把自报数组拆成 `(主实验指标, 分组指标)`。`group` 缺省 / `null` / 去空白后为空 ⇒ 主实验；值只收标量（口径与 `_collect_grouped_metrics` **完全一致**，`str` 过 `mask_value` + 120 上限）；同一 `(组, 名)` 重复 **先到先得**、异值打 WARNING；畸形条目跳过 + WARNING（**已知 bug 模式 #3**）；产出按组名、指标名 `sorted`，**同一输入连跑逐字节相同**。
+5. `_build_execution_agent_context` **补注 `expected_results`**，沿本文件既有的 **"非空才注入"** 范式（`credential_degradations` / `scale_reduced_directive` 同款）⇒ 无该键的计划下 payload 与 sp7 基线**字节零扰动**。
+6. **execution 冻结区 prompt 改一处**（"输出要求"段）：`<result>` 新增 `metrics` 数组 + 三条填写纪律。走 **§48.1 哈希四件套**（重算 + **两处**写死基线 + §48.1 留档 + 验红），`c73e1e6e3cfc1280`/1979 → **`2843778a159215c3`/2550**。工具说明与工作纪律 1~6 **逐字未动**。
+
+**★ 裁决 1（派单点名，`_collect_grouped_metrics` 与 agent 汇报的关系）：agent 汇报优先，磁盘扫描降为兜底，禁止合并。**
+
+- 实做一行：`metrics_groups = reported_groups or _collect_grouped_metrics(work_dir)`。
+- **禁止合并的硬证据**（§60.3-订正 附带实测）：合并会让 `umap`（磁盘）与 `UMAP`（agent）归一撞名 ⇒ `_match_metrics_group` 判歧义返 `None` ⇒ **本来能匹配上的组反而匹配不上**，第 2 条回验从"符合"退回"未验证"。**合并比不合并更差，不是取舍问题。**
+- **兜底不删的理由**：agent 一组都没报时（旧 checkpoint / 服从度失效 / 子图降级），行为与今日**逐字节相同**——`tests/test_sprint5_t26_grouped_metrics.py` 的既有回归样本因此全绿，**零退化**。
+- `_collect_grouped_metrics` 函数体**一字未改**（已逐函数字节比对自证）。
+
+**★ 裁决 2（派单点名，缺陷一「主指标被吞」在新方案下自动消解吗）：不自动消解，本批用「`group` 留空 ⇒ 主实验指标」补上，但必须门控。**
+
+- **实做**：`if metrics and reported_main: metrics = {**reported_main, **metrics}`。两个刻意的设计点：
+  - **合并方向**：`{**自报, **解析}` ⇒ **真实 stdout 解析值优先**，同名键 agent 自报**不得覆盖**（自报只填补主通道没解析到的键）。真跑现场即：档 1 只取到 `mean_timing_seconds=44.81`，`best_knn_accuracy=0.987` 由自报补回来，两者并存。
+  - **★ 门控（本批最要紧的一条自律）**：**三档主通道零指标时不采信自报**（打 WARNING 留痕）。否则 `len(metrics) >= 1` 这个**成功合取项的分子就变成了 agent 自报**——代码一个字没改、语义却被悄悄换掉，正是 S7-11 立项时那类反向激励。**验红实测**：去掉门控后，"exit 全 0 + 步骤跑完 + 主通道零指标 + agent 自报 1 个指标"这一组合的 `success` 会从 `False` 翻成 `True`（CP-9.1-8④ 的活体证明）。
+- **不新增第二个 schema、不新增第二条通道**（派单红线）：`group` 为空复用同一个 `metrics` 数组。
+- ⚠ `_extract_metrics_block` 的"取最后一块"**本批不改**（作废的修法），所以**档 1 自身的选块缺陷仍在**——只是它的产出不再是主指标的唯一来源。**如实登记为残留**（§63 P-70）。
+
+**★ 裁决 3（派单点名，CP-9.3-7 的期望值是否改变）：改变，B 与 C 双双被消解，守门形态必须跟着改。** 完整论证与新守门形态见 **§60.3-订正**（用真跑那份 `reproduction_plan.json` 实测，非推理）。新守门编号 **CP-9.1-7**。
+
+---
+
+### 60.6 方案要点（**已作废，保留备查**）
+
+> **⚠ 全节作废（§60.0 变更）**，现行方案见上方 §60.6-订正。
+
+1. **线一修法**：`_extract_metrics_block` 由"取最后一个块"改为"**收全部块 + 同值折叠 + 异值前缀消歧**"（§60.4 方案）。docstring 与函数名同步订正——**"取最后一个"这句话本身就是缺陷的载体，不订正会被后人当规范照抄**。
+2. **线一的分母不动**：`success` 的 `len(metrics) >= 1` 合取项**语义不变**（仍是"至少解析出 1 个指标"），但**分子内容变干净**（不再靠元数据蒙混）。⚠ 本批**不改** success 判定逻辑，`_apply_no_metrics` 零改动。
+3. **线二修法 A（coding 侧，补契约）**：`_CODING_SYSTEM_PROMPT_BODY` 在 `<METRICS>` 段之后**追加一段产物文件格式约定**（顶层必须是 JSON 对象 + 顶层字段值必须是标量 + 组名用方法名 + 给例子 + 给边界）。**格式与 `<METRICS>` 段同构**（有格式、有例子、有边界）——真跑实证这种写法的服从度是 **9/9**。
+4. **线二修法 B（execution 侧，加防御）**：`_collect_grouped_metrics` 放宽两处——(a) 顶层是 **list** 时不再整份丢弃，按元素的数值列聚合成标量；(b) dict 内**值为 list-of-dict** 的字段不再整份跳过，同样聚合。**两处都是确定性纯函数、零 LLM。**
+5. **修法 A 与 B 必须同时做**：只补契约 ⇒ 旧 checkpoint 与偶发不服从仍整塌；只加防御 ⇒ agent 仍不知道该写什么、格式随机漂移。**这是"说清楚约定 + 留一道防御"的标准双保险，不是重复建设。**
+6. **补一道 coding prompt 主体 SHA 字节门**（与 planning / execution 对齐）。理由见前置事实 16：改 coding 主体目前**零测试阻力也零回归保护**，本批正好是第一次改它。**这不算扩围**——它是本批改动的**配套回归保护**，不改任何生产行为。
+7. **Prompt Cache 影响评估（交付要求 2，不略过）**——见 §60.7。
+8. **本批零 state / schema 变更**：`ExecutionResult` 的 `metrics` 与 `metrics_groups` **类型签名一字不动**，只改填充内容与解析规则。⇒ **不触发评估 B 的任何代价**。
+
+### 60.7 ★ Prompt Cache 前缀影响评估（交付要求 2）
+
+| 问题 | 结论 | 依据 |
+|---|---|---|
+| `<METRICS>` 段所在位置**是否属冻结区**？ | **是"稳定前缀"，但不是"有门的冻结区"**。`coding.py:143-149` 的注释明写 `_CODING_SYSTEM_PROMPT_BODY` 是 SystemMessage 稳定前缀、严禁插入论文级/任务级动态变量；但**全仓没有任何测试给它上字节门**（前置事实 16 已用探针实证：改动后 **2506 passed / 0 failed**） | grep `hexdigest` 全仓 3 处，无一是 coding；探针实跑 |
+| 改动**会不会破坏前缀**？ | **会，但只是一次性失效，不是每轮复发**。插入点在主体 58% 处（字符偏移 1782 / 3052）⇒ 从插入点起字节偏移全部改变、旧缓存条目作废。**代价 = 一次性 cache miss**；新前缀一旦稳定下来，跨论文跨任务照常命中 | 实算偏移；Prompt Cache 按前缀匹配 |
+| 会不会破坏**字节级幂等**（跨论文一致性）？ | **不会**。新增文本是**纯静态文案**，零 `arxiv_id` / `paper_meta` / 路径 / 时间戳等动态变量 ⇒ 满足 `docs/MEMORY.md` 与已知坑 #4 的要求 | 方案约束，由 **CP-9.2-4** 逐条验红 |
+| **要不要走冻结令**？ | **不需要走冻结令，但必须走"三件套"**：①改动前记录旧哈希 `37ec6ee2b1606715`；②改动后重算并**写死为字面量基线**（**禁止写成 `EXPECTED = actual` 的自锁定形态**——`test_sprint6_b1_prompt_guards.py:64-70` 的 R-S7-41 留档记着这个坑：该断言在 sp6~sp7 期间一直是 `x == x`、**零守门能力**）；③在本 dev-plan §63 留一行变更原因。**本批的特殊之处是这道门要新建，不是更新** | 沿 `test_sprint6_b1_prompt_guards.py` 与 `test_sprint7_s710_exec_locality.py:653` 既有范式 |
+| 是否可以**改成追加到主体末尾**以减少前缀失效？ | **不采纳**。①一次性代价与位置无关（都作废一次）；②`<METRICS>` 段与产物约定是**同一件事的两半**（"跑完打什么"与"跑完写什么"），拆到主体两端会让后人以为无关；③主体末尾紧接 `_CODING_HONESTY_SECTION`，插在那里更容易被误认为诚实红线的一部分 | 设计判断，如实登记备查 |
+
+### 60.8 红线（开工前逐条对照）
+
+1. **零 state / schema 变更**：`ExecutionResult` 的 `metrics` / `metrics_groups` 类型签名一字不动。任何"顺手改成分层"的念头**立即停手**——那是评估 B 的路线、须 Maria 立 PRD。
+2. **不碰 success 判定逻辑**：`execution.py:2219-2223` 三合取项原样保留，`_completion_insufficient` / `_apply_no_metrics` / `_apply_incomplete_execution` **零改动**（S7-11 刚交付、五道命门守着）。
+3. **不碰 planning 侧**、不碰 `plan_checks.py`、不碰完整度判定。
+4. **不碰 `reporting.py` 的组名/指标名匹配**（成因 B/C），除非 Maria 就 **决策点 D-1** 明确点头。
+5. **验红还原一律 `cp` 文件级备份 + `sha256sum -c` 校验**，**全程禁用 `git checkout` / `git restore` / `git stash`**（P-53① 的教训：S7-11 验红时用 `git checkout` 把并发代理未提交的改动一次性冲掉）。
+6. **一切测试与探针取模块用 `importlib.import_module`**，禁 `import core.nodes.xxx as m`（前置事实 20，已知坑 #6 实证有效）。
+7. **禁弱化自查**：改动到的既有测试文件，`git diff` 中 `>=` / `issubset` / `pytest.skip` / `xfail` / 删除断言 **零新增**。
+8. **本批不跑 e2e、不跑真跑**——须 Maria 单独授权具体动作，**严禁预授权**。
+
+### 60.9 关键风险与决策点
+
+> **⚠ 已按 §60.0 订正**：**决策点 D-1 与 D-2 双双作废**。
+> - **D-1（成因 B 折不折进本批）作废**：新方案下成因 B **连同成因 C 一并被绕过**，`reporting.py` **一个字都不用改**（§60.3-订正 实测）。原本要 Maria 拍的"扩不扩围"这道题**消失了**。
+> - **D-2（撞名消歧的步骤标识取什么）作废**：随评估 A 的修法一并作废，前缀键永不出现。
+> - **风险表订正**：**R-S7-67 / R-S7-69 / R-S7-70 作废**（分别绑定前缀消歧 / coding 字节门 / 聚合口径三条已作废的修法）；**R-S7-66 保留但期望值改口**（详见 §62）；新增 **R-S7-72 / R-S7-73**。
+
+**★ 决策点 D-1（**已作废**，保留备查；须 Maria 拍板，阻塞 §60.3 的交付表述）**：成因 B（组名归一化失配，`t-SNE` ↔ `baselines/tsne`）**要不要折进本批**？
+
+- **折进的理由**：缺陷二的立项危害是「计划预期回验从未执行」；若不折，本批修完**回验产出一条都不变**（§60.3 实测），批次交付的**自述目标未达成**。改动量极小（`reporting._match_metrics_group` 的归一化多一档"去分隔符后比较"，约 2~4 行）。
+- **不折的理由**：派单**明确**"本批只治上述两个纯缺陷"；成因 B 是**第三条**独立失效线，属扩围；且它单独修好也只能救 1/5 条（另 3 条是 trend 缺失、1 条是指标名失配）。
+- **本计划的默认取值**：**不折**（严格守派单范围），并在 §63 **P-63** 单独登记该缺陷、在 TODO 立条目。**若 Maria 点头折进，追加 T-S7-9-4，全文只需加一个任务块。**
+
+**★ 决策点 D-2（须 Maria 拍板，阻塞 T-S7-9-1 的验收口径）**：撞名消歧的步骤标识**取什么**？§60.4 方案给的是"块序号 + 计划步骤名归一后的短标识"。若 Maria 认为报告里出现步骤名不可接受（残留代价②），退化为**纯块序号**（`b3::num_runs`）——更中性但对用户更不可读。**默认取前者**，理由是"可读性优先于中性"，但**这是可单点推翻的产品判断**。
+
+| 风险 | 描述 | 缓解 |
+|---|---|---|
+| **R-S7-66（★ 已按 §60.0 改口，仍有效）** | **本批交付被误读** —— 旧口径是"修完 5 条一条不变"，**已作废**。新口径下的误读风险**反了方向**：容易被读成"回验修好了"，而真跑能不能兑现**取决于 agent 服从度**，且 **3 条 `trend` 缺失的一条都不会变**（成因 A，planning 侧） | 交付说明与 TODO **必须**写清"打通链路 ≠ 兑现结果"+ 三条成因归属；**CP-9.1-7 拆两半守这条**（A 半写死 3 条恒未验证，B 半只证机制通、不证 agent 会照做） |
+| ~~R-S7-67~~ | **已作废**（绑定的前缀消歧修法作废）。原文：撞名前缀把 baseline 对比表打散 | 前缀键永不出现 ⇒ 风险不成立 |
+| **R-S7-68（★ 改口，仍有效且是本批头号风险）** | **agent 服从度未知** —— 原文说的是 coding 侧新约定；**新方案下这条风险搬到了 execution 侧且更重**：整个方案的兑现**完全押在 agent 肯不肯按"计划写法"填 `group` / `name`" 上。`<METRICS>` 的 9/9 是单次真跑、单靶、单模型（S7-11 报告 §8 已明载不构成服从率证据） | ①`metrics_groups` 保留**磁盘扫描兜底**（agent 一组不报 ⇒ 行为与今日逐字节相同，零退化）；②主实验指标合并**门控在"主通道非空"**（自报失效不影响成功判定）；③**唯一真实验证手段仍是下一次端到端真跑**——本批交付**不得**声称服从度已验证 |
+| ~~R-S7-69~~ | **已作废**（本批不新建 coding 字节门，`coding.py` 零改动）。原文：新建 coding 字节门写成自锁定形态 | execution 侧那道门是**更新**不是新建，且已两次验红 |
+| ~~R-S7-70~~ | **已作废**（聚合修法作废，本批不产生任何聚合键）。原文：聚合规则引入新的"张冠李戴" | — |
+| **R-S7-71（改口，仍有效）** | **同文件跨批次并发** —— 本批全部改动落在 `execution.py` 一个文件；若另有会话在跑别的批次，会重演 P-53① | 开工前 `git status --porcelain` 现查留痕（本批实测：仅 `docs/TODO.md` + 本 dev-plan 两处未提交，生产代码干净）；`execution.py` 走**单收口窗口**（§61.0）；**验红一律 `cp` + `sha256sum -c`，全程禁 `git checkout`** |
+| **R-S7-72（★ 新增）** | **自报通道被当成事实源蔓延** —— 一旦 `<result>` 有了结构化出口，后人极易顺手拿 `steps_attempted` / `all_exit_zero` 去参与判定，把 R-S4-01（执行事实不得来自 agent 单方声明）悄悄推翻 | ①`tests/test_sprint5_t24_reconcile.py::test_cp_2_4_4_steps_attempted_not_consumed_structural` **仍是精确相等断言**（只放行两个**声明常量**，第三处出现即红——已用"加一个消费点"的突变验红）；②`_split_reported_metrics` docstring 写死红线；③主实验指标合并的**门控**是同一条纪律的落点 |
+| **R-S7-73（★ 新增，已知残留，本批不治）** | **`NONE + success=False` 这条既有空洞被本批扩大了可达面** —— `_apply_no_metrics` 的条件是 `not metrics and not metrics_groups`；`metrics_groups` 非空即抑制 NO_METRICS 改判，而 `ErrorCategory.NONE` **不在 `AUTO_FIXABLE`** ⇒ 映射 `permanent` ⇒ **丢掉一次回 coding 修复的机会**。该空洞**本批之前就存在**（磁盘扫到任意一组即触发），本批因 agent 汇报也能填非空而**更易被走到** | **登记不治**（`_apply_no_metrics` 是零改动红线，动它属扩围）；§63 **P-71** 单列，交后续批次或架构评审。⚠ 走到该分支时 `success` 仍是 `False`（`len(metrics)>=1` 不成立），**不会假绿**，只是少一次修复机会 |
+
+---
+
+## 61. 批次 9：S7-13 —— 给 execution agent 补上汇报出口（**单任务**，`execution.py` 单收口窗口）
+
+> **⚠ 本节已按 §60.0 全面重写。** 原三任务（T-S7-9-1 多块收编 / T-S7-9-2 coding 侧补契约 / T-S7-9-3 `_collect_grouped_metrics` 放宽）**整体作废**，收敛为**单任务 T-S7-9-1**；CP 号段 `CP-9.1-N` **换发新内容**（沿 §49.0「删原内容→换发新 CP」先例）。
+
+### 61.0 批次约束
+
+- **文件边界**：**生产代码只碰 `core/nodes/execution.py` 一个文件**。**不碰** `core/nodes/coding.py`（原 T-S7-9-2 作废）/ `core/nodes/reporting.py` / `core/nodes/planning.py` / `core/state.py` / `ui/` / `core/plan_checks.py` / `app.py`。
+- **既有测试的必要适配**（非新增用例，属零退化维护，逐条列明）：
+  - `tests/test_sprint5_t14_execution_prompt.py` + `tests/test_sprint7_s710_exec_locality.py`：prompt 哈希基线 **两处同步更新**（§48.1 四件套）；
+  - `tests/test_sprint7_targeted.py` + `tests/test_sprint7_s7_03_max_rounds_clamp.py`：假工厂签名补 `result_schema=None` **并记录该实参**（不用 `**kwargs` 吞掉，使"到底传没传 schema"仍可被断言）；
+  - `tests/test_sprint5_t24_reconcile.py`：`steps_attempted` 结构守门的**允许面**由"一个声明常量"扩为"两个声明常量"，**断言仍是精确相等**（已验红）。
+  - ⚠ **禁弱化自查**：以上 `git diff` 中 `>=` / `issubset` / `pytest.skip` / `xfail` **零新增**，删除的两行 `assert` 均为**同处替换成等强或更严的版本**。
+- **新增正式测试不在本批**（Maria 既定分工，交测试工程师）；开发侧只做自测脚本（只落 `/tmp`，仓库零触碰）。
+- **共享文件纪律**：`docs/TODO.md` 与本 dev-plan 由**主控统一收口**（`docs/MEMORY.md` §1.1）。
+- **验收点映射**：DA-S7-13-1 / 2 / 3 **改口**（见 §61.1）；DA-S7-13-4 / 5 / 6 / 7 **作废**（绑定已作废的修法）。
+
+### 61.1 验收点（DA-S7-13-N，不占用 `AC-S7-*` 号段）
+
+| 编号 | 验收点 | 验证方式 |
+|---|---|---|
+| **DA-S7-13-1（改口）** | **汇报出口真的存在**：`create_react_subgraph` 收到的 `result_schema` **就是** `EXECUTION_OUTPUT_SCHEMA`；agent `<result>.metrics` 能原样到达 `ExecAgentOutput.reported_metrics` | 假子图捕获实参 + 四种畸形 `result` 形态（`None` / 无 `metrics` 键 / 非 list / 非 dict）逐条不炸 |
+| **DA-S7-13-2（改口）** | **分组指标来源优先级**：agent 有汇报 ⇒ `metrics_groups` **取 agent 且磁盘组名不掺入**；agent 零汇报 ⇒ **回落磁盘扫描**（与今日逐字节相同） | 节点级驱动，正反两向断言 |
+| **DA-S7-13-3（改口）** | **主指标补回且成功判定零松动**：主通道非空时 agent 主实验指标补进 `metrics`（同名键**解析值优先**）；主通道**零指标时不采信**自报且打 WARNING ⇒ `success` 仍为 `False` | 节点级驱动 + 去门控突变必须让 `success` 翻绿（活体证明） |
+| ~~DA-S7-13-4~~ | **已作废**（`coding.py` 零改动） | — |
+| ~~DA-S7-13-5~~ | **已作废**（`_collect_grouped_metrics` 零改动） | — |
+| ~~DA-S7-13-6~~ | **已作废**（同上） | — |
+| ~~DA-S7-13-7~~ | **已作废**（本批不新建 coding 字节门；execution 侧那道门是**更新**，走 §48.1 四件套） | — |
+
+---
+
+### 任务 T-S7-9-1：给 execution agent 补上汇报出口（`execution.py`，**本批唯一任务**）
+
+**产出文件**：`core/nodes/execution.py`（唯一生产文件）+ 5 个既有测试文件的必要适配（§61.0 已逐条列明）
+**依赖**：无
+**复杂度**：中（改动集中但触碰冻结区 + 触碰成功判定的**输入**，风险在"语义被悄悄换掉"）
+
+**实现要求**（逐条对应 §60.6-订正）：
+
+1. 新增 `EXECUTION_OUTPUT_SCHEMA`，**紧邻** `_EXECUTION_SYSTEM_PROMPT_BODY` 放置（同一件事的两半），字段集**恰为** `steps_attempted` / `all_exit_zero` / `summary` / `notes` / `metrics[]`——**与既有 `<result>` 契约同构，不新开第二条通道**；`metrics` 项**恰四字段**。
+2. `create_react_subgraph(...)` 补传 `result_schema=EXECUTION_OUTPUT_SCHEMA`。
+3. `ExecAgentOutput` 加 `reported_metrics: List[Any] = field(default_factory=list)`；`_run_execution_agent` 取 `final_state["result"]["metrics"]` 原样透传，四种畸形形态一律降级 `[]` **且不打 WARNING**（零指标是合法常态）。
+4. 新增 `_split_reported_metrics` / `_coerce_reported_value`（确定性纯函数，零 LLM、零磁盘 IO）：拆主实验 / 分组、标量收编、`mask_value` 脱敏、先到先得、畸形与冲突**双 WARNING**、`sorted` 输出。
+5. `_build_execution_agent_context` 补注 `expected_results`（**非空才注入**）。
+6. execution 冻结区 prompt 的"输出要求"段改写 + **§48.1 哈希四件套**（两处基线同步）。
+7. 节点主体接线：`metrics_groups = reported_groups or _collect_grouped_metrics(work_dir)`；`if metrics and reported_main: metrics = {**reported_main, **metrics}`，`elif reported_main:` 打 WARNING **不采信**。
+8. **零改动红线（逐函数字节比对自证）**：`_completion_insufficient` / `_apply_no_metrics` / `_apply_incomplete_execution` / `_build_execution_result` / `_reconcile_steps` / `_audit_declared_steps` / `_extract_metrics_block` / `_parse_metrics` / `_collect_grouped_metrics` / `_regex_scan_metrics` **十个函数一字不改**。
+9. **零 state / schema 变更**：`ExecutionResult` 的 `metrics` / `metrics_groups` 类型签名一字不动 ⇒ 评估 B（§60.5）的 20+ 文件代价**一分未付**。
+
+**自测检查点**（开发侧自测脚本只落 `/tmp`，仓库零触碰；正式用例交测试工程师）：
+
+- [x] [2026-08-02] **CP-9.1-1 汇报出口通了（DA-S7-13-1）**：实测 `result_schema is EXECUTION_OUTPUT_SCHEMA`；`<result>.metrics` 原样到达 `ExecAgentOutput.reported_metrics`；四种畸形形态（`result=None` / 无 `metrics` 键 / `metrics` 非 list / `result` 非 dict）**逐条降级空数组且不炸**。
+- [x] [2026-08-02] **CP-9.1-2 `_split_reported_metrics` 拆分正确**：`group` 为 `null` / 键缺省 / 全空白**三形态均归主实验**；分组组名**保持 agent 原文**（`['PCA','UMAP','t-SNE']`）；组内指标齐全；非 list / 空 / str / dict 四种输入 → `({}, {})`。
+- [x] [2026-08-02] **CP-9.1-3 确定性 + 脱敏**：同一输入连跑 3 次 `json.dumps` **逐字节相同**（实测 `[{}, {"A": {"a": 2}, "B": {"m": 3, "z": 1}}]`，组名与指标名均 `sorted`）；`str` 值过 `mask_value`（哨兵 token 实测被打码）。
+- [x] [2026-08-02] **CP-9.1-4 禁止静默吞错（已知 bug 模式 #3）**：6 种畸形条目（非 dict / 无 name / name 空白 / 值为 dict / 值为 list / 超长 str）全跳过 + 打 WARNING 且**条数如实**；同名**异值**重复保留首次值 + 打 WARNING，同名**同值**不误报。
+- [x] [2026-08-02] **CP-9.1-5 分组指标来源优先级（DA-S7-13-2）**：agent 有汇报 ⇒ `metrics_groups == {'PCA','UMAP','t-SNE'}` 且磁盘组 `legacy_group` **不掺入**；agent 零汇报 ⇒ 回落磁盘 `{'legacy_group': {'disk_metric': 1.5}}`（与今日相同）。
+- [x] [2026-08-02] **CP-9.1-6 主指标合并 + 门控（DA-S7-13-3）**：主通道非空 ⇒ `best_knn_accuracy` 补进；同名键 `mean_timing_seconds` **解析值 44.81 胜过自报 999.0**；主通道零指标 ⇒ `metrics == {}` + WARNING「不采信」+ `success is False`；正常路径 `success is True`（三合取项行为不变）。
+- [x] [2026-08-02] **CP-9.1-7 ★ 诚实交付守门（专防 R-S7-66，**期望值已按 §60.3-订正 改口**）**：用**真跑那份** `reproduction_plan.json` 的 5 条 `expected_results` 跑生产 `_verify_expected_results`——**A 半（写死断言）**：3 条 `trend` 缺失的**恒"未验证"**（成因 A，planning 侧，本批不治）；**B 半（机制证明，不是服从度证明）**：喂"agent 按计划写法汇报"的合成 `metrics_groups`，那 2 条产出 `['未验证','符合','未验证','符合','未验证']` ⇒ **成因 B（组名失配）与成因 C（指标名失配）双双被绕过**。**另配一条反证**：两来源合并时 `_match_metrics_group("UMAP", …)` 返回 `None`、第 2 条退回"未验证" ⇒ **"禁止合并"是有牙的**。
+- [x] [2026-08-02] **CP-9.1-8 逐条验红**（每处 `cp` 备份 → 改坏 → 记录 → `cp` 还原 → `sha256sum -c` → 复绿；**全程禁 `git checkout`**）：**10 处全部实做、全部见红**
+  - ①prompt 主体插一个空格 → **两道字节门同时红**（`当前：6dfe0ded16d8a5a9，基线：2843778a159215c3`），`2 failed / 58 passed`
+  - ②去掉 `result_schema=` 实参 → CP-9.1-1 红
+  - ③`metrics_groups` 改回只用磁盘扫描 → CP-9.1-5 / CP-9.1-7 红（**回验直接退回 5 条全未验证**）
+  - ④`metrics_groups` 改成合并两来源 → CP-9.1-5 红
+  - ⑤去掉主指标合并门控 → CP-9.1-6 红，**且 `success` 从 `False` 翻成 `True`**（成功判定被自报松动的活体证明）
+  - ⑥合并方向反转（自报覆盖解析值）→ CP-9.1-6 红（`mean_timing_seconds` 变 999.0）
+  - ⑦重复条目改"后覆盖前" → CP-9.1-4 红（`acc` 变 0.1）
+  - ⑧畸形跳过改静默 `pass` → CP-9.1-4 红
+  - ⑨删掉 `expected_results` 注入 → 上下文断言红（agent 拿不到计划写法 ⇒ 方案根基空转）
+  - ⑩在节点主体加一处 `steps_attempted` 消费点 → `test_cp_2_4_4_steps_attempted_not_consumed_structural` **当场红**（R-S7-72 的门仍有牙）
+  - ⚠ **两条无牙断言当场加固**：⑥与⑦首轮**未变红**（fixture 里没有同名键 / 末条取值恰好相同），已改造 fixture 后**复验见红**——如实登记，避免"验红走过场"。
+- [x] [2026-08-02] **CP-9.1-9 全量回归无余数 + mypy**：改前基线 **2506 passed / 25 skipped / 46 deselected / 7 xfailed**（2026-08-02 实测，复核 §63 P-66 的 2506 仍成立）；改后 `-p no:randomly` **2506 passed**、随机序 **2506 passed**，**通过数完全相同**（本批不新增正式用例）。`rm -rf .mypy_cache` 后 `mypy` → **Success: no issues found in 27 source files**。
+- [x] [2026-08-02] **CP-9.1-10 文件边界 + 禁弱化自查**：`git status --porcelain` 生产侧**只有 `core/nodes/execution.py`**；`coding.py` / `reporting.py` / `planning.py` / `state.py` / `ui/` / `plan_checks.py` / `app.py` **逐一零改动**；`git diff tests/` 中 `>=` / `issubset` / `pytest.skip` / `xfail` **零新增**，删除的两行 `assert` 均为同处替换成等强或更严版本（已分别用突变⑩与①验红）。
+
+---
+
+### ~~任务 T-S7-9-2~~（**已作废，§60.0 变更；全块保留备查，`coding.py` 本批零改动**）
+
+> 作废理由：产物文件格式约定是「代码猜产物长什么样」这条路线的补丁。新方案下**产物由谁写就由谁报**，格式约定不再是必要条件；连带 CP-9.2-1~7 与 DA-S7-13-4 / 7 一并作废。**§60.2 事实 16「coding 主体没有任何字节门」这条勘误仍然成立**，作为遗留项留在 §48.1「后人须知」。
+
+### 任务 T-S7-9-2：coding 侧补产物格式契约 + 新建 prompt 字节门（`coding.py`，线二-A）
+
+**产出文件**：`core/nodes/coding.py`（`_CODING_SYSTEM_PROMPT_BODY` 追加一段）、`tests/test_sprint7_s713_coding_artifact_contract.py`（新增）
+**依赖**：无（文件独立，可最先起）
+**复杂度**：低（改动小），**但字节门易踩自锁定坑（R-S7-69）**
+
+**实现要求**：
+
+1. 插入位置：`<METRICS>` 段之后、"修复回合模式"段之前（**同一件事的两半放一起**，理由见 §60.7 末行）。
+2. 新增段落**必须含三要素**（与 `<METRICS>` 段同构，这是真跑实证 9/9 服从度的写法）：**格式**（顶层必须是 JSON 对象；顶层字段值必须是标量；逐组聚合后的结果直接放顶层）+ **例子**（给一份最小 `summary.json` 样例）+ **边界**（组名用方法名 / 一组一个文件 / 没有可写的组就不写，不要写空文件）。
+3. **零动态变量**：新增文本必须是**纯静态文案**，不得出现 `arxiv_id` / 论文标题 / 路径变量 / 时间戳（已知坑 #4）。
+4. **新建 SHA 字节门**：沿 `test_sprint6_b1_prompt_guards.py:64-88` 范式，断言 `sha256(body.encode())[:16] == "<字面量>"`。⚠ **断言右侧必须是硬编码字面量**，**严禁** `EXPECTED = actual` 自锁定形态（R-S7-41 留档：planning 那道门曾以此形态零守门能力地存在了两个 sprint）。旧基线 `37ec6ee2b1606715` 写进 docstring 留档。
+5. 同时补一条"主体无论文级动态变量"断言（正则 `\d{4}\.\d{4,5}` 零命中），与 planning / resource_scout 的既有守门对齐。
+
+**自测检查点**：
+
+- [ ] **CP-9.2-1** 契约三要素齐全：主体含 `summary.json` 字面量、含"顶层"约束措辞、含至少一个 JSON 例子、含组名约定（**DA-S7-13-4**）
+- [ ] **CP-9.2-2** 位置正确：新增段落的字符偏移 **> `<METRICS>` 段偏移** 且 **< "修复回合模式"段偏移**
+- [ ] **CP-9.2-3** `<METRICS>` 段**一字未动**：`coding.py:183-185` 的三行原文逐字节断言（S7-11 的 AC-S7-46 范式：点名必须保留的原文）
+- [ ] **CP-9.2-4** **Prompt Cache 幂等**：正则 `\d{4}\.\d{4,5}` 在主体零命中；且两次不同 state 下 `_build_coding_system_prompt(ctx)` 的**主体部分逐字节相同**（沿 `test_paper_analysis_e2e.py` 的"截 SystemMessage 去尾部段落后比较"范式）
+- [ ] **CP-9.2-5** 新字节门存在且断言右侧是字面量：用 `inspect.getsource` 扫该测试函数，断言**不含** `EXPECTED_HASH = actual` 形态（**元断言，专门防 R-S7-69**）
+- [ ] **CP-9.2-6 逐条验红**：①主体内插一个空格 → 字节门必须红并打出新旧哈希；②删掉新增段落 → CP-9.2-1 红；③把新增段落里的例子换成含 `arxiv_id` 的动态形态 → CP-9.2-4 红（**DA-S7-13-7**）
+- [ ] **CP-9.2-7** 改动前后**基线留档**：旧 `37ec6ee2b1606715`（3052 字符）→ 新哈希与新长度写进 §63 一行，附变更原因（**这是"三件套"的第③件，不做等于门白建**）
+
+---
+
+### ~~任务 T-S7-9-3~~（**已作废，§60.0 变更；全块保留备查，`_collect_grouped_metrics` 函数体一字未改**）
+
+> 作废理由：同上——放宽解析规则仍是在猜产物形状。新方案下它**降级为兜底**（agent 一组不报时才用），刻意保留正是为了"agent 汇报失效时行为与今日逐字节相同"。CP-9.3-1~6 / DA-S7-13-5 / 6 作废；**CP-9.3-7（诚实守门）不作废，但期望值已改口并换发为 CP-9.1-7**（见 §60.3-订正）。
+
+### 任务 T-S7-9-3：`_collect_grouped_metrics` 防御性放宽（`execution.py`，线二-B）
+
+**产出文件**：`core/nodes/execution.py`（改 `_collect_grouped_metrics`）、`tests/test_sprint7_s713_grouped_metrics_shapes.py`（新增）
+**依赖**：**T-S7-9-1 收口后再起**（同文件单收口窗口，串行）
+**复杂度**：中
+
+**实现要求**：
+
+1. **顶层为 list**：不再整份 `continue`。按元素（要求元素是 dict）的**数值列**聚合成标量，键名带聚合算子前缀（`mean_<列名>`），并附 `<组名>_count` 之类的条数键。⚠ 聚合口径**必须进键名**（R-S7-70）。
+2. **dict 内值为 list-of-dict 的字段**：不再整份跳过，同样按数值列聚合，键名 `{字段名}_count` + `mean_{列名}`。
+3. **顶层标量的既有行为一字不改**（`bool/int/float` 直收、`str` 走 `mask_value` + 120 字符上限）——**这是回归面最大的地方**，`tests/test_sprint5_t26_grouped_metrics.py` 的既有样本必须全绿。
+4. **保持确定性纯函数**：零 LLM、零随机、文件按路径排序遍历、聚合键按 `sorted` 产出。
+5. **保持既有容错**：损坏 JSON / 读取失败 → WARNING + 跳过（**非静默吞错**，沿 :1619-1630 的既有纪律）；新增的"元素非 dict""列无数值"等情形同样**打 WARNING 不静默**。
+6. `mask_value` 脱敏出口**保持**（§9.3 纪律）。
+
+**自测检查点**：
+
+- [ ] **CP-9.3-1** 真跑现场重放：`_collect_grouped_metrics(workspace/1802.03426/code)` 产出 **5 组、全部非空**（现状 4 组全空 + eval 整份跳过）（**DA-S7-13-6**）
+- [ ] **CP-9.3-2** eval 组（顶层 list，21 条）收出 `mean_knn_accuracy ≈ 0.8006`（**DA-S7-13-5** 上半）
+- [ ] **CP-9.3-3** umap 组（dict 内 list-of-dict）收出 `completed_runs_count == 12` 与 `skipped_datasets_count == 1`（**DA-S7-13-5** 下半）
+- [ ] **CP-9.3-4** **聚合口径进键名**：所有由聚合产生的键**必须**带 `mean_` 或 `_count`；断言不存在与原始列同名的裸键（**防 R-S7-70 张冠李戴**）
+- [ ] **CP-9.3-5** **既有行为零回归**：`tests/test_sprint5_t26_grouped_metrics.py` 全绿；顶层标量、超长 str 跳过、`mask_value` 脱敏、损坏 JSON 容忍四项逐条断言
+- [ ] **CP-9.3-6 逐条验红**：①顶层 list 改回 `continue` → CP-9.3-1/2 红；②list-of-dict 字段改回跳过 → CP-9.3-1/3 红；③聚合键去掉 `mean_` 前缀 → CP-9.3-4 红；④把新增失败分支改成静默 `pass` → 需有 caplog 断言变红
+- [ ] **CP-9.3-7 ★ 诚实交付守门（专防 R-S7-66）**：**新增一条用例，用真跑那份 `reproduction_plan.json` 的 5 条 `expected_results` + 本批修好后的 `metrics_groups`，跑生产 `_verify_expected_results`，断言结果仍是 5 条"未验证"**，并在用例 docstring 写明三条成因归属（A trend 缺失 ×3 / B 组名失配 ×1 / C 指标名失配 ×1）。**这条用例的作用是把"本批不解决回验"钉成可执行的事实**，防止下次真跑误判为回归。⚠ 若 Maria 就 **决策点 D-1** 点头折进成因 B，本 CP 的期望值改为"4 条未验证 + 1 条有判定"，**同步更新**
+- [ ] **CP-9.3-8** 全量回归无余数 + `mypy` 零错误（先清缓存）
+
+---
+
+## 62. S7-13 风险登记（编号接续 §53 的 R-S7-65；本节登记 **R-S7-66~73**）
+
+> **⚠ 已按 §60.0 订正**：**R-S7-67 / R-S7-69 / R-S7-70 作废**（各自绑定的修法已作废）；**R-S7-66 / R-S7-68 / R-S7-71 改口保留**；**新增 R-S7-72 / R-S7-73**。
+
+见 §60.9 表格（R-S7-66 交付被误读【期望值已改口】/ ~~R-S7-67~~ / **R-S7-68 agent 服从度未知【本批头号风险】** / ~~R-S7-69~~ / ~~R-S7-70~~ / R-S7-71 同文件跨批次并发 / **R-S7-72 自报通道被当成事实源蔓延** / **R-S7-73 `NONE + success=False` 空洞可达面扩大**）。
+
+**沿用并降级保留的既有风险**：R-S7-59（agent 全量重跑服从度）与 R-S7-65（采信自报）——真跑报告 §8 已明载单次真跑不构成服从率证据，**本批不注销**。**R-S7-68 与它们同族**：本批新增的产物格式约定同样依赖服从度，**唯一的真实验证手段仍是下一次端到端真跑**。
+
+---
+
+## 63. S7-13 落点勘误留档（本节落盘时 Read / grep / **在真跑现场跑生产函数** 发现的出入）
+
+> 派单原文：「主控在本轮判读中已经犯过两次实质性错误…**不要照抄本派单的任何数字、行号、结论**。凡与你实测不符的，**以磁盘为准并如实登记出入**。」以下逐条。
+
+| # | 派单/报告原文 | 磁盘实测 | 影响 | 处置 |
+|---|---|---|---|---|
+| **P-60** | 「`for raw in reversed(matches)` **命中即返回**」 | **不精确**。`:415` 要求顶层是**非空 dict**、`:419` 只留标量、`:421` `if out: return out` ⇒ **值全部为非标量的块会被跳过、继续往前找**。真跑第 9 块恰好同时含数组与标量，才得以返回 | 低（症状判断不受影响），但**照此描述实现会丢掉既有的容错行为** | 已在 T-S7-9-1 实现要求 2 明写"过滤规则一字不改"；CP-9.1-5 立守门 |
+| **P-61** | 「`mean_timing_seconds` 被 **4 个**步骤争用、`num_runs` 被 **2 个**争用」（派单与报告 §6.1 同源） | **实测更严重**：`mean_timing_seconds` 被 **5 个块**争用（#3/#4/#5/#6/#9）、`num_runs` 被 **4 个块**争用（#3~#6）；**另有 `skipped_datasets` 也被 4 个块争用（四次同值）——两处原文均漏报** | 中：**低估了撞名规模**，且漏掉的那个恰是 P-56 / 报告 §6.3 最关心的字段 | §60.2 事实 8 已订正；CP-9.1-3 按实测数（4 / 5）写死断言 |
+| **P-62** | 「⇒ **`metrics_groups={}`** ⇒ `reporting.py:188` `_verify_trend` 首句 `if not (… and metrics_groups)` **短路** ⇒ 5 条预期全未验证」（派单与报告 §6.2 同源） | **❌ 因果链错误**。实测 `metrics_groups` = `{"baselines/laplacian_eigenmaps":{}, "baselines/pca":{}, "baselines/tsne":{}, "umap":{}}`——**4 个键、`bool()` 为 `True`**，`:188` 的短路**根本没触发**。真实失效点见 §60.3：**3 条死于 `trend` 缺失、1 条死于组名失配、1 条死于指标名失配** | **高**：照此因果链修，会以为"把 `metrics_groups` 填非空 ⇒ 回验就跑起来了"，而**实测填满后 5 条一条不变** | §60.3 整节 + CP-9.3-7 专门守门；本条是本次落盘最关键的勘误 |
+| **P-63** | 派单**未识别**「组名归一化失配」这条独立失效线 | `_normalize_group_key("t-SNE") = "t_sne"`；`_normalize_group_key("baselines/tsne") = "baselines_tsne"`；精确不等，双向子串（`reporting.py:151-157`）也不含 ⇒ `_match_metrics_group` 返回 `None`。**这是第三条独立失效线** | 中：修法极廉价（2~4 行），但**属扩围** | **登记不修**，立 **决策点 D-1** 交 Maria；同步进 `docs/TODO.md` |
+| **P-64** | 派单要求「必须评估 Prompt Cache 前缀影响…是否属冻结区」 | **实测：coding system prompt 主体没有任何字节门**。planning 有（`test_sprint6_b1_prompt_guards.py:70`）、execution 有（`test_sprint5_t14_execution_prompt.py:219`、`test_sprint7_s710_exec_locality.py:653`），**coding 没有**。非侵入探针实证：在 `<METRICS>` 段后插入整段约定并确认补丁真的进了组装结果，全量跑 **2506 passed / 0 failed，零红** | 中：**改 coding 提示词目前零阻力也零保护** | §60.7 完整评估；T-S7-9-2 要求 4 **新建**该门（不是更新），R-S7-69 守自锁定坑 |
+| **P-65** | 派单称批次 0~8 已用满、`S7-61~65` 是风险编号 | **复核属实**。另补两点：①`T-S7-9-` 在 §48 **P-17** 有历史命中，但那是"**否决**该写法"的留档、非占用；②裸 `S7-13` 零占用，但 `A-S7-13` / `Q-S7-13` / `AC-S7-13` / `R-S7-13` **四个同号异段并存** | 低，但易误引 | §60 编号说明表已逐条留档；全文引用一律带前缀写全 |
+| **P-66** | —— | **回归基线已过时**：S7-11 交付时记的是 **2494 passed / 58 deselected**，本节落盘时实测为 **2506 passed / 25 skipped / 46 deselected / 7 xfailed / 0 failed（144.41s）**。⚠ **自证内部一致**：`-m e2e --collect-only` 实测 **2584 总收集 / 46 e2e**，而 2506 + 25 + 7 = **2538 = 2584 − 46**，对平无余数 ⇒ deselected **等于 `e2e` 标记用例数**（`pytest.ini:5` `addopts = -m "not e2e"`），**与 `.env` 无关**（`.env` 只决定 e2e 跑起来后 skip 与否，不影响 deselect）。deselected 由 58 变 46 的成因**本批未追查、如实登记为未知** | 中：**照 2494 对账会有 12 条余数**，被误判为异常 | CP-9.1-9 / CP-9.3-8 一律以 **2506** 为基线，并标注时点（`docs/MEMORY.md` §1.2：全绿结论必须标时间点） |
+| **P-67** | —— | **已知坑 #6 在本仓库实证有效**：探针首跑 `import core.nodes.execution as ex` 拿到 callable，报 `AttributeError: 'function' object has no attribute '_build_execution_result'`；改 `importlib.import_module` 后正常 | 中：新写测试极易踩 | §60.8 红线 6 明令；本批一切测试/探针强制 `importlib.import_module` |
+| **P-68** | —— | **开工前工作区实测干净**（`git status --porcelain` 为空），与本对话开头 harness 给的快照（显示 3 处改动）**不符** | 低 | 沿 `docs/MEMORY.md` §1.2：harness 快照不可信，一律现查。已现查并留档 |
+
+### 63.1 方案变更后的追加勘误（**P-69 起**，2026-08-02 开工时实测）
+
+| # | 派单 / 原计划描述 | 磁盘 / 实跑实际 | 影响 | 处置 |
+|---|---|---|---|---|
+| **P-69（★ 派单判断被推翻，本次最关键）** | 派单第四点问「CP-9.3-7 的期望值是否改变：**B 是否被消解？C 呢？**」，并推测 C 可能仍在（`metric` 名 `k-NN classifier accuracy` vs agent 报的 `name`） | **B 与 C 双双被消解**。用真跑那份 `reproduction_plan.json` 实测：喂"agent 按计划写法汇报"的 `metrics_groups` → `['未验证','符合','未验证','符合','未验证']`。C 之所以也消解，是因为**"用计划写法"这条约束同时管住 `group` 和 `name`**——原方案只想到组名，没想到指标名也是同一条约束的射程内 | **高（正面）**：CP-9.3-7 的期望值由"5 条恒不变"变为"**3 条恒不变 + 2 条取决于服从度**"，**守门形态必须跟着拆成两半**（否则会把服从度假设伪装成回归门） | §60.3-订正 整节 + **CP-9.1-7** 重写为 A / B 两半 |
+| **P-70（残留，如实登记不治）** | 原计划要修 `_extract_metrics_block` 的"取最后一块" | **本批一字未改**（作废的修法）⇒ **档 1 自身的选块缺陷仍在**：单看 `_extract_metrics_block(round_2.log)` 依旧返回 `{"mean_timing_seconds": 44.81…, "num_result_records": 12}`。变化的是**它不再是主指标的唯一来源**——agent 自报的主实验指标会补进来（真跑现场 `best_knn_accuracy=0.987` 由此回到报告） | 中：若 agent **不报**主实验指标，`metrics` 仍只有那份运行时元数据 | **登记不治**（新方案的路线是"让报的人报"，再去改猜法是两条路线并行）。⚠ 交付说明与 TODO 必须写明这一条，防止被当成"缺陷一已彻底消灭" |
+| **P-71（★ 既有空洞，本批扩大其可达面）** | —— | `_apply_no_metrics` 的条件是 `not metrics and not metrics_groups`；`metrics_groups` 非空即**抑制** NO_METRICS 改判，而 `ErrorCategory.NONE` **不在 `AUTO_FIXABLE`**（`execution.py:161-169`）⇒ 映射 `permanent` ⇒ **丢掉一次回 coding 修复的机会**。该空洞**本批之前就存在**（磁盘扫到任意一组即触发，真跑现场 4 个空组就是这形态），本批因 agent 汇报也能填非空而**更易被走到** | 中：**不会假绿**（`success` 仍 `False`），但少一次修复机会 | **登记不治**（`_apply_no_metrics` 是零改动红线）→ **R-S7-73**；交后续批次或架构评审 |
+| **P-72（自查发现，方法论）** | —— | **两条验红首轮没变红**：⑥"合并方向反转"与⑦"重复条目后覆盖前"——原因是自测 fixture 里**没有同名键**、以及重复项的**末条取值恰好与首条相同**，突变后结果不变。⇒ **"写了断言"不等于"断言有牙"**，突变测试才照出来 | 中：若不复验，这两条会以"已验红"的名义交付两条无牙断言 | 当场改造 fixture（加同名异值键 / 把异值那条挪到末位）后**复验见红**；**已在 CP-9.1-8 尾部如实登记**，不粉饰 |
+| **P-73（编号，主控须知）** | 派单未指定新编号 | 沿 §49.0 先例**就地订正、编号不动**：仍是 **S7-13 / 批次 9 / T-S7-9-1 / CP-9.1-N**，原 T-S7-9-2 / T-S7-9-3 标作废并保留备查。⚠ 曾一度改用 `T-S7-10-1` / `CP-10.1-x`（代码注释已写入），**发现与 §49.0 体例不一致后统一回退**（`grep` 全仓 `T-S7-10` / `CP-10.` 零残留） | 低 | 全文与代码注释编号一致，已 `grep` 自证 |
+
+---
+
+*（S7-13 增补完：§60 概述（**编号说明表 8 项逐条复核** / 需求目标 / **前置事实 20 条逐条上磁盘亲验** / **§60.3 本批不解决什么** / **§60.4 评估 A** / **§60.5 评估 B** / 方案要点 8 条 / **§60.7 Prompt Cache 评估** / 红线 8 条 / **风险与两个决策点 D-1 D-2**）+ §61 批次 9 三任务规格 T-S7-9-1~3（**7 个 DA + 24 个 CP，含逐条验红**）+ §62 风险登记 **R-S7-66~71** + §63 落点勘误留档 **P-60~P-68**（其中 **P-62 因果链错误 / P-63 第三条失效线 / P-64 coding 无字节门 / P-66 基线过时** 四条为实质性）。本增补不覆盖 §1~§59 既有内容。*
+*⚠ **本批与 S7-10 / S7-11 / S7-12 一样无 PRD 章节与架构章节**（Maria 2026-08-02 明确本批不走 PRD，两条均属纯缺陷）⇒ 验收点用 **`DA-S7-13-N`**，不占用 `AC-S7-*` 号段。*
+*⚠ **上一版（2026-08-02 落盘）零代码改动**：那一版全程只写 `docs/`，一切核实走 `/tmp/s713probe/` 非侵入探针。*
+
+---
+
+> ### ⚠ 交付追记（2026-08-02，方案变更后**已开工并交付**）
+>
+> **§60.0 方案变更后本批已实做完成**：生产代码只碰 `core/nodes/execution.py`（+236 / −5），5 个既有测试文件必要适配，`coding.py` / `reporting.py` / `planning.py` / `state.py` / `ui/` **零改动**。
+>
+> - **回归账目**：改前 = 改后 = **2506 passed / 25 skipped / 46 deselected / 7 xfailed**（2026-08-02，`-p no:randomly` 与随机序各一次，通过数完全相同）；`mypy` 清缓存后 **零错误 / 27 files**。
+> - **验红**：**10 处全部实做、全部见红**（含两条首轮无牙、加固 fixture 后复验见红，P-72 如实登记）。全程 `cp` + `sha256sum -c`，**零 `git checkout`**。
+> - **自测**：两份 `/tmp` 脚本共 **46 条断言全绿**（31 条纯函数 / 装配层 + 15 条节点级与真跑重放）。
+> - **★ 交付表述纪律（R-S7-66，必须照此口径对外说）**：本批**打通了回验链路的下半段**（组名 / 指标名对齐），**没有**、也**不可能**证明 agent 一定会照做——**唯一的验证手段是下一次端到端真跑**。且 **3 条 `trend` 缺失的预期一条都不会变**（成因 A，属规划环节）。
+> - **两条如实登记的残留**：P-70（档 1"取最后一块"仍在，只是不再是唯一来源）、P-71 / R-S7-73（`NONE + success=False` 空洞可达面扩大，不假绿但少一次修复机会）。
+> - **不做的事**：未跑真跑、未跑 `-m e2e`、未 commit / push、未新增正式测试（交测试工程师）。
