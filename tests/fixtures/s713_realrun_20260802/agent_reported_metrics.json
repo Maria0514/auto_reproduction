@@ -1,0 +1,122 @@
+[
+  {
+    "name": "k-NN classifier accuracy",
+    "value": 0.6201137171286425,
+    "group": "UMAP"
+  },
+  {
+    "name": "runtime",
+    "value": 0.6467053890228271,
+    "group": "UMAP"
+  },
+  {
+    "name": "k-NN classifier accuracy",
+    "value": 0.702633449294879,
+    "group": "t-SNE"
+  },
+  {
+    "name": "runtime",
+    "value": 0.7519705295562744,
+    "group": "t-SNE"
+  },
+  {
+    "name": "k-NN classifier accuracy",
+    "value": 0.2699285527250963,
+    "group": "PCA"
+  },
+  {
+    "name": "runtime",
+    "value": 0.12071490287780762,
+    "group": "PCA"
+  },
+  {
+    "name": "k-NN classifier accuracy",
+    "value": 0.33000411476452324,
+    "group": "laplacian_eigenmaps"
+  },
+  {
+    "name": "runtime",
+    "value": 0.11985445022583008,
+    "group": "laplacian_eigenmaps"
+  },
+  {
+    "name": "k-NN classifier accuracy",
+    "value": 0.8175011593302447,
+    "group": "UMAP"
+  },
+  {
+    "name": "runtime",
+    "value": 5.016358375549316,
+    "group": "UMAP"
+  },
+  {
+    "name": "k-NN classifier accuracy",
+    "value": 0.8349954152053103,
+    "group": "t-SNE"
+  },
+  {
+    "name": "runtime",
+    "value": 2.8608274459838867,
+    "group": "t-SNE"
+  },
+  {
+    "name": "k-NN classifier accuracy",
+    "value": 0.3055011533272403,
+    "group": "PCA"
+  },
+  {
+    "name": "runtime",
+    "value": 0.09945511817932129,
+    "group": "PCA"
+  },
+  {
+    "name": "k-NN classifier accuracy",
+    "value": 0.6510025767896832,
+    "group": "laplacian_eigenmaps"
+  },
+  {
+    "name": "runtime",
+    "value": 0.2674870491027832,
+    "group": "laplacian_eigenmaps"
+  },
+  {
+    "name": "k-NN classifier accuracy",
+    "value": 0.9766277128547579,
+    "group": "UMAP"
+  },
+  {
+    "name": "runtime",
+    "value": 19.274004697799683,
+    "group": "UMAP"
+  },
+  {
+    "name": "k-NN classifier accuracy",
+    "value": 0.9727323316638842,
+    "group": "t-SNE"
+  },
+  {
+    "name": "runtime",
+    "value": 2.220043897628784,
+    "group": "t-SNE"
+  },
+  {
+    "name": "k-NN classifier accuracy",
+    "value": 0.540345019476906,
+    "group": "PCA"
+  },
+  {
+    "name": "runtime",
+    "value": 0.007030963897705078,
+    "group": "PCA"
+  },
+  {
+    "name": "k-NN classifier accuracy",
+    "value": 0.8263772954924874,
+    "group": "laplacian_eigenmaps"
+  },
+  {
+    "name": "runtime",
+    "value": 0.1496427059173584,
+    "group": "laplacian_eigenmaps"
+  }
+]

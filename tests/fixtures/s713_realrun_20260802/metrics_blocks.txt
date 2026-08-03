@@ -1,0 +1,7 @@
+<METRICS>{"dataset": "PenDigits", "n_samples": 1797, "n_features": 64, "n_classes": 10}</METRICS>
+<METRICS>{"dataset": "COIL-20", "n_samples": 400, "n_features": 4096, "n_classes": 40}</METRICS>
+<METRICS>{"dataset": "MNIST", "n_samples": 2000, "n_features": 784, "n_classes": 10}</METRICS>
+<METRICS>{"datasets_processed": 3, "mean_runtime_seconds": 8.312356154123941}</METRICS>
+<METRICS>{"num_success": 9, "num_failures": 0}</METRICS>
+<METRICS>{"best_dataset": "PenDigits", "best_method": "umap", "best_knn_accuracy": 0.9766277128547579}</METRICS>
+<METRICS>{"best_dataset": "PenDigits", "best_method": "umap", "best_knn_accuracy": 0.976627712854758, "num_results": 12}</METRICS>

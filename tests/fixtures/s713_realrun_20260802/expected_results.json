@@ -1,0 +1,34 @@
+[
+  {
+    "description": "UMAP 的嵌入应能形成清晰簇结构，定性可视化上与论文描述一致，兼顾局部邻域与一定全局结构。",
+    "trend": null
+  },
+  {
+    "description": "在小数据集的 k-NN 评估中，UMAP 表现应与 t-SNE、LargeVis 同量级，至少不明显劣化。",
+    "trend": {
+      "metric": "k-NN classifier accuracy",
+      "greater": "UMAP",
+      "lesser": "PCA"
+    }
+  },
+  {
+    "description": "在 COIL-20 等具有明显流形结构的数据上，UMAP 对全局关系的保留应优于仅强调局部结构的方法。",
+    "trend": null
+  },
+  {
+    "description": "运行效率上，UMAP 应表现出良好的扩展性；在相同本机设置下，整体耗时趋势应优于较慢的非线性方法。",
+    "trend": {
+      "metric": "runtime",
+      "greater": "t-SNE",
+      "lesser": "UMAP"
+    }
+  },
+  {
+    "description": "当增大 k-NN 评估中的 k 时，UMAP 在部分数据集上应更能保持性能稳定，体现较好的非局部结构保留。",
+    "trend": {
+      "metric": "k-NN classifier accuracy",
+      "greater": "UMAP",
+      "lesser": "t-SNE"
+    }
+  }
+]
