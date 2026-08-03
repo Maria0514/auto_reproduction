@@ -219,20 +219,23 @@ def test_cp_6_2_1_execution_prompt_body_byte_baseline():
     actual_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
 
     # 基线值见 dev-plan §48.1（execution prompt 主体字节基线留档表）。
-    # 当前基线：S7-13 **之后**（主体长 2550 字符，2026-08-02）。
-    # 变更内容 = 输出契约新增 metrics 数组（name / value / group / source）+ 三条填写
+    # 当前基线：S7-13 **砍掉 source 字段之后**（主体长 2479 字符，2026-08-02）。
+    # 变更内容 = 输出契约新增 metrics 数组（name / value / group）+ 三条填写
     # 纪律：①group 与 name 必须用 HumanMessage 里 expected_results 的原文写法（不得
     # 改成产物目录名或代码字段名）；②同组指标一起列、同组同指标只报一条；③只汇报
     # 真实读到的数值，宁可少报不得编造。配套 EXECUTION_OUTPUT_SCHEMA 经
     # create_react_subgraph(result_schema=…) 生效。**零插值、零论文级动态值。**
     # 历史基线：0dbe4143dc836e91（1560 字符，sp4~sp7 未被锁定的值）→
     #           f82f3938cf31f882（1698 字符，S7-10 / T-S7-6-4）→
-    #           c73e1e6e3cfc1280（1979 字符，S7-11 / T-S7-7-4）→ 本值。
+    #           c73e1e6e3cfc1280（1979 字符，S7-11 / T-S7-7-4）→
+    #           2843778a159215c3（2550 字符，S7-13 交付原样，含 source 字段）→ 本值。
+    # ⟦2026-08-02 Maria 拍板砍掉 source⟧ 该字段无代码消费点（磁盘核对已先行否决）
+    # ⇒ 无消费点的字段本身即过度工程，整条砍除，主体 2550 → 2479 字符。
     # 本门建立于 S7-10 / T-S7-6-2，S7-11 改 prompt 时**当场红**，报错逐字为
     # "当前：c73e1e6e3cfc1280，基线：f82f3938cf31f882"（CP-7.4-1 活体证明）；
     # S7-13 改 prompt 时**再次当场红**，报错逐字为
     # "当前：2843778a159215c3，基线：c73e1e6e3cfc1280"（CP-9.1-8① 活体证明）。
-    EXPECTED_HASH = "2843778a159215c3"
+    EXPECTED_HASH = "80862b25e3b926b0"
 
     assert actual_hash == EXPECTED_HASH, (
         f"execution prompt 主体字节已变更（当前：{actual_hash}，基线：{EXPECTED_HASH}）"

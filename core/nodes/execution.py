@@ -1080,10 +1080,13 @@ def make_run_in_sandbox_tool(
 #     ——名字对不上的问题由此**被绕过而非修补**（实测：计划写 "t-SNE"、目录叫
 #     baselines/tsne，`reporting._match_metrics_group("t-SNE", …)` 返回 None）；
 #   - metrics[].group 为空/缺省 ⇒ 主实验指标（进 ExecutionResult.metrics）；
-#   - metrics[].source 记产物文件相对路径：它是**给模型的锚**（逼它把值指回一个真实
-#     文件而不是凭印象写），**当前无代码消费点**。刻意不做"拿 source 回磁盘核对"——
-#     它只能拦"报了不存在的数"、拦不住"数取错了"，且 2026-08-01 真跑实测零编造
-#     ⇒ 没有证据前那是过度工程（沿 Q-S7-27 同款裁决）。真跑发现对不上再加。
+#   - ⟦2026-08-02 Maria 拍板砍掉 source 字段⟧ 原设计有 metrics[].source（产物文件相对
+#     路径），定位是"给模型的锚"、**无代码消费点**——磁盘核对已先行否决（它只能拦"报了
+#     不存在的数"、拦不住"数取错了"，且真跑实测零编造 ⇒ 没有证据前是过度工程，沿
+#     Q-S7-27 同款裁决）。**一个没有消费点的字段就是过度工程本身**（MEMORY §4.1）：
+#     它每回合都占 schema 与 prompt 的字节、要模型多想一层，却不产生任何可验证的约束。
+#     ⇒ 整条砍除。日后若真跑发现报数与磁盘对不上，**要加就连同磁盘核对一起加**——
+#     那时字段才有消费点，而不是先摆一个"看着像防线"的空壳。
 # required 刻意**不含 metrics**：零指标回合它就是空数组，若列为必填会被
 # `react_base._missing_required_fields` 判成"缺失"→ 每次都白烧一次 schema 重生成调用。
 EXECUTION_OUTPUT_SCHEMA: Dict[str, Any] = {
@@ -1125,10 +1128,6 @@ EXECUTION_OUTPUT_SCHEMA: Dict[str, Any] = {
                     "group": {
                         "type": ["string", "null"],
                         "description": "该指标属于哪一组实验，用计划预期里的写法；主实验指标留空。",
-                    },
-                    "source": {
-                        "type": ["string", "null"],
-                        "description": "该值来自哪个产物文件（相对 work_dir 的路径）。",
                     },
                 },
                 "required": ["name", "value"],
@@ -1173,8 +1172,7 @@ _EXECUTION_SYSTEM_PROMPT_BODY = """你是复现执行工程师，负责在隔离
       {
         "name": str,                    // 指标名
         "value": number | str | bool,   // 指标值，直接抄自产物文件，不得口算或估计
-        "group": str | null,            // 该指标属于哪一组实验；主实验指标留 null
-        "source": str | null            // 该值来自哪个产物文件（相对 work_dir 的路径）
+        "group": str | null             // 该指标属于哪一组实验；主实验指标留 null
       }
     ]
   }
