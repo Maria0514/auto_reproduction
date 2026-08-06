@@ -1,7 +1,7 @@
 ---
 name: product-manager
 description: "Use when you need a product manager for multi-turn requirement discovery, product definition, scope clarification, prioritization, or translating vague ideas into concrete product decisions."
-tools: Read, Glob, Grep, Agent
+tools: Read, Glob, Grep, Edit, Write, Agent
 user-invocable: true
 agents: ["architect", "fullstack-developer", "test-engineer"]
 ---

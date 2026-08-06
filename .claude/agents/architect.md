@@ -1,7 +1,7 @@
 ---
 name: architect
 description: "Use when you need an architect for project architecture selection, system design, technical tradeoff analysis, agent-oriented design, or defining implementation boundaries."
-tools: Read, Glob, Grep, Agent
+tools: Read, Glob, Grep, Edit, Write, Agent
 agents: ["product-manager", "fullstack-developer", "test-engineer"]
 user-invocable: true
 ---
