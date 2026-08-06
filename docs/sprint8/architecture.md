@@ -1,35 +1,42 @@
 # Sprint 8 核心架构设计文档：输出契约驱动的复现结果链路 + 结论档位重新定义
 
-**文档版本**：**v2.1**（**v2.1 = 跟改 2026-08-04 两项裁定 + Maria 加拍**：①**三档 + `_parse_metrics` 四函数由「判定链路解绑」改为「整体删除」**（§12 / §7 / §13）；②**`S8-10`（execution 侧注入）与 `S8-02` 的编码侧部分由批次 1a 移到批次 2**（§11），并新增 **§6.2⑥「注入与其配套提示词约束必须同批落地」**。v2.0 = **跟改 Maria 第四轮拍板：成功标准改由计划针对本篇论文写明**。v1.0 = Q-S8-01 ~ Q-S8-06 六项全裁 + 新识别 Q-S8-07 / Q-S8-08；**v2.0 = Q-S8-02 / Q-S8-05 扩围 + 新增 Q-S8-09（护栏 3 落点）+ 编号撞车换发 + 「零新计划字段 / 唯一状态契约新增」两处表述作废**，逐条跟改清单见 §14）
-**日期**：2026-08-03（**v2.1 跟改：2026-08-04**）
+**文档版本**：**v2.4**（**v2.4 = 跟改 Maria 对 PRD §13 五条的拍板**：第 2/3/4/5 条**确认架构默认取值**；🔴 **第 1 条推翻默认取值——`ExecutionResult.metrics` / `metrics_groups` 本 Sprint 删键**（原话「旧字段要是确认没有用了就删掉」）。落点 §0 / §2.6 / §5.9 / §7 / §11 / §12 / §13 / §16.6；**两处被突破的自设约束已显式处置、不默默绕过**（"状态契约新增上限两处" + `dev-plan.md:1358` CP-2.10-3），见 §2.6.4；并**上磁盘复核了 v2.3 那笔"71 处回归面"的账 —— 算高了，真实净增量是 4 处断言 / 1 个文件**，见 §2.6.2。v2.3 = 重裁 AR-S8-10：论文报告值改为「换个东西验」，不是「不验」**——Maria 2026-08-05 追问「论文值难道在前期的计划和分析节点没记下来？」查实**记录链完整**（`paper_analysis.py:45`/`:96`/`:224` → `state.py:80` → `planning.py:381`）⇒ v2.2 的「不进台账、不参与验钞」**治好了误判、却打开了编造**（agent 把论文值往低了编，自己跑出来的数就"对上了"）。**重裁为：论文值物证按 `paper_analysis.baseline_results` 核验**（§16.3.2），落点 §10 / §12 / §16.1 / §16.2 / §16.3 / §16.7；并在 §14.3.0 立**第三条机制性自查**——「我说的『做不到』，是只有这一条路做不到，还是所有路都做不到？」。v2.2 = 跟改 PRD v4.0 的 S8-06 / S8-07 回炉：结果的形状由执行环节决定——①**新增 §16 裁 Q-S8-10**（结果块契约 / 证据台账 / 通用渲染 / 展示上限 / 截断检测 / 两个折叠函数的去留）；②**Q-S8-05 重裁**（报告侧由「改造指标对比表」改为「删除对比表 + 通用块渲染」，见 §5.9）；③**本版显式纠正 v0.2 那次架构误判**（把「停止压扁嵌套」改判为方案 A），留痕见 §14.3.0；④§0 / §2.1 / §10 / §11 / §12 / §13 同步跟改。v2.1 = 跟改 2026-08-04 两项裁定 + Maria 加拍：①**三档 + `_parse_metrics` 四函数由「判定链路解绑」改为「整体删除」**（§12 / §7 / §13）；②**`S8-10`（execution 侧注入）与 `S8-02` 的编码侧部分由批次 1a 移到批次 2**（§11），并新增 **§6.2⑥「注入与其配套提示词约束必须同批落地」**。v2.0 = **跟改 Maria 第四轮拍板：成功标准改由计划针对本篇论文写明**。v1.0 = Q-S8-01 ~ Q-S8-06 六项全裁 + 新识别 Q-S8-07 / Q-S8-08；**v2.0 = Q-S8-02 / Q-S8-05 扩围 + 新增 Q-S8-09（护栏 3 落点）+ 编号撞车换发 + 「零新计划字段 / 唯一状态契约新增」两处表述作废**，逐条跟改清单见 §14）
+**日期**：2026-08-03（**v2.1 跟改：2026-08-04；v2.2 跟改：2026-08-05；v2.3 重裁：2026-08-05；v2.4 跟改：2026-08-06**）
 **作者**：架构师代理
-**对应 PRD**：`docs/sprint8/prd.md` **v3.0**（Maria 四轮拍板已回填；**§4.5.2「两层分离」是本次跟改的总纲**）
+**对应 PRD**：`docs/sprint8/prd.md` **v4.0**（Maria 四轮拍板 + 2026-08-05 S8-06 / S8-07 回炉已回填；**§4.5.2「两层分离」与 §4.6.2「语义层 / 形状层分离」是本文档两条跟改总纲**）
 **体例参照**：`docs/sprint7/architecture.md` v1.3
-**推翻的既有裁决**：`docs/sprint5/architecture.md` §7.10 的二选一裁决（"弃选扩展 `<METRICS>` 多块约定、选文件扫描"）——本次两条路**都不走**：`<METRICS>` 通道整体退场，文件扫描 `_collect_grouped_metrics` 降为兜底（S7-13 已先行降级），主通道改为 agent 汇报 + 系统验钞。
+**推翻的既有裁决**：`docs/sprint5/architecture.md` §7.10 的二选一裁决（"弃选扩展 `<METRICS>` 多块约定、选文件扫描"）——本次两条路**都不走**：`<METRICS>` 通道整体退场，文件扫描 `_collect_grouped_metrics` **v2.2 起由"降为兜底"改判为整体删除**（v2.1 原文"降为兜底"保留在 §13 里划删，理由见 §16.6），主通道改为 agent 汇报 + 系统验钞。**v2.2 另推翻本文档自己的一条 v0.2 裁决** —— "结构自由化由『停止压扁嵌套』改为方案 A（把维度写进组名）"，误判剖析见 **§14.3.0**（不许省，是本版必须留给后人的一节）。
 
 > **本文档的裁定范围**：只裁"怎么实现"。Maria 四轮拍板的产品决策（六条决策 / 四档制 / 判定落点搬迁 / 第四态作废 / 造假审计改判 / 三条封顶 / 审计盲区不治 / **成功标准由计划针对本篇写明** / **两层分离** / **护栏 3 不做阻断门**）**一律照办，不改、不优化、不加回被砍项**。凡在架构上落不了地或存在产品口径冲突的，一律列进 §9「须 Maria 复裁」，不自行调和。
 >
-> **贯穿硬约束**：不新增 interrupt 种类 / 不改编排图 / 不改人在回路三个交互点 / 保 S-1 重跑幂等契约（`_has_committed_result_for_round` guard）/ **状态契约新增严格限两处**（`ExecutionResult.conclusion` + `ReproductionPlan.success_criteria`，Q-S8-02）/ **护栏 3 只产警示、不阻断审批** / 反过度工程（MEMORY §4.1）：零新模块、零新枚举类、零"将来可能用得上"的扩展点。
+> **贯穿硬约束**：不新增 interrupt 种类 / 不改编排图 / 不改人在回路三个交互点 / 保 S-1 重跑幂等契约（`_has_committed_result_for_round` guard）/ **状态契约新增严格限两处**（`ExecutionResult.conclusion` + `ReproductionPlan.success_criteria`，Q-S8-02）**＋ 🔴 v2.4 删除两处**（`ExecutionResult.metrics` / `metrics_groups`，Maria 2026-08-06 拍板，处置与留痕见 §2.6.4）/ **护栏 3 只产警示、不阻断审批** / 反过度工程（MEMORY §4.1）：零新模块、零新枚举类、零"将来可能用得上"的扩展点。
 >
-> **先说本 Sprint 的架构级结论**：**新增抽象总量 = 2 个状态契约键（跨两个结构）+ 1 个 `ErrorCategory` 成员 + 4 个 execution 侧纯函数 + 1 个 reporting 侧纯函数 + 1 条 `check_plan` 警示 + 1 组 term_map 换发**。`_SandboxRunCollector` 一字不动；`code_fs_tools.py` 一字不动；`react_base.py` 一字不动；`graph.py` 一字不动；`config.py` 零新增常量；`check_plan` 既有五条警示行为与既有两个调用点一字不动。
+> 🔴 **v2.2 新增的第三条总纲（与「两层分离」并列，落地时同样容易搞砸）**：**语义层与形状层必须分处两地** —— **语义层**（每块要有中文标题 / 要说清数据来自哪个产物哪一步 / 若上下文给了论文报告值则同块内可对照 / 不得覆盖合并不同来源的同名数字）写在**系统提示词**里；**形状层**（分几块、几列、列叫什么、行怎么排、用不用表）**只存在于 agent 的汇报数据里，代码侧一行都不许有**。⇒ **`core/` 下不得再出现任何写死的结果表头字符串、写死的结果分节标题、以及对结果块 / 块内行列的 `sorted()`**（§16.7 给出可静态断言的清单）。**这条与「状态契约新增限两处」同级，是本版的红线。**
+>
+> 🔴 **v2.2 另一条口径澄清（防止把红线读反）**：「代码不预设形状」**不等于**「代码不设上限」。**上限、转义、脱敏、对齐、显式截断标注属于确定性与安全，必须由代码强制**（§16.5）；被禁的是**代码替 agent 决定"结果长什么样"**（表头、列数、分节、顺序）。两者的分界线：**代码可以拒绝渲染得下不去手的东西并如实标注，但不许规定它应该长什么样。**
+>
+> **先说本 Sprint 的架构级结论（v2.2 重算）**：**新增抽象总量 = 2 个状态契约键（跨两个结构，`conclusion` 的子键不占额度）+ 1 个 `ErrorCategory` 成员 + 5 个 execution 侧纯函数 + 3 个 reporting 侧纯函数 + 4 个 execution 侧模块常量 + 1 条 `check_plan` 警示 + 1 组 term_map 换发**；**同批删除 8 个 execution 侧函数 / 7 个 reporting 侧函数 / 1 个 execution 侧模块常量**（清单见 §12）。⇒ 🔴 **本版是净删大于净增**——这一条直接回应 PRD 非目标 2 的澄清：新方案**不建任何容器**，它比已作废的方案 A **更少**抽象。`_SandboxRunCollector` 一字不动；`code_fs_tools.py` 一字不动；`react_base.py` 一字不动；`graph.py` 一字不动；`config.py` 零新增常量；`check_plan` 既有五条警示行为与既有两个调用点一字不动。
+>
+> ⚠ **v2.1 的这句话当时就少算了**：它写"1 个 reporting 侧纯函数"，而 v2.0 的 §5.6（`_render_audit_findings`）与 §5.7（`_render_success_criteria`）已经是两个。**v2.2 一并订正为 3 个**（新增 `_render_result_blocks`）。
 >
 > 🔴 **v2.0 的总纲（落地时最容易搞砸的一件事）**：**第一层（四档语义边界，所有论文共用）与第二层（本篇达标线，计划写）必须落在两个物理位置** —— 第一层写在**系统提示词（稳定前缀）+ execution 模块级常量**里，第二层走 **HumanMessage 动态通道**。**两者不得混在同一段文本里。** 混了要么退回硬编码（第二层被写死），要么允许越权（第一层被计划改动）。详见 §2.5.4。
 
 ---
 
-## 0. 裁定总表（先给结论；**v2.0 已按第四轮拍板更新**）
+## 0. 裁定总表（先给结论；**v2.2 已按 PRD v4.0 回炉更新**）
 
 | 编号 | 裁定结论一句话 | 主落点 | 阻塞批次 |
 |---|---|---|---|
 | **Q-S8-01** | **判定不进收集器**：走 `final_state["result"]` 为权威 + messages 回读为**存在性兜底**（`_merge_with_collector` 的镜像应用），判定缺失时走封顶而非判失败 | `execution.py` `_run_execution_agent` / 新 `_resolve_agent_report` | 批次 2 |
-| **Q-S8-02** 🔴 **v2.0 扩围** | **跨两个结构、共两个新增键**：①`ExecutionResult` 加 `conclusion: Dict`（`{level, goal_checks, evidence}`），沿 `step_reconciliation` 嵌套字典范式，`level` 存的**就是用户可见的四个中文档名**、无第二套值；②`ReproductionPlan` 加 **`success_criteria: str`（单个字符串，不是"档位→达标线"的字典）**——四档名因此**不出现在计划里**，两层分离由结构本身守住（§2.5） | `core/state.py:159-184` + `:115-157` | 批次 1a（字段名）／1b（生产者）／2（消费者） |
+| **Q-S8-02** 🔴 **v2.0 扩围 / v2.4 加删除面** | 🔴 **v2.4 追加：`ExecutionResult.metrics` 与 `metrics_groups` 两键删除**（Maria 2026-08-06 推翻架构"保留停产"默认取值；前置条件已核实、真实改动面已复核 = 4 处断言 / 1 个文件，见 **§2.6**）⇒ `ExecutionResult` 由 11 键变 10 键。以下为 v2.0 原文：**跨两个结构、共两个新增键**：①`ExecutionResult` 加 `conclusion: Dict`（`{level, goal_checks, evidence}`），沿 `step_reconciliation` 嵌套字典范式，`level` 存的**就是用户可见的四个中文档名**、无第二套值；②`ReproductionPlan` 加 **`success_criteria: str`（单个字符串，不是"档位→达标线"的字典）**——四档名因此**不出现在计划里**，两层分离由结构本身守住（§2.5） | `core/state.py:159-184` + `:115-157` | 批次 1a（字段名）／1b（生产者）／2（消费者） |
 | **Q-S8-03** | **验钞函数内联自判**（4 行 resolve + is_relative_to，与 `reporting._resolve_report_path` 同范式）；**工具层 `_is_within_workspace` 一字不动** ⇒ 两个闸物理分处两文件，不可能被合成一个 | `execution.py` 新 `_verify_evidence` | 批次 2 |
 | **Q-S8-04** | 新增 `ErrorCategory.NO_VERIFIABLE_OUTPUT`；**早停轮数常量复用 `NO_METRICS_EARLY_STOP_ROUNDS`（config 零新增）**；早停在优先级链中**原位继承**，`:2817-2840` 的顺序一字不动 | `execution.py:132-171` / `:2729` / `:2817` | 批次 2 |
-| **Q-S8-05** 🔴 **v2.0 扩围** | `_verify_trend` / `_lookup_metric_value` / `_match_metrics_group` **三个全退场**；`_verify_expected_results` 退化为**旧快照兼容读**；`_determine_conclusion` 改名 `_assemble_conclusion`（只算 annotations + 取执行环节判定）；审计**脱离 `simulation` 标注、独立成节**，execution 侧就地调 `audit_code_dir` 注入上下文；**v2.0 加一条：新增 `_render_success_criteria`，把本篇成功标准原文照登进报告（§5.7）** | `reporting.py:136-324` / `:587-704` | 批次 3 |
+| **Q-S8-05** 🔴 **v2.2 重裁**（v2.0 已扩围一次） | `_verify_trend` / `_lookup_metric_value` / `_match_metrics_group` **三个全退场**；`_verify_expected_results` 退化为**旧快照兼容读**；`_determine_conclusion` 改名 `_assemble_conclusion`（只算 annotations + 取执行环节判定）；审计**脱离 `simulation` 标注、独立成节**；`_render_success_criteria` 把本篇成功标准原文照登（§5.7）；🔴 **v2.2 新增**：`_render_metrics_comparison` / `_comparison_table` / `_flatten_mapping` **三个一并删除**（不是改造），报告侧结果呈现改为 `_render_result_blocks(conclusion)` 按 agent 给的块顺序渲染、**代码不排序**；`_render_goal_checks` 新增"按证据台账渲染引用"职责。**与 v2.1 的逐条差异见 §5.9** | `reporting.py:130-324` / `:474-486` / `:587-704` / `:931-1008` | 批次 3 |
 | **Q-S8-06** | 沿"非空才注入"，键名 `baseline_results` 与 state 同名透传；**无该值时 payload 字节零扰动 ⇒ 既有基线不换发，只新增"有该值"一条基线**；系统提示词哈希基线本批必换发一次（原因是判定纪律段改写，不是本项） | `execution.py:_build_execution_agent_context` | 批次 1a |
 | **Q-S8-07**（v1.0 新识别） | `ErrorCategory.NO_METRICS` **枚举成员必须保留**（旧 checkpoint 反序列化面），只删唯一生产者 `_apply_no_metrics` | `execution.py:132-171` / `:3026` | 批次 2 |
 | **Q-S8-08**（v1.0 新识别） | 七处随四档制作废的**用户可见文案**须同批换发并进守门面（清单见 §5.5） | `reporting.py` / `execution.py:2715` / `ui/term_map.py` | 批次 3 |
 | **Q-S8-09** 🔴 **v2.0 新增**（= PRD v3.0 里那个撞号的 Q-S8-07，**已换发**，见 §14.2） | 护栏 3 落在 `check_plan` 新增第 6 条警示；**只产警示、不阻断审批**（产品决策，不推翻）；⚠ 判据要用论文分析的事实层名词，而现签名拿不到 ⇒ **加一个带默认值的关键字形参**，既有两个调用点与既有五条警示**一字不动**（§15） | `core/plan_checks.py:483` / `ui/pages/plan_review.py:786` | 批次 1b |
+| **Q-S8-10** 🔴 **v2.2 新增**（PRD v4.0 §8 交裁，编号与 PRD 一致、无撞车） | **结果块落 `conclusion` 的子键**（`conclusion` 本就是 `Dict[str, Any]`，加子键**零 TypedDict 改动、零状态契约额度**）；**证据台账由系统去重生成、id 由系统生成，agent 一个 id 都不写** ⇒ 悬空 id 在结构上不可能发生（R-S8-23 不适用）；🔴 **v2.3：台账收两种出处的物证，各走各的核验** —— 产物物证走既有五重，**论文报告值走「与 `state["paper_analysis"]["baseline_results"]` 对得上」两重**（记录链完整：`paper_analysis.py:45`/`:96`/`:224` → `state.py:80` → `planning.py:381`），堵住 **AR-S8-14「把对照基准往低了编」**；**块的收编（脱敏 / 长度截断 / 列数对齐 / 四个上限 / 畸形标注）全部落 execution 侧单个纯函数 `_collect_result_blocks`，落盘即可渲染**，reporting 侧只做 Markdown 转义与拼装；`_split_reported_metrics` / `_coerce_reported_value` / `_collect_grouped_metrics` / `_GROUP_METRIC_STR_MAX_LEN` **四个一并删除**（折叠动作是本次病根，扫盘兜底的硬编码前提已被同批拆除）；**截断检测用"有 `<result>` 开标签、无闭标签"的确定性信号**，不用长度启发式，`react_base` 一字不动。**全裁见 §16** | `execution.py:1092` / `:1706-1856` / `:2938` / `:2961`；`reporting.py:931-1008`；`ui/pages/result_report.py:163-201` / `:315-330` | 批次 2 + 批次 3 |
 
 ---
 
@@ -101,15 +108,19 @@ def _resolve_agent_report(final_state, final_messages) -> Dict[str, Any]:
 - 落点顺序（在既有七步骨架里插入，不新增步骤号层级）：
 
   ```
-  步骤 4.4  _split_reported_metrics（保留，S8-06 改组名语义 + 撞名处置）
-  步骤 4.5  metrics_groups（保留，agent 汇报优先、扫盘兜底）
+  步骤 4.4  ✂ 删除  _split_reported_metrics（v2.1 写的是"保留 + 改组名语义 + 撞名处置"，
+                    v2.2 整条作废：折叠动作本身就是病根，见 §16.1）
+  步骤 4.5  ✂ 删除  metrics_groups（自报折叠 or 扫盘兜底，两条来源一并退场，见 §16.6）
   步骤 4.6  _reconcile_steps（位置不动）
   步骤 4.65 _audit_declared_steps（位置不动）
   步骤 4.7  _apply_incomplete_execution（保留）
-  步骤 4.75 ★ 新增 _verify_evidence + _decide_conclusion   ← 本次唯一新增步骤
+  步骤 4.75 ★ 新增 _verify_evidence + _collect_result_blocks + _decide_conclusion
+                    ← 本次唯一新增步骤；三者同一次调用内完成、共用同一份 agent 汇报
   步骤 4.8  ★ 新增 _apply_no_verifiable_output（取代被删的 _apply_no_metrics 的位置）
   步骤 5    _build_execution_result（多收一个 conclusion 参数，随 exec_result 一次 commit）
   ```
+
+  🔴 **v2.2 说明：删掉 4.4 / 4.5 之后，"结果"这条数据流在 execution 侧只剩一个出口** —— `_resolve_agent_report` → `_verify_evidence`（建台账、逐条验钞）→ `_collect_result_blocks`（归一化 + 回填 `evidence_ids`）→ `_decide_conclusion`（只读 `level` + 数封顶）→ 随 `conclusion` 一次落盘。**零折叠、零扫盘、零第二条来源。** 三者顺序不可换：台账必须先于块建好，块才能回填引用。
 
 - **磁盘同刻性**：`_verify_evidence` 在此处读盘，与 agent 跑命令是同一次节点调用、同一份 `code_output_dir` 现场。报告环节读的是已落盘的 `conclusion`，**不重算、不重读盘**（PRD §4.5.1 落点理由①的架构兑现）。
 - **interrupt#2 幂等**：`_has_committed_result_for_round` guard 命中路径（`execution.py:2884-2899`）**复用已落盘 `execution_result`**，其中已含 `conclusion` 键 ⇒ 重入不重判、档位不会二次变化。**guard 函数一字不改。**
@@ -147,20 +158,68 @@ class ExecutionResult(TypedDict):
 
 形态（写入方单点 = execution 的 `_decide_conclusion`）：
 
+> 🔴 **v2.2 改写**：v1.0 定的是**内联证据**形态，已被 PRD v4.0 §4.6.4 修订为**唯一证据台账 + 引用**（PRD §13 待拍板第 5 条，默认取值「修订」）。**v1.0 原文保留在本节末尾的折叠留痕里，不删。**
+
 ```jsonc
 {
   "level": "复现成功",              // 四档字面量之一，就是用户可见文案本身
-  "goal_checks": [                  // 逐条预期三态结论（与 reporting 既有渲染入参同形）
+  "evidence_ledger": [              // 🔴 v2.2：唯一证据台账。id 由**系统**生成（"E1"/"E2"…），
+                                    //    agent 一个 id 都不写；验钞每条只跑一次
+    {"id": "E1", "path": "outputs/umap/summary.json", "value": "0.62",
+     "source_note": "第 3 步 训练脚本产出",     // agent 自述来源，纯展示、不参与判定
+     "ok": true, "reason": ""},
+    {"id": "E2", "path": "…", "value": "…",
+     "ok": false, "reason": "路径越出本次代码目录"},
+    // 🔴 v2.3：论文值物证——出处不是产物文件，带 metric 不带 path，
+    //    按 paper_analysis.baseline_results 核验两重（§16.3.2）
+    {"id": "E3", "metric": "knn_accuracy", "value": "0.62",
+     "source_note": "论文 Table 2", "ok": true, "reason": ""}
+  ],
+  "goal_checks": [                  // 逐条预期三态结论（渲染入参仍是整个 conclusion，签名不变）
     {"description": "…计划预期原文…",
      "verdict": "印证上了",         // 三态之一（字面量见 §9 复裁项 1）
+     "evidence_ids": ["E1"]}        // 🔴 只持引用，不内联
+  ],
+  "level_evidence_ids": ["E1"],     // 支撑**档位本身**的物证引用（封顶 3 判据的输入）
+  "result_blocks": [                // 🔴 v2.2 新增：结果的形状由执行环节决定（§16）
+    {"title": "kNN 准确率：本次复现 vs 论文报告",
+     "note": "取自第 3 步产出的 summary.json；论文值来自论文分析注入的上下文",
+     "columns": ["方法", "数据集", "本次复现", "论文报告值"],
+     "rows": [["UMAP", "MNIST", "0.61", "0.62"]],
+     "evidence_ids": ["E1"],
+     "caveats": []}                 // 块级畸形/截断标注，由收编函数填中文串
+  ],
+  "report_caveats": []              // 全局级标注（疑似截断 / 预算耗尽 / 结构不合法），同上
+}
+```
+
+**四条形态纪律（可静态断言，落地时最容易被改回去）**：
+
+1. **`evidence_ledger` 是全 `conclusion` 内唯一的证据数组。** **落盘后**的 `goal_checks` 与 `result_blocks` **只允许出现 `evidence_ids`**，不允许出现 `path` / `metric` / `value` / `ok` / `reason` 任何一个键 —— 一旦允许，两处就会各自演化成一份证据，**这正是 PRD §4.6.4 要防的"漂移成两套"**。
+   > ⚠ **注意区分两层**：agent **汇报时**是就地写 `{path…}` 或 `{metric…}`（§16.2 schema），**收编函数把它们抽成台账并回填 `evidence_ids`** —— 上面这条纪律约束的是**落盘结构**，不是 agent 的书写形式。搞混会得出"agent 也要写 id"的错误结论（那正是 §16.3.1 否决的方案 B）。
+2. **id 由系统生成、agent 不写**（§16.3）⇒ 悬空引用在结构上不可能发生。
+3. **`level_evidence_ids` 与 `goal_checks[].evidence_ids` 可以指向同一条台账记录** —— 这正是台账的意义（**同一份物证只读一次盘、只验一次**）。
+4. **`report_caveats` / `caveats` 里装的是**已经写好的中文句子**，渲染层原样印、零判断逻辑**（用户可见文本的措辞归 execution 侧模块常量，进术语守门面；MEMORY §4.2）。
+
+<details><summary>v1.0 原形态（已被 v2.2 修订，保留供追溯）</summary>
+
+```jsonc
+{
+  "level": "复现成功",
+  "goal_checks": [
+    {"description": "…计划预期原文…", "verdict": "印证上了",
      "evidence": [{"path": "outputs/umap/summary.json", "value": "0.62",
                    "ok": true, "reason": ""}]}
   ],
-  "evidence": [                     // 支撑档位本身的物证（封顶 3 判据的输入）
+  "evidence": [
     {"path": "...", "value": "...", "ok": false, "reason": "路径越出本次代码目录"}
   ]
 }
 ```
+
+**修订理由（PRD §4.6.4，架构复核后同意）**：①粒度不同——物证的粒度是每条判断，结果块的粒度是一张表，一张表可能有 12 行来自 2 个文件；②内联导致同一个结果文件在 N 处重复出现 ⇒ **验钞读盘跑 N 次**；③逐条结论的证据与块的证据成为**两处独立数组** ⇒ 漂移被写进结构本身。
+
+</details>
 
 ### 2.2 三个备选与取舍
 
@@ -169,6 +228,12 @@ class ExecutionResult(TypedDict):
 | **A（采纳）** | 单键 `conclusion: Dict`，内含 level / goal_checks / evidence | **只加 1 个 TypedDict 键**；与 `step_reconciliation` 完全同范式（既有先例，`.get()` 防御读一条就够）；**与 `reporting._determine_conclusion` 现有返回结构 `{level, annotations, goal_checks}` 同形** ⇒ 报告侧渲染函数 `_render_goal_checks(conclusion)` **入参零改动** | — |
 | B | 三个平键 `conclusion_level` / `goal_checks` / `evidence_ledger` | 扁平、读起来直白 | 三处 TypedDict 加键、三处降级构造点补默认值、三处旧快照防御读——**违反"唯一状态契约新增"**，且 `evidence` 与 `goal_checks.evidence` 语义同族却被拆散 |
 | C | 复用 `metrics_groups` 塞判定 | 零新增键 | 语义污染（指标容器承载结论）；`metrics_groups` 有独立消费者（对比表），混装必然互相干扰；踩"字段被复用到变形"同一族过度设计病 |
+
+> 🔴 **v2.2 防同名误读（PRD v4.0 §12.6 与 §14 两处点名，此处正式登记）**：**本节这个「方案 A」指的是状态契约方案（`ExecutionResult` 只加一个 `conclusion` 键），与 PRD §4.6 那个已作废的「方案 A（把维度写进组名）」是两回事、同名而已。**
+> - **本节的方案 A 不受回炉影响、不得回滚。** §5.2 末句"这是选方案 A（§2.2）换来的最大红利"指的也是本节这个 —— 它说的是「`conclusion` 与 `_determine_conclusion` 现有返回结构同形 ⇒ `_render_goal_checks` 入参零改动」，**v2.2 之后这条红利依然成立**（`_render_goal_checks(conclusion)` 单参签名不变，见 §5.9）。
+> - PRD §4.6 那个方案 A **已于 2026-08-05 由 Maria 拍板作废**，本文档中受其影响的三处（§1.5 步骤 4.4、§10 AR-S8-08、§12 `EXECUTION_OUTPUT_SCHEMA` 条目）**已在 v2.2 逐处标注作废**，不是漏改。
+>
+> 🔴 **v2.2 补一句额度口径**：**`conclusion` 的类型是 `Dict[str, Any]`，往里加子键（`evidence_ledger` / `result_blocks` / `report_caveats`）不构成状态契约新增** —— 它一个 TypedDict 键都不加、一处旧快照防御读都不多、一次迁移都不要。**所以"状态契约新增严格限两处"在 v2.2 之后仍然成立、没有被悄悄突破。** 反过来说：**顶层加键要付的账（三处构造点补默认值 + 三处防御读 + 回归面）子键一分不付**，这正是 §2.2 当初选 A 而不是 B 的收益在本版的第二次兑现。
 
 ### 2.3 档名：一套值，不做内部枚举 + 展示名两套（A-S8-05 的架构兑现）
 
@@ -189,8 +254,9 @@ class ExecutionResult(TypedDict):
 
 - **写入方单点**：`execution._build_execution_result`（新增形参 `conclusion: Optional[Dict] = None`，落盘 `dict(conclusion or {})`，与 `step_reconciliation` 逐字同款）。
 - **降级构造点同步补默认值**：`execution.py:2908-2917`（`code_output_dir` 缺失路径）补 `conclusion={}`。
-- **消费侧一律 `.get("conclusion") or {}`**：旧 checkpoint（10 键 / 7 键快照）读到 `{}` ⇒ `level` 缺失 ⇒ 报告侧走"旧快照兼容分支"（§5.4），**不崩、不假装有结论**。
+- **消费侧一律 `.get("conclusion") or {}`**：旧 checkpoint（11 键 / 7 键快照）读到 `{}` ⇒ `level` 缺失 ⇒ 报告侧走"旧快照兼容分支"（§5.4），**不崩、不假装有结论**。
 - **`success` 由 `level` 派生**（PRD §4.5.4）：`success = level in {"复现成功", "部分复现"}`。旧快照 `conclusion` 为空时 `success` 仍读既有 `success` 键原值（它在旧快照里是有的）⇒ 旧报告可重放。
+- 🔴 **v2.4 补一条反方向的防御读（删键带来的新面，不补会被漏掉）**：**旧 checkpoint 里含有本次已删除的 `metrics` / `metrics_groups` 两键**。**这不会崩**（`TypedDict` 运行时就是 `dict`、零校验，多余键读得出来、也不必读），**但也不许有人"顺手用一下"** —— 🔴 **写死：`core/` 与 `ui/` 交付后对这两个键的读取点必须为零**（静态断言对象，与 AC-S8-20② 的"不得兜底回退"同一条防线）。**旧报告重放时结果节不渲染**（块为空 → 早退），**不得改成"旧快照就读旧键渲染旧表"** —— 那是把删掉的格子从旧数据那一侧请回来，取向与 §5.4 / AR-S8-12 逐字同源。
 
 ### 2.5 🔴 v2.0 扩围：`ReproductionPlan` 承载本篇成功标准
 
@@ -251,6 +317,90 @@ class ReproductionPlan(TypedDict):
 
 🔴 **架构在此明确不自造新规则**：不新增"第四条封顶"，因为既有第三条已经覆盖。**开发不得在代码里另写一条"标准为空则降档"的分支**——那会变成两处定义同一件事，日后必然打架。
 
+### 2.6 🔴 v2.4：`ExecutionResult.metrics` / `metrics_groups` **删键**（Maria 推翻架构默认取值）
+
+> **拍板**：PRD §13 第 1 条，Maria 2026-08-06。原话「**旧字段要是确认没有用了就删掉**」。
+> **架构 v2.2/v2.3 的默认取值是"保留声明、停产停消费一轮"，本条被推翻。** 原表述保留在 §12 / §16.6 的划删原文里，不删。
+
+#### 2.6.1 前置条件「确认没有用了」已核实成立
+
+她的裁定带条件。`metrics` / `metrics_groups` 在**交付后**是否真的零生产者零消费者：
+
+| 侧 | 今天的命中点 | 本 Sprint 去向 | 依据 |
+|---|---|---|---|
+| 生产 | `_collect_grouped_metrics` | **删除** | §16.6 |
+| 生产 | `_split_reported_metrics`（自报折叠） | **删除** | §16.6 |
+| 生产 | `_parse_metrics` 三档 | **删除** | §12 / §7 |
+| 生产 | `_build_execution_result` 的两个形参 | **形参保留带默认值、调用点不再传** ⇒ 🔴 **v2.4 改为形参一并删除**（见 §2.6.3） | §12 |
+| 消费 | `reporting._match_metrics_group` / `_lookup_metric_value` / `_verify_trend` | **删除** | §5.1 |
+| 消费 | `reporting._render_metrics_comparison` | **删除** | §5.9 第 1 条 |
+| 消费 | `execution._apply_no_metrics` | **删除** | §12 |
+| 消费 | `ui/pages/result_report.py:178` `_metric_comparison_rows` | **整体替换** | §12 `ui/` |
+
+⇒ **交付后 `core/` 与 `ui/` 对两个键的生产与消费全部归零，条件成立。**
+
+#### 2.6.2 🔴 复核 v2.3 那笔「71 处回归面」的账 —— **算高了，且高得多**
+
+> v2.3 在 §11 前置③ 里给的保留理由是「`grep metrics_groups tests/` 上百处回归面，不成比例」。**主控质疑这笔账、要求上磁盘复核。复核结论：质疑成立，我那笔账错了。**
+
+**实测**：`metrics_groups` 在 `tests/` 下共 **71 处 / 18 个文件**（数字本身对）。但**按"删键相对停产的净增量"分类后，71 这个数字几乎全部与本议题无关**：
+
+| 类 | 含义 | 删键 vs 停产的差别 | 实例（已逐条上磁盘核对） |
+|---|---|---|---|
+| **甲：内容断言** | 断言 `metrics_groups` 的**取值** | 🔴 **零差别** —— 字段**停产之后**（不再被任何生产代码写入）这些用例照样红，TypedDict 里那行声明留不留**完全不影响** | `test_sprint7_s713_reported_metrics.py` 全部 18 处（`:318` `er["metrics_groups"] == {...}`、`:385` 与 `_collect_grouped_metrics` 对比、`:1146`/`:1254` 夹具比对等）；`test_sprint5_t26_grouped_metrics.py:207`/`:353`/`:368`；`test_sprint5_t33_conclusion.py` 的 trend 回验组 |
+| **乙：构造夹具里填了一个键** | `{"metrics_groups": {}, …}` 字面量 | 🔴 **零差别** —— **TypedDict 运行时就是普通 dict、零校验**，字面量里多一个已删的键**不报错、不变红** | `test_sprint7_s7_02_coding_feedback.py:68`、`s711_gap_audit.py:624`、`s7_01_budget_gate_sink.py:57`、`s7_02_persist_log.py:302`、`s711_actionable_denominator.py:315`、`test_sprint6_b2.py:581`/`:663`/`:735` 等 |
+| **丙：精确键集合断言** | `set(er.keys()) == {…11 键…}` / `set(ExecutionResult.__annotations__) == {…}` | 🔴 **零净增量** —— **本 Sprint 因新增 `conclusion` 已经必红**；删两个键只是把同一行的期望集合从"11+1"改成"9+1"，**同一处改动、同一行** | `test_sprint4_e3.py:572-576`；`test_sprint7_s711_completion.py:458-462` 与 `:774-778`；`test_sprint5_t26_grouped_metrics.py:53-57`（`_EXPECTED_RESULT_KEYS`，用在 `:350`/`:365`） |
+| **丁：`.get()` 防御读 / 负向断言 / docstring** | `exec_result.get("metrics_groups", {}) == {}`、`forbidden_fields` 元组、注释 | 🔴 **删键后仍绿** —— `.get` 有兜底；负向断言在字段消失后**空真成立** | `test_sprint5_t12_state.py:185`、`:221`、`:13` |
+| 🔴 **戊：真正的净增量 —— 类型签名断言** | 断言键存在 / 类型 / **源码字符串** | **删键才红，保留声明则绿** | **只有 4 处，全在 1 个文件**：`test_sprint5_t12_state.py:99`（`"metrics_groups" in ann`）、`:108`（`== typing.Dict[str, typing.Dict[str, typing.Any]]`）、`:242`（`assert "metrics_groups: Dict[str, Dict[str, Any]]" in src`）、`:269`（`get_origin(...) is dict`） |
+
+**⇒ 删除相对保留的真实净增量 = 4 处断言 / 1 个测试文件**，不是 71 处、也不是"上百处"。
+
+**另外两笔本以为要付的账，实测也不用付**：
+
+- **mypy 面：零新增错误。** `mypy.ini:43` `files = core` ⇒ **它根本不检查 `tests/`**，那 71 处与 mypy 无关；而 `core/` 内所有读取点都在本 Sprint 的删除清单里（上表）⇒ 删键后无残留引用。
+- **旧 checkpoint 反序列化：不受影响。** `TypedDict` 运行时就是 `dict`、零校验，旧快照里多两个键读得出来、少两个键 `.get()` 兜得住 —— **这也是 §7「`ErrorCategory.NO_METRICS` 成员必须保留」那条裁定不受本次影响的原因**：那条治的是 `Enum(值)` 反序列化会 `ValueError`，**TypedDict 没有这回事，两者不是一类问题，不可类推。**
+
+🔴 **这笔账错在哪（记下来，比结论有用）**：我把「`grep` 命中数」直接当成了「改动面」。**命中数 ≠ 改动面** —— 71 处里绝大多数**在停产那一刻就已经要改了**，把它们记在"删键"头上，等于**把一笔本来就要付的账重复计了一次**，用来支撑"不要删"。**下次给改动面报数，必须先按"这条改动 vs 不做这条改动"做差，不能拿总命中数当差值。**
+
+#### 2.6.3 落点
+
+```python
+class ExecutionResult(TypedDict):
+    """…docstring 同批改写…"""
+    success: bool
+    # metrics: Dict[str, Any]                          ← 🔴 v2.4 删除
+    logs: str
+    errors: List[str]
+    artifacts: List[str]
+    runtime_seconds: float
+    environment_info: Dict[str, str]
+    step_reconciliation: Dict[str, Any]
+    budget_truncated: bool
+    # metrics_groups: Dict[str, Dict[str, Any]]        ← 🔴 v2.4 删除
+    degraded_credentials: List[str]
+    conclusion: Dict[str, Any]                         # Sprint 8 新增
+```
+
+- **`core/state.py:175` `metrics` 与 `:183` `metrics_groups` 两行删除**；`:170` 那条 `metrics_groups` 的 docstring 说明**随之删除**（v2.2 裁的是"改写为停产说明"，🔴 **v2.4 改判为删除**）。
+- **docstring 同批加一段留痕**（沿 sp5/sp7 加键注释体例）：「Sprint 8 删除 2 键（`metrics` / `metrics_groups`）—— 三档 `<METRICS>` 通道与分组折叠一并退场，本次执行结果改由 `conclusion.result_blocks` 承载」。**留痕必须在文件里**，否则后人读旧 checkpoint 看到两个不在声明里的键会以为是脏数据。
+- 🔴 **`_build_execution_result` 的两个形参一并删除**（v2.2 裁的是"保留带默认值、调用点不再传"）。**改判理由**：既然键都没了，留两个永远不被传、传了也无处可落的形参就是**没有消费点的空壳**，与 `metrics[].source` 被砍时逐字记下的理由同款（`execution.py:1083-1089`）。`:2419` docstring 里点名 `_collect_grouped_metrics` 的那句**随之删除**（v2.2 裁的是"改写"）。
+- **`ExecutionResult` 键数账**：今天 11 键 → 删 2 加 1 → **10 键**。⇒ 🔴 **四处精确键集合断言必须同批换发**（清单见 §2.6.2 丙类），**禁止把 `==` 放宽成 `>=` 或"包含"来规避**（同 AC-S8-21 的既有红线）。
+
+#### 2.6.4 🔴 两处被突破的自设约束：显式处置，不默默绕过
+
+| # | 被突破的东西 | 性质判定 | 处置 |
+|---|---|---|---|
+| 1 | 本文档头部贯穿硬约束「**状态契约新增严格限两处**」 | ⚠ **字面未破、隐含含义已破**：删除不是"新增"，两处新增仍然只有 `conclusion` + `success_criteria`。但这句话的**实际用意**是"本 Sprint 状态契约的改动面严格受控" | **改写为「新增严格限两处 ＋ 删除两处」**（头部已改），并在此留痕：**上限的性质没变（仍是硬上限、仍不许再加第三处新增）**，变的是它现在还管住了删除面。**开发不得以本次删除为先例扩大任何其它状态改动。** |
+| 2 | `docs/sprint8/dev-plan.md:1358` **CP-2.10-3「类型签名逐字未变」** | 🔴 **真突破**：删两行签名，该检查点当场不成立 | **判定：推翻该检查点，换发，不是放宽。** ⚠ **本文档不改 `dev-plan.md`（铁律：架构只改本文档）** ⇒ **交主控派开发跟改**，换发口径写死为：「`ExecutionResult` 由 11 键变为 10 键（删 `metrics` / `metrics_groups`，加 `conclusion`）；**其余 8 键的签名逐字未变**」。🔴 **禁止直接删掉 CP-2.10-3 了事** —— 那样"其余键没被顺手改动"就没有任何检查点守着了，而那才是这条检查点真正的价值 |
+
+#### 2.6.5 一条顺带发现（连带面，交开发核对）
+
+**`mypy.ini` 的债务清单逐行标注了行号，本 Sprint 大改后大面积失真** —— 例如 `:124` 记的 `core.nodes.execution` 的 `call-overload ×1 L520`，**L520 正在 `_parse_metrics`（`:517-550`）函数体内，该函数本次整体删除** ⇒ 该 code 很可能不再被触发；`:146` 记的 `core.nodes.reporting` `var-annotated ×5 L354/495/814/930/995` 里，**L995 在 `_render_metrics_comparison` 内，同样本次删除**。
+
+- **功能上不会红**（`disable_error_code` 是文件级，多压制不报错；`warn_unused_ignores = False`，`warn_unused_configs` 只管配置节不管 code）。
+- 但 `mypy.ini:23-27` 自己立的 **ratchet 规矩**是「债务清单里每一行都是一条可以删掉的 TODO……只准往严了走」⇒ **本 Sprint 是一次零成本收紧的机会**：交付后重跑 `.venv/bin/mypy`，把不再触发的 code 从清单里删掉。
+- ⚠ **架构不裁"必须收紧"**（那是开发计划的排期问题，且不属本文档射程）；**这里只登记事实与机会**，交主控转开发。**至少要做的是：行号注释同批订正，否则它就是一条新的"文档与代码不符"。**
+
 ---
 
 ## 3. Q-S8-03：证据路径限死本次代码目录（与工具层边界是两个闸，不许合并）
@@ -258,9 +408,14 @@ class ReproductionPlan(TypedDict):
 ### 3.1 结论：验钞函数内联自判，工具层一字不动
 
 ```
-_verify_evidence(evidence_item, code_output_dir, extra_commands) -> (ok, reason)
-    ①路径真实存在  ②可读  ③数值前缀匹配可查  ④落在 code_output_dir 之下  ⑤未在计划外命令参数里字面出现
+_verify_evidence(evidence_item, code_output_dir, extra_commands, baseline_results) -> (ok, reason)
+    产物物证（带 path）→ 既有五重：
+      ①路径真实存在  ②可读  ③数值前缀匹配可查  ④落在 code_output_dir 之下  ⑤未在计划外命令参数里字面出现
+    🔴 论文值物证（带 metric，v2.3 新增）→ 另两重：
+      ①metric 能在 baseline_results 里查到（精确匹配）  ②value 与该键的值双向前缀匹配
 ```
+
+> 🔴 **v2.3 两处跟改**：①**形参多一个 `baseline_results`**（`state["paper_analysis"]["baseline_results"]`，`core/state.py:80`）——它是纯入参、不是新读盘面，**本节"工具层一字不动 / 两个闸物理分处两文件"的裁定完全不受影响**；②**上面这五重只管产物物证**，论文值物证走 §16.3.2 的两重。**"什么能当判定物证"这个闸的性质没变，只是它现在知道有两种钞票。**
 
 第④重的实现 = **4 行自写**，与 `reporting._resolve_report_path`（`reporting.py:371-372`）、`code_fs_tools._is_within_base`（`:82-91`）**同一判定路径**（`resolve()` 后 `== base or is_relative_to(base)`）：
 
@@ -317,7 +472,7 @@ ok = (resolved == base or resolved.is_relative_to(base))
 
 ## 5. Q-S8-05：报告侧的收敛面 + 审计的双落点
 
-### 5.1 三个函数的去留
+### 5.1 报告侧函数的去留（**v2.2 由三个扩为七个**）
 
 | 函数 | 裁定 | 理由 |
 |---|---|---|
@@ -327,6 +482,10 @@ ok = (resolved == base or resolved.is_relative_to(base))
 | `_normalize_group_key`（`:130-133`） | **随之删除** | 上两者的唯一依赖 |
 | `_verify_expected_results`（`:201-242`） | **退化保留**，语义收窄为「旧快照兼容读」 | 见 §5.4 |
 | `_determine_conclusion`（`:245-324`） | **改名 `_assemble_conclusion`，判定职责退场** | 见 §5.2 |
+| 🔴 **`_render_metrics_comparison`（`:949-1008`）** | **v2.2 改判：整体删除**（v2.1 裁的是"改两处组名说明 + 复现侧无数据时不渲染主实验表"） | 它整个函数体就是**代码预设格子**：`:938` 写死表头「\| 指标 (Metric) \| 论文 baseline \| 本次复现值 \|」、`:986` 写死「### 主实验指标」、`:993` 写死「### 分组实验指标」、`:995` 写死组名说明、`:997` 用 `sorted()` 替 agent 决定组的先后。**Maria 点名的就是这一段。** 见 §5.9 |
+| 🔴 **`_comparison_table`（`:931-946`）** | **v2.2 新增：随之删除** | 三列表头的唯一生产者（`:938`），唯一调用点是 `_render_metrics_comparison`（`:988` / `:1003`）⇒ 留着就是死代码 |
+| 🔴 **`_flatten_mapping`（`:474-486`）** | **v2.2 新增：随之删除** | 唯一调用点是 `_render_metrics_comparison`（`:963` / `:968` / `:998`）⇒ 同上。⚠ **`_flatten_entries`（`:440`）与 `_fmt_metric_value`（`:415`）不删** —— 它们另有消费者（`_render_environment_lines:924-925`、`:898` 运行时长），且 `_flatten_entries` 正是"渲染路径一直是通用的"那个函数（§14.3.0） |
+| 🔴 **`_render_goal_checks`（`:707-749`）** | **v2.2 扩围：新增"按台账渲染证据引用"职责** | v2.1 只裁了"icons 三 key 换发 + `:722-723`/`:741-747` 文案改写"；台账化之后它还要把 `evidence_ids` 查回台账、把**引用到未过验证据的条目显著标注**。**签名 `(conclusion)` 单参不变**（台账就在同一个 dict 里）⇒ §2.2 方案 A 的红利保住 |
 
 ### 5.2 `_assemble_conclusion`：报告侧只剩"取 + 算标注"
 
@@ -370,7 +529,12 @@ ok = (resolved == base or resolved.is_relative_to(base))
 | 6 | `ui/term_map.py:84-86` | 三条档名换发四条（§2.3） |
 | 7 | 审计命中节文案（新） | 须中性，见 §5.6 |
 
-另有两处**非文案但同源**的说明须一并订正（PRD §4.7 第 1 条已点名）：`reporting.py:955` 与 `:995` 的"组名为产物目录相对路径"、`core/state.py:170` 的同款注释——方案 A 之后组名由 agent 按计划写法填，与目录无关。
+~~另有两处**非文案但同源**的说明须一并订正（PRD §4.7 第 1 条已点名）：`reporting.py:955` 与 `:995` 的"组名为产物目录相对路径"、`core/state.py:170` 的同款注释——方案 A 之后组名由 agent 按计划写法填，与目录无关。~~
+
+🔴 **v2.2 改判（原文保留划删）**：这三处**不是"改措辞"，是随所在物一起消失**——
+- `reporting.py:955`（函数 docstring）与 `:995`（正文说明）**随 `_render_metrics_comparison` 整体删除**（§5.9 第 1 条）；
+- ~~`core/state.py:170` 的注释**改写为"Sprint 8 起停产停消费，仅供旧快照反序列化"**（§12）~~ 🔴 **v2.4 改判：随 `metrics_groups` 键一并删除**（§2.6.3）——「组名」这个概念在本版之后整个不存在了（分组折叠已删，§16.6），**连承载它的键也不存在了**。
+- ⚠ **`:938` 那行把内部词 `baseline` 直接暴露给用户的表头（PRD §4.7 顺带点名、违反 MEMORY §4.2）同理**：不是改文案，是**这行字不存在了**。⇒ **文案换发清单里不新增这三项**，测试也不要去找它们的"新文案"。
 
 ### 5.6 审计的双落点（裁定 2 的落地形态）
 
@@ -403,6 +567,50 @@ ok = (resolved == base or resolved.is_relative_to(base))
 | **界面结果页** | **本次不扩** | PRD Q-S8-05 只要求报告；`ui/pages/result_report.py` 本批已有多处改动，不再扩面（若 Maria 要求，属追加，非本裁定的遗漏） |
 
 ⚠ **与 §5.2 的关系**：`_render_success_criteria` **不进 `_assemble_conclusion`**，它是独立渲染函数、直接读计划。理由同 §2.5.4 红线 2——报告侧也不得解析达标线文本，只负责原样呈现。
+
+### 5.8 🔴 v2.2 新识别：结果块在报告里的位置，以及 degraded 形态的一个真缺口
+
+**磁盘事实（三条，均已复核）**：
+
+1. `_render_metrics_comparison` 在全仓**只有一个调用点**：`reporting.py:880`，在 `_render_full_success` 里。
+2. `_render_degraded`（`:1045-1105`）**只渲染** `_render_goal_checks`（`:1060`）+ `_render_step_reconciliation`（`:1061`）+ 降级原因（`:1063` 起）+ node_errors + 修复历程 + 保留代码 —— **一个指标 / 结果章节都没有**。
+3. `_determine_report_form`（`:92-106`）：`success is True` → `full_success`，其余 → `degraded`。
+
+**推论（这是本版新挖出来的问题）**：四档派生的成功布尔（PRD §4.5.4）里，**「仅代码跑通」→ `success=False` → `degraded`**。而「仅代码跑通」恰恰是"命令跑通了、产物可能确实写出来了、只是没达标或步骤没跑完"的那一档。⇒ **照 v2.1 的落点原样搬，会出现：执行环节辛辛苦苦汇报的结果块，在最需要看它的那一档里整节消失。**
+
+⚠ **注意这不是新引入的 bug** —— 今天 degraded 就不渲染指标对比表。但**今天它无伤大雅**（degraded 意味着基本没结果），**本版之后它变致命**：块是结果的**唯一**载体（`metrics` / `metrics_groups` **v2.4 起直接删除**，§2.6），块不渲染 = 用户看不到任何结果。
+
+**裁定**：
+
+| 形态 | 渲染结果块？ | 理由 |
+|---|---|---|
+| `full_success` | **是** —— `:880` 的 `_render_metrics_comparison` 原位换成 `_render_result_blocks(conclusion)` | 原位替换，报告结构零扰动 |
+| `degraded` | 🔴 **是（新增一处并列调用）** —— 插在 `_render_step_reconciliation`（`:1061`）之后、"降级原因"（`:1063`）之前 | 上述推论。位置选择沿 sp5 T-S5-3-4 的既有理由（回验/对账置于"降级原因"之前，且不扰动既有表格行数断言） |
+| `code_only` | **否** | `_is_code_only` 意味着**根本没走 execution**（`:95-96` 逐字写着）⇒ `conclusion` 里不可能有块。**不是遗漏，是前提不成立** |
+
+⇒ `_render_result_blocks` 的**空块早退**（返回 `[]`）因此必须做对：degraded 路径上块为空是常态（跑挂了），**不得印一个空的"## 实验结果"标题**。与 `_render_annotation_notices:604` 的零扰动早退同款。
+
+### 5.9 🔴 v2.2 重裁 Q-S8-05：与 v2.1 原裁定的逐条差异
+
+> **为什么要重裁**：v2.1 的 Q-S8-05 是**围绕"保留指标对比表、只改它的措辞和数据源"**做的。PRD v4.0 把报告侧从"代码预设表头 + agent 填格子"倒转为"agent 决定怎么呈现 + 代码通用渲染"⇒ **原裁定的对象（那张表）本身要没了**，措辞怎么改都不成立。**下表逐条列差异，原裁定文字全部保留在 §5.1 / §12 里并就地标注作废，不删。**
+
+| # | 事项 | v2.1 原裁定 | 🔴 v2.2 重裁 | 差异性质 |
+|---|---|---|---|---|
+| 1 | `_render_metrics_comparison`（`:949`） | 保留；改 `:955` / `:995` 两处"组名为产物目录相对路径"的说明 | **整体删除** | **改判**（改措辞 → 删函数） |
+| 2 | `_comparison_table`（`:931`）与它写死的三列表头（`:938`） | 未提及（默认保留） | **随之删除** | **新增删除面** |
+| 3 | `_flatten_mapping`（`:474`） | 未提及（默认保留） | **随之删除**（唯一消费者是第 1 条） | **新增删除面** |
+| 4 | `:938` 表头把内部词 `baseline` 暴露给用户（PRD §4.7 顺带点名，违反 MEMORY §4.2） | 未登记 | **随整表删除而消解** —— 不是"改文案"，是**这行字不存在了** | **议题消失** |
+| 5 | PRD §4.7 第 3 条「复现侧无数据时不渲染整列空白的主实验表」（原 `:980-988` 的缺陷） | v2.1 §12 列为"复现侧无数据时不渲染主实验表" | 🔴 **议题随主实验表一起消失** —— 主实验表不存在，"整列空白"无从发生 | **议题消失（不是漏做）** |
+| 6 | `:997` 的 `sorted()` 替 agent 决定组的先后 | 未登记（v2.1 没意识到它是"代码替 agent 决定形状") | 🔴 **随删除消失；新函数按 `result_blocks` 数组顺序渲染，全函数体内不得出现 `sorted()`** | **新增红线** |
+| 7 | 报告侧结果呈现的数据源 | `exec_result["metrics"]` + `exec_result["metrics_groups"]` | 🔴 **`conclusion["result_blocks"]`**；~~`metrics` / `metrics_groups` **停产停消费**~~ ⇒ 🔴 **v2.4：两键直接删除**（Maria 2026-08-06 推翻默认取值，§2.6） | **改判** |
+| 8 | 新函数 | 无 | 🔴 **新增 `_render_result_blocks(conclusion) -> List[str]`**（§16.5） | **新增** |
+| 9 | `_render_goal_checks`（`:707`） | icons 三 key 换发 + `:722-723` / `:741-747` 文案改写 | **上述全部保留**，**再加**：按 `evidence_ids` 查台账渲染、引用到未过验证据的条目显著标注 | **扩围** |
+| 10 | 渲染入口 | `_render_full_success:880` 一处 | 🔴 **`full_success` + `degraded` 两处**（§5.8） | **扩围** |
+| 11 | 界面结果页（`ui/pages/result_report.py`） | v2.1 §12 写"`:178` 数据源从 `metrics` 改读 `metrics_groups`" | 🔴 **整条作废**（那是接到一个已停产的字段上）。改为读 `conclusion["result_blocks"]` 逐块出表，`_metric_comparison_rows`（`:163-201`，`:196-198` 同样写死三列）整体替换 | **改判** |
+| 12 | 三个已裁的删除（`_verify_trend` / `_lookup_metric_value` / `_match_metrics_group` / `_normalize_group_key`） | 全删 | **不变** | 不变 |
+| 13 | `_assemble_conclusion` / `_verify_expected_results` / 审计双落点 / `_render_success_criteria` | §5.2 / §5.4 / §5.6 / §5.7 | **一字不变** | 不变 |
+
+🔴 **第 5 / 6 条要单独喊一声**：它们是"**议题随前提消失**"而不是"被忽略"。**开发与测试不要去找它们的落地物**——找不到是对的。这与 PRD §4.6.6 里「撞名两条都丢弃这条处置随折叠一起消失」是同一种情形，登记在此以免日后被当成漏做。
 
 ---
 
@@ -441,7 +649,18 @@ ok = (resolved == base or resolved.is_relative_to(base))
 
 ⚠ 这条同时是 AC-S8-15「`_apply_no_metrics` 已删除且无残留引用」的**边界澄清**：清零断言的对象是**函数与其调用点**，**不是枚举成员**。写测试时若把枚举成员一并清零，会当场把旧快照兼容打掉。
 
-🔴 **v2.1 补充（跟改「四函数整体删除」）**：**本次删除面 = 四个三档函数**（`_extract_metrics_block` / `_regex_scan_metrics` / `_llm_extract_metrics` / `_parse_metrics`）**及其 `<METRICS>` 标签常量与 pattern**；**`ErrorCategory.NO_METRICS` 枚举成员与 `_collect_grouped_metrics` 均不在删除面内**。
+🔴 **v2.1 补充（跟改「四函数整体删除」）**：**本次删除面 = 四个三档函数**（`_extract_metrics_block` / `_regex_scan_metrics` / `_llm_extract_metrics` / `_parse_metrics`）**及其 `<METRICS>` 标签常量与 pattern**；**`ErrorCategory.NO_METRICS` 枚举成员与 ~~`_collect_grouped_metrics`~~ 均不在删除面内**。
+
+🔴 **v2.2 订正上一段的后半句**：**`_collect_grouped_metrics` 已改判为整体删除**（§16.6），因此**删除面由四个函数扩为八个**（四个三档函数 + `_split_reported_metrics` + `_coerce_reported_value` + `_collect_grouped_metrics` + `_apply_no_metrics`）。⚠ **不变的是本节的核心裁定**：**`ErrorCategory.NO_METRICS` 枚举成员仍然必须保留**（旧 checkpoint 反序列化面，`execution.py:3026`）——**"删函数"与"删枚举成员"是两件事，本节这条边界澄清在 v2.2 之后一字不变，反而更要紧**（删除面扩大了，越容易顺手把枚举成员一起删掉）。
+
+🔴 **v2.4 再加一层边界（删除面又扩了，这次扩到状态键，最容易顺手连坐的就是本节）**：**`ExecutionResult.metrics` / `metrics_groups` 两个状态键本次删除（§2.6），`ErrorCategory.NO_METRICS` 枚举成员仍然必须保留。** 三者名字里都有 metrics，但**不是一类东西、不可类推**：
+
+| 对象 | 本次去向 | 删了会怎样 |
+|---|---|---|
+| `ErrorCategory.NO_METRICS`（`execution.py:151`） | 🔴 **保留** | 旧 checkpoint 里存着 `error_category=no_metrics` 字符串，`_feedback_from_committed_result`（`:3026`）用它**反序列化重建 Enum** ⇒ **`Enum(值)` 找不到成员会当场 `ValueError`，旧任务 resume 直接炸** |
+| `ExecutionResult.metrics` / `metrics_groups`（`state.py:175` / `:183`） | 🔴 **删除** | **什么都不会怎样** —— `TypedDict` 运行时就是普通 `dict`、**零校验**，旧快照里多两个键读得出来、新代码 `.get()` 兜得住 |
+
+⇒ **判别式一句话：`Enum` 有运行时成员查找，`TypedDict` 没有。** 前者删成员会炸，后者删声明不会。**AC-S8-15 那条"`_apply_no_metrics` 已删除且无残留引用"的清零断言，射程仍然是"函数与其调用点"，既不含枚举成员、也不含状态键。**
 
 ---
 
@@ -472,7 +691,7 @@ A-S8-08（支撑物证一条都不成立 → 封顶「仅代码跑通」）PM �
 
 ---
 
-## 10. 风险与验证（架构侧新增，PRD R-S8-01~15 不重复）
+## 10. 风险与验证（架构侧新增，PRD R-S8-01 ~ R-S8-24 不重复）
 
 | 编号 | 风险 | 缓解 / 验证 |
 |---|---|---|
@@ -483,7 +702,13 @@ A-S8-08（支撑物证一条都不成立 → 封顶「仅代码跑通」）PM �
 | **AR-S8-05** | **`conclusion` 键与 reporting 局部变量 `conclusion` 同名**，易在阅读 / 改动时串味 | 有意为之（同形同名，降低认知成本）；在两处 docstring 互相点名 |
 | **AR-S8-06** | **审计在 execution 每回合跑一次**，修复循环多轮即多次 AST 全目录扫描 | 纯本地、无 LLM / 配额；`honesty_audit` 已有排除目录清单。**登记不治**；若真跑观测到耗时异常，再议 |
 | **AR-S8-07** | **`EXECUTION_OUTPUT_SCHEMA` 新增字段若列进 `required`**，会让"跑挂了、没判定"的回合每次白烧一次 schema 重生成调用（`react_base._missing_required_fields`） | **写死：新增字段一律不列 `required`**——与 `metrics` 刻意不列 required 的既有理由逐字同源（`execution.py:1090-1091`） |
-| **AR-S8-08** | **`_split_reported_metrics` 现行"先到先得"与 S8-06 的"撞名两条都丢弃"直接冲突**（`execution.py:1796-1797` 逐字写着先到先得） | 该函数的去重策略须同批改为"值不同则两条都丢弃 + WARNING"，**值相同的重复仍按一条收**（AC-S8-16 的验红对象） |
+| ~~**AR-S8-08**~~ 🔴 **v2.2 作废** | ~~`_split_reported_metrics` 现行"先到先得"与 S8-06 的"撞名两条都丢弃"直接冲突（`execution.py:1796-1797` 逐字写着先到先得）~~ | 🔴 **整条作废，原文保留供追溯。** 作废理由：**撞名是折叠动作自己制造出来的问题** —— agent 汇报的本来就是平坦记录数组（`EXECUTION_OUTPUT_SCHEMA.metrics`，`execution.py:1114-1135`），是 `_split_reported_metrics` 用 `collected.setdefault(group, {})`（`:1827`）把它折成二维、并在撞名时 `continue  # 先到先得`（`:1831`）丢弃。**v2.2 删除该函数 ⇒ 不折叠 ⇒ 不撞名 ⇒ 没有"撞名怎么办"这个议题。** 与 PRD §4.6.6 的同款登记一致 |
+| **AR-S8-09** 🔴 **v2.2 新增（本版最该被读到的一条风险）** | **块里的数字不受验钞约束。** 验钞验的是 `evidence_ledger` 里的记录（路径/数值/边界），**不是 `result_blocks[].rows` 里的单元格**。⇒ agent 完全可以在块里印 `0.61`、同时在台账里放一条 `0.62` 的合法物证，**两者不一致，系统无任何机制发现**。旧路径至少还有"`metrics` 与 `metrics_groups` 同源收编"这一点微弱约束，本版连这点也没了 | **不做"cell 必须能在 sources 里找到"的校验** —— 那是"渲染层做结构推导"的近亲（PRD 非目标 11），对纯文字块无意义，且会诱导 agent 只报能匹配的数。⇒ **改为如实标注**：结果块节的导语**必须**写明「下表由执行环节汇报，系统核验的是它标注的来源文件与逐条结论的物证，**未逐格核对表内每一个数字**」。这是 R-S8-01 对外表述纪律在报告正文里的落地，**不得省略、不得软化** |
+| **AR-S8-10** 🔴 **v2.2 新增 / v2.3 重裁** | **论文报告值没有产物物证，会被验钞第④重必然判不成立。** S8-10 把 `baseline_results` 注入上下文（§6），语义层约束③又要求"论文值与复现值同块内可对照"⇒ agent 会把论文值写进 cell。**论文值的出处是注入的上下文，不是 `code_output_dir` 下的文件** ⇒ 若开发要求块的每个来源都过**产物**验钞，**论文值那一列必然被标红**，报告会印出"论文报的 0.62 来源不可信"这种荒谬结论 | ~~**写死：`evidence_ledger` 只登记本次复现产物的物证。论文报告值不进台账、不参与验钞、不因此标注异常。**~~ 🔴 **v2.3 后半句整条改判（原文划删保留）**：**「不按产物文件验」这一步是对的，「那就不验了」是错的** —— 中间少走了一步「**那就换个东西验**」。⇒ **论文值物证照样进台账，按 `state["paper_analysis"]["baseline_results"]` 核验两重**（§16.3.2）。提示词侧**保留**"不必也不应为它编一个产物路径"（这半句仍然正确），**新增**"引用论文值时须写明它对应论文分析里的哪个指标名"。**这是 S8-06 与 S8-10 的接口，PRD 未写，本版补上** |
+| **AR-S8-14** 🔴 **v2.3 新增（它是上一条被推翻的直接原因，单列以免读漏）** | 🔴 **把对照基准往低了编 —— S7-11 反向激励的第三个变种，也是最隐蔽的一个。** 四档里「复现成功」的达标线常写成「数值与论文报告对上」⇒ **agent 只要把论文值报低，自己跑出来的数就"对上了"**。**前两个变种都还在"标准"那一侧**（S7-11：执行环节少做几步；R-S8-02：规划把及格线画低），**这一个直接改了"事实"那一侧**，而基准看起来是"论文说的"、**没人会去质疑**。⚠ v2.2 的"不验"裁定**正好为它敞着门** | **论文值物证按 `baseline_results` 核验**（§16.3.2）。编低的论文值**对不上论文分析** ⇒ 该条 `ok=false` ⇒ ①引用它的逐条结论落「**无法核实**」（PRD §4.8 第 3 条既有保守出口）；②档位的支撑物证若全不成立 → **既有封顶 3「仅代码跑通」**（§4.5.3）。🔴 **不新增第四条封顶**（既有两个出口已完全覆盖，取向与 §2.5.6"架构在此明确不自造新规则"逐字同源）。局限如实登记见 §16.3.2 末 |
+| **AR-S8-11** 🔴 **v2.2 新增** | **`conclusion` 体积上界与 checkpoint 膨胀（PRD 未算过账）**。四个上限的最坏乘积：12 块 × 50 行 × 12 列 × 120 字符 ≈ **864 KB / 次**；`execution_result` 每个修复回合落盘一次，20 轮上限 ⇒ 单任务最坏十几 MB 进 `checkpoints.db`。旧 `metrics_groups` 的上界远小于此 | **登记 + 量化，不预先加机制**（反过度工程）。实际值远低于上界（真实指标单元格 < 20 字符 ⇒ 约 144 KB/次）。**处置顺序写死：若真跑观测到膨胀，先单点调低"每块行数"上限，不改结构**（与 A-S8-12"单点调值不改结构"同款）。**禁止**为此把块搬出 state 或做外部文件引用 —— 那会破幂等与可重放 |
+| **AR-S8-12** 🔴 **v2.2 新增** | **旧快照重放的报告不再含指标对比表**。`_render_metrics_comparison` 删除后，旧 checkpoint 里存着的 `metrics` / `metrics_groups` **再也不会被渲染**，而既有回归夹具（`tests/fixtures/s713_realrun_20260802/`）与旧报告快照断言正是建立在那张表上 | **如实登记为预期行为变更，写进 AC-S8-23 的增减账**。🔴 **绝不为了让旧报告好看而保留旧渲染分支** —— 那等于把被删掉的预设格子留一半，取向与 §5.4「绝不为了让旧报告好看而在报告侧重新判定」逐字同源。旧快照的正确表现是：结果节整节不渲染（块为空 → 早退） |
+| **AR-S8-13** 🔴 **v2.2 新增** | **schema 重生成路径产出的块内容可能与真实产物不符**。`max_tokens` 截断后走的是 `react_base` finalize 的 schema 重生成（`:727-752`），**那是让模型重说一遍**，不是修补原文 ⇒ 重说的那份块可能更少、更简、或与第一次不同；且 `result_blocks` 不进 `required`（AR-S8-07）⇒ 重说时它可以整个不给 | 与 R-S8-19（预算耗尽）同族，**共用同一条 caveat 通道**（`conclusion["report_caveats"]`）。检测口径见 §16.4（**确定性信号，不用长度启发式**） |
 
 ---
 
@@ -495,8 +720,8 @@ A-S8-08（支撑物证一条都不成立 → 封顶「仅代码跑通」）PM �
 |---|---|---|---|
 | **1a** | 🔴 **v2.1 收窄**：**S8-03**（执行只读工具接入）+ 状态契约两键声明 + **编码侧 prompt 字节门新建**（`S8-02` 的**守门**部分）—— **本批全部「加了但不改变行为」** | ✅ **可最先开工，且可与本次跟改并行**；**落盘后系统行为与今天完全一致，可真跑、可演示** | Q-S8-06（已裁）+ **Q-S8-02 的字段名**（见前置①） |
 | **1b** | S8-01 扩围 + S8-11 三道护栏 | ✅ 可开工 | Q-S8-02（§2.5 已裁）+ **Q-S8-09**（§15 已裁） |
-| **2** | 🔴 **v2.1 扩围**：S8-04 / S8-05 / S8-06 + **`S8-02` 的通道退场与编码侧改词**（由 1a 移入）+ **`S8-10` execution 侧注入**（由 1a 移入），**内部不得拆分** | ✅ **一切会改变行为的事全部收进本批那个已经开着的不可用窗口内一次做完** | Q-S8-01 / Q-S8-02（均已裁） |
-| **3** | S8-07 / S8-08 / S8-09 + 档名文案换发 | ✅ | Q-S8-05（已裁，含 §5.7 扩围） |
+| **2** | 🔴 **v2.2 再扩围**：S8-04 / S8-05 / **S8-06（结果块的执行侧：schema 换发 + 语义层提示词 + `_verify_evidence` 建台账 + `_collect_result_blocks` 收编 + 四个上限常量 + 截断检测）** + **四个折叠/扫盘函数删除**（§16.6）+ `S8-02` 的通道退场与编码侧改词（v2.1 由 1a 移入）+ `S8-10` execution 侧注入（v2.1 由 1a 移入），**内部不得拆分** | ✅ **一切会改变行为的事全部收进本批那个已经开着的不可用窗口内一次做完** | Q-S8-01 / Q-S8-02 / **Q-S8-10（§16 已裁）**；⚠ **另须 PRD §13 第 1 / 3 / 5 条 Maria 确认**（见下前置③） |
+| **3** | 🔴 **v2.2 扩围**：S8-07 / S8-08 / S8-09 + 档名文案换发 + **报告侧通用块渲染**（`_render_result_blocks` + 两处调用点 + 三个函数删除，§5.9）+ **界面结果页块表**（`result_report.py`） | ✅ | Q-S8-05（**v2.2 已重裁**，含 §5.7 / §5.8 / §5.9）/ **Q-S8-10**；⚠ 界面落点另须 PRD §13 第 2 条确认 |
 | **4 / 5** | 回归对平 / 真跑取证 | 不变 | — |
 
 🔴 **两条前置约束（不写清会出事）**：
@@ -504,6 +729,19 @@ A-S8-08（支撑物证一条都不成立 → 封顶「仅代码跑通」）PM �
 1. 🔴 **（v2.1 改写）1a 仍依赖 `success_criteria` 这个「字段名」，但依赖的性质已变**：两处注入（编码侧上下文 = `S8-02` 第 3 条、执行侧上下文 = `S8-10`）**已随本次跟改一并移到批次 2** ⇒ **1a 只保留 `core/state.py` 的键声明**（TypedDict 加键，无运行时约束）。**本文档 §2.5 已裁定该字段名，依赖即刻解除**；**1a 加完键即止、不做任何注入** ⇒ **payload 与今天字节零扰动、行为零变化**。
    > **两处注入为什么必须移走**：1a 若保留注入，则在「1a 可演示」的状态下 agent **同时握有论文目标值 + 本篇及格线 + 读全工作区的两个只读工具**，而**验钞与证据边界都在批次 2** ⇒ `metrics_groups` 走「自报优先」、**零验钞直通报告对比表**，一次演示就可能产出「结论：未成功复现」+「回验表一片符合」的自相矛盾报告。另 🔴 **`success_criteria` 的诱导性比 `baseline_results` 更强**（它直接告诉 agent「达到什么算过」），而 1a 期间系统提示词**还在说「你不判定复现是否成功」** —— **给了及格线又说你不判**，自相矛盾。⇒ 整体后移一并消解。
 2. **AR-S8-01 依然成立**：1a 落盘后、批次 2 完成前，`<METRICS>` 通道已退场而新判据尚未上线 ⇒ `metrics` 恒空 ⇒ 成功判据第二合取项恒假 ⇒ **系统处于"一律判失败"的中间态**。⇒ **代码可以并行写、可以并行落盘，但在批次 2 交付前不得做端到端真跑、不得对外演示**。这不是能不能开工的问题，是可用性恢复时间点的问题，须在开发计划里写明。
+3. ✅ **（v2.2 新增 / 🔴 v2.4 结清）批次 2 / 3 的外部前置已全部解除** —— **PRD §13 五条 Maria 已于 2026-08-06 全部拍完，批次 2 与批次 3 的卡口解除，无剩余待拍项。**
+
+   | # | 事项 | 架构默认取值 | Maria 裁定 | 对本文档的影响 |
+   |---|---|---|---|---|
+   | 1 | `metrics` / `metrics_groups` 删键 vs 停产 | 保留停产 | 🔴 **推翻 ⇒ 删键** | **§2.6 新增**；§0 / §5.9 / §12 / §16.6 跟改 |
+   | 2 | 界面结果页 A 自建块表 vs B 净删 | A | ✅ 同默认（A） | §12 `ui/` 条目的"落点前置"注解**解除**，按 A 落地 |
+   | 3 | 单元格一律字符串 vs 联合类型 | 一律字符串 | ✅ 同默认 | §16.2③ **原样生效** |
+   | 4 | 是否接受丢失扫盘兜底 | 接受并登记（R-S8-20） | ✅ 同默认（接受） | §13 / §16.6 **原样生效**；§16.6 备选 B **不启用** |
+   | 5 | 是否修订内联证据形态为 id 台账 | 修订 | ✅ 同默认 | §2.1 / §16.3 **原样生效** |
+
+   > ~~**若五条默认取值全部被确认，本文档无需再改一个字**~~ —— 🔴 **第 1 条被推翻，故本文档出 v2.4。其余四条确认，相关章节一字未动。**
+   >
+   > ⚠ **第 4 条提请确认时已转达的补充依据（留档）**：§16.6 查实 —— 那个扫盘兜底的硬编码前提（目录 `outputs/`、文件名 `summary.json`、只收顶层标量）**在本 Sprint 之后不再由任何契约保证**。⇒ 它不是"一次干净的能力回退"，更接近"**前提被同批拆除后留下的空壳**"。**这条改变的是拍板依据，不是拍板归属** —— Maria 知情后仍按"接受并登记"拍板。
 
 ---
 
@@ -512,7 +750,8 @@ A-S8-08（支撑物证一条都不成立 → 封顶「仅代码跑通」）PM �
 ### `core/state.py`
 - `ExecutionResult`（`:159-184`）加 1 键 `conclusion: Dict[str, Any]` + docstring 补 Sprint 8 段（沿 sp5 / sp7 加键注释体例）。**其余键、顺序一字不动。**
 - 🔴 **`ReproductionPlan`（`:115-157`）加 1 键 `success_criteria: str`** + docstring 补第四批段（§2.5）。**既有 13 键、顺序一字不动。**
-- `:170` 的 `metrics_groups` 注释订正（组名不再是产物目录，见 §5.5）。
+- ~~`:170` 的 `metrics_groups` 注释订正（组名不再是产物目录，见 §5.5）~~ ~~🔴 **v2.2 改判**：`:170` 现文「多组指标 {组名: {指标: 值}}（execution `_collect_grouped_metrics` 写）」在本版之后**整句失真**——该函数已删、组名概念已消失。改写为「**Sprint 8 起停产停消费，仅供旧快照反序列化；本次执行结果见 `ExecutionResult.conclusion.result_blocks`**」。`metrics` 的同款注释一并改。**两个键本身保留声明**（PRD §13 第 1 条默认取值：保留停产，不删键）。~~
+- 🔴 **v2.4 再改判（Maria 2026-08-06 推翻上一条，原文划删保留）**：**`:175` `metrics` 与 `:183` `metrics_groups` 两行声明删除**；`:170` 的 `metrics_groups` docstring 说明**随之删除**（不是改写）；docstring 同批加一段 **Sprint 8 删键留痕**（形态与理由见 §2.6.3）。⇒ `ExecutionResult` 由 11 键变 **10 键**（删 2 加 1）。🔴 **四处精确键集合断言须同批换发，禁止把 `==` 放宽成 `>=`**（§2.6.2 丙类清单）。
 
 ### `core/nodes/execution.py`
 - `ErrorCategory`（`:132-157`）：新增 `NO_VERIFIABLE_OUTPUT` 并入 `AUTO_FIXABLE`；`NO_METRICS` **保留**加注释（§7）。
@@ -520,28 +759,36 @@ A-S8-08（支撑物证一条都不成立 → 封顶「仅代码跑通」）PM �
   - **与 PRD 的关系**：与 **PRD §4.2 第 4 条**（「三档退场」）**字面一致**；**PRD §4.2 第 5 条**（「顺带清掉 `_parse_metrics` 的死参数 `plan`」）**被超越而非违反** —— **删函数严格强于清死参**。**PRD 不改（铁律）**，此行即留痕。
   - **模块 docstring 同批订正**：`:9-10`（七步骨架第 4 / 5 步）与 `:26-27`（「仅 metrics 档 3 LLM 抽取兜底触发时…」）在本 Sprint 后**全是假话**，须一并改写。
   - ✨ **附带不变量强化**：`_llm_extract_metrics` 是 `execution` 主体在 ReAct 子图**之外唯一的 LLM 调用入口** ⇒ 删除后「执行主体不调 LLM」由「目前恒成立」变为「**结构上不可能不成立**」。
-- `_EXECUTION_SYSTEM_PROMPT_BODY`（`:1144`）：改写"成功判定纪律（强约束）"三句（`:1159-1162`）+ "输出要求"段；⚠ 措辞按 PRD §4.9.5 措施 1，**不得回灌判定规则、不得写成"报了就算成功"**。
-- `EXECUTION_OUTPUT_SCHEMA`（`:1092`）：新增 `conclusion_level` / `goal_checks` / `evidence` 三字段；`metrics[].group` 的 description 改为"把维度写进组名"（S8-06 方案 A）；**新增字段一律不进 `required`**（AR-S8-07）。
+- `_EXECUTION_SYSTEM_PROMPT_BODY`（`:1144`）：改写"成功判定纪律（强约束）"三句（`:1159-1162`）+ "输出要求"段；⚠ 措辞按 PRD §4.9.5 措施 1，**不得回灌判定规则、不得写成"报了就算成功"**。🔴 **v2.2 追加 / v2.3 修订**：**结果块的四条语义层约束一并写进本常量**（§16.1；第③条**必须是条件句**、须说明"不必也不应为论文值编一个产物路径"、并 🔴 **v2.3 新增一句「引用论文报告值时须写明它对应上下文 `baseline_results` 里的哪个指标名（用原键名），并原样使用那里的数值」**——这句是 §16.3.2 两重核验能通过的前提，**漏写则 agent 报的论文值会大面积判不成立**）；🔴 **形状层一个字都不许写进来** —— 不举"列应该有哪几列"的例子、不给样板表头，**否则模型会把示范当成必须遵守的格式，等于把预设表头搬进提示词**（MEMORY §4.2 已记同型：写 prompt 时别拿枚举当叙述示范，模型会抄进自由文本）。四档语义段仍按 §2.5.4 红线留在本常量内、达标线仍走 HumanMessage —— **两层分离不受本次影响**。哈希基线**仍只换发一次**（§6.2 第 4 条不变，本项与判定纪律改写属同一次改写）。
+- `EXECUTION_OUTPUT_SCHEMA`（`:1092`）：新增 `conclusion_level` / `goal_checks` / `evidence` **/ 🔴 `result_blocks`（v2.2 新增）** 四字段；~~`metrics[].group` 的 description 改为"把维度写进组名"（S8-06 方案 A）~~ 🔴 **v2.2 整条作废**（方案 A 已被 Maria 拍板废除）——改为 **`metrics` 属性整体从 schema 移除**（它已停产停消费，留在 schema 里只会继续教 agent 报一份没人看的扁平指标，白占每回合的 schema 与提示词字节）；**新增字段一律不进顶层 `required`**（AR-S8-07；⚠ **`items` 内部的 `required` 不受此限**——`_missing_required_fields` 只读顶层 `schema.get("required")`，`react_base.py:483` 逐字可查 ⇒ 块的 `required: ["title"]` 写在 `items` 里是安全的，不会引发重生成）。**形态细节见 §16.2。**
 - `_build_execution_agent_context`（`:1299`）：末尾追加两处"非空才注入"——`baseline_results`（Q-S8-06）、`code_audit_findings`（§5.6 A）。**既有键的构造顺序与取值一字不动。**
-- `_run_execution_agent`（`:1551`）：绑入 `make_read_code_file_tool()` / `make_list_dir_tool()`（`:1581-1584` 工具列，**不新造工具**）；调 `audit_code_dir` 并透传；收尾改调新 `_resolve_agent_report`；`ExecAgentOutput`（`:1186`）加 `report` 字段。
-- `_split_reported_metrics`（`:1781`）：撞名策略改为"值不同则两条都丢弃 + WARNING"（AR-S8-08）。
-- **新增（四个纯函数，紧邻既有同族函数放置）**：`_resolve_agent_report`（放 `_merge_with_collector` 之后，共用范式注释）、`_verify_evidence`、`_decide_conclusion`（放 `_split_reported_metrics` 附近）、`_apply_no_verifiable_output`（放 `_apply_incomplete_execution` 之后）。
+- `_run_execution_agent`（`:1551`）：绑入 `make_read_code_file_tool()` / `make_list_dir_tool()`（`:1581-1584` 工具列，**不新造工具**）；调 `audit_code_dir` 并透传；收尾改调新 `_resolve_agent_report`；`ExecAgentOutput`（`:1186`）加 `report` 字段。🔴 **v2.2 追加**：`ExecAgentOutput.reported_metrics`（`:1205` 注释点名）**随 `_split_reported_metrics` 一并删除**——它在本版之后零消费者；`report` 字段即其继任者（且是唯一取数口径，与 §1.3"消除两个取数口径"同向）。
+- 🔴 **v2.2 删除面（四项一并，理由见 §16.6）**：~~`_split_reported_metrics`（`:1781`）：撞名策略改为"值不同则两条都丢弃 + WARNING"（AR-S8-08）~~ **整条作废，改判为整体删除**。
+  - `_split_reported_metrics`（`:1781-1856`，含调用点 `:2938`）：**整体删除**。折叠动作（`:1827` `collected.setdefault(group, {})`）+ 撞名丢弃（`:1831` `continue  # 先到先得`）**就是本次要治的病根本身**。
+  - `_coerce_reported_value`（`:1764-1778`）：**随之删除**（唯一调用点 `:1821`）。
+  - `_collect_grouped_metrics`（`:1709-1756`，含调用点 `:2961`）：**整体删除**。⚠ **这推翻了本文档 §13 v2.1 的「不删、不改」**，留痕与理由见 §16.6 与 §13。
+  - `_GROUP_METRIC_STR_MAX_LEN`（`:1706`）：**随之删除**（两个消费者 `:1752` / `:1774` 都没了）；其取值 **120 由新的 `_BLOCK_CELL_MAX_LEN` 继承**（§16.5）——**是改名继任，不是新造第二个常量**。
+- **新增（🔴 v2.2 由四个改为五个纯函数，紧邻既有同族函数放置）**：`_resolve_agent_report`（放 `_merge_with_collector` 之后，共用范式注释）、`_verify_evidence`（🔴 **v2.3：形参多一个 `baseline_results`；按 `path` / `metric` 二选一走两套核验**，§16.3.2。⚠ 调用方须从 `state["paper_analysis"]` 取该值传入 —— 这是 execution 侧对 `paper_analysis` 的**第二个**消费点，第一个是 §6 的上下文注入，**两处取的是同一个字段，不新增状态读取面**）、**`_collect_result_blocks`（v2.2 新增，放已删的 `_split_reported_metrics` 原位——那一段的模块注释「步骤 4.4：agent 自报指标拆分」同批改写为「步骤 4.75：agent 汇报的结果块收编」）**、`_decide_conclusion`、`_apply_no_verifiable_output`（放 `_apply_incomplete_execution` 之后）。
+- **新增四个模块常量**（块展示上限，`_collect_result_blocks` 附近，§16.5）：`_BLOCK_MAX=12` / `_BLOCK_COL_MAX=12` / `_BLOCK_ROW_MAX=50` / `_BLOCK_CELL_MAX_LEN=120`。**不进 `config.py`**（PRD 非目标 10）。
 - **删除**：`_apply_no_metrics`（`:2242-2271`，零改动红线已由 Maria 解锁，留档在 PRD §4.5.4 第 4 条）。
 - `_no_metrics_stalled`（`:2729`）→ `_no_progress_stalled`；`_NO_METRICS_EARLY_STOP_SUMMARY`（`:2715`）文案换发。
-- `_build_execution_result`（`:2395`）：新增形参 `conclusion`；`success` 改为由 `level` 派生（`:2428-2432` 的三合取判据整体退场）。
-- `execution()`（`:2874`）：插入步骤 4.75 / 4.8（§1.5）；降级构造点（`:2908-2917`）补 `conclusion={}`。
+- `_build_execution_result`（`:2395`）：新增形参 `conclusion`；`success` 改为由 `level` 派生（`:2428-2432` 的三合取判据整体退场）。~~🔴 **v2.2 追加**：`metrics` / `metrics_groups` 两个形参**保留带默认值、`execution()` 侧不再传**（两键落盘为空）——改动面最小、`ExecutionResult` 结构与旧快照形状不变；`:2419` docstring 里点名 `_collect_grouped_metrics` 的那句同批改写。~~ 🔴 **v2.4 改判（原文划删保留）**：两个形参**一并删除**（键都没了，留两个永远不被传、传了也无处可落的形参就是空壳，理由同 `metrics[].source` 被砍，`execution.py:1083-1089`）；`:2419` docstring 那句**随之删除**（不是改写）。见 §2.6.3。
+- `execution()`（`:2874`）：插入步骤 4.75 / 4.8（§1.5）；**删除 `:2938` 与 `:2961` 两处调用及其上方的 `:2940-2952` / `:2954-2960` 大段注释**（🔴 其中 `:2945-2952` 正是 S7-13 自律门控，PRD §4.5.5 留档 2 已由 Maria 拍板废止，删除即其落地）；降级构造点（`:2908-2917`）补 `conclusion={}`。
 - **不动**：`_SandboxRunCollector`（`:805-826`）、`_merge_with_collector`（`:1517`）、`_reconcile_steps`、`_completion_insufficient`、`_has_committed_result_for_round`、`:995` 不得写代码防线、`:1010` 管道 / 重定向拒绝、`:2817-2840` 优先级链顺序。
 
 ### `core/nodes/reporting.py`
 - 删：`_normalize_group_key` / `_match_metrics_group` / `_lookup_metric_value` / `_verify_trend`（`:130-198`）。
+- 🔴 **v2.2 新增删除面（三个，§5.9 第 1/2/3 条）**：`_render_metrics_comparison`（`:949-1008`）、`_comparison_table`（`:931-946`，含 `:938` 写死的三列表头）、`_flatten_mapping`（`:474-486`）。**⚠ `_flatten_entries`（`:440`）与 `_fmt_metric_value`（`:415`）不删**（另有消费者 `:898` / `:924-925`）。
 - `_verify_expected_results`（`:201`）：退化为旧快照兼容读（§5.4）。
 - `_determine_conclusion`（`:245`）→ `_assemble_conclusion`（§5.2）；`:281-282` 审计析取项删除；`:313-322` 判定段整体删除。
 - `_render_annotation_notices`（`:587`）：审计 hits 表（`:629-652`）搬出；`:612-613` 导语改写。
 - **新增** `_render_audit_findings(audit)`（独立节，空则早退返 `[]`）；`_render_report`（`:1176`）并列调用。
-- `_render_goal_checks`（`:707`）：icons 三 key 换发；`:722-723` 与 `:741-747` 文案改写。
-- `_render_metrics_comparison`（`:949`）：`:955` / `:995` 组名说明改写；复现侧无数据时**不渲染主实验表**（`:980-989`，PRD §4.7 第 3 条）。
+- `_render_goal_checks`（`:707`）：icons 三 key 换发（`:727-731`）；`:722-723` 与 `:741-747` 文案改写；🔴 **v2.2 扩围**：行渲染（`:739`）新增一列或一段，按 `evidence_ids` 回查 `evidence_ledger` 展示物证路径，**引用到 `ok=false` 记录的条目显著标注**（§5.9 第 9 条）。**签名 `(conclusion)` 单参不变。**
+- 🔴 **v2.2 新增** `_render_result_blocks(conclusion) -> List[str]`（§16.5）：**唯一入参是 `conclusion`，不得取 `state`、不得取 `exec_result`**（取了就会有人从 `paper_analysis.baseline_results` 再拼一列论文值 = 预设表头复发，静态断言对象）；块为空 → 早退返 `[]`。
+  - 调用点**两处**：`_render_full_success`（`:880` 原位替换 `_render_metrics_comparison`）+ 🔴 **`_render_degraded`（`:1061` 之后、`:1063` 之前，新增）**，理由见 §5.8。`_render_code_only` **不调**。
+- ~~`_render_metrics_comparison`（`:949`）：`:955` / `:995` 组名说明改写；复现侧无数据时**不渲染主实验表**（`:980-989`，PRD §4.7 第 3 条）~~ 🔴 **v2.2 整条作废**（改判为整体删除；两个子项的议题随之消失，见 §5.9 第 1/5 条 —— **找不到落地物是对的**）。
 - `_SUCCESS_CRITERIA_NOTE`（`:560-563`）换发。
-- **不动**：`_determine_report_form`（`:92-106`）、`audit_code_dir` 调用点与三键返回契约（`:1224-1249`）。
+- **不动**：`_determine_report_form`（`:92-106`）、`audit_code_dir` 调用点与三键返回契约（`:1224-1249`）、`_md_escape_inline`（`:406-412`）、`_flatten_entries`（`:440`）、`_fmt_metric_value`（`:415`）、`_NEST_MAX_DEPTH` / `_LIST_INLINE_MAX`（`:435` / `:437`）。
 
 ### `core/nodes/coding.py`
 - 清除三处 `<METRICS>` 教学文本：`:113`（`entry_script` 结构声明 description）、`:181-186`（整段）、`:191`（修复回合那句）——**三处一起，漏一处就仍在教 agent 写标签**。
@@ -560,7 +807,13 @@ A-S8-08（支撑物证一条都不成立 → 封顶「仅代码跑通」）PM �
 
 ### `ui/`
 - `ui/term_map.py:84-86` → 四条恒等映射（§2.3）+ 注释说明"存在理由是守门通道"。
-- `ui/pages/result_report.py:178`：数据源从 `metrics` 改读 `metrics_groups`（全 `ui/` 对 `metrics_groups` 今天零命中 ⇒ 不改则结果页永远显示"无可对比指标"）；结论档位改读 `execution_result.conclusion.level`。
+- ~~`ui/pages/result_report.py:178`：数据源从 `metrics` 改读 `metrics_groups`（全 `ui/` 对 `metrics_groups` 今天零命中 ⇒ 不改则结果页永远显示"无可对比指标"）~~ 🔴 **v2.2 整条作废**——那是把界面接到一个本 Sprint 已停产的字段上，且照做等于把旧的二维格子重新实现一遍（PRD §4.7 第 2 条已同款点名 `dev-plan.md` 的 T-S8-3-9 整条作废）。**改判为**：
+  - `_metric_comparison_rows`（`:163-201`，其 `:196-198` 与 `reporting._comparison_table:938` 是**同一套写死的三列**，是"代码预设表头"的第二处）**整体替换**为按 `conclusion["result_blocks"]` 逐块出表的函数；
+  - `_render_metrics_section`（`:315-330`，调用点 `:486`）改为**逐块**渲染「标题 → 可选说明 → `st.table(rows)` → 可选来源与 caveats」，**按数组顺序、不排序**；
+  - `:320` 的空文案「无可对比指标：论文 baseline / 复现 metrics 均为空。」换发为「本次执行未汇报可展示的结果块。」，🔴 **不得兜底回退到 `metrics` / `metrics_groups`**（负向断言对象，AC-S8-20②）；
+  - 结论档位改读 `execution_result.conclusion.level`。
+  - ✅ ~~⚠ **落点前置**：本条按 PRD §13 第 2 条的默认取值（方案 A：界面自建块表）写；若 Maria 改判为 B（净删、只留报告全文），则本条收缩为"删 `_metric_comparison_rows` + `_render_metrics_section` + `:486` 调用点"，**其余不变**。~~ 🔴 **v2.4：前置解除** —— **Maria 2026-08-06 已确认方案 A（界面自建块表）**，本条按上述原样落地，备选 B 不启用。
+  - 🔴 **v2.4 追加**：`:178` 读的 `exec_result.get("metrics")` —— 该键已随 §2.6 删除 ⇒ **这不再只是"改数据源"，是"读一个不存在的键"**。②里那条"**不得兜底回退到 `metrics` / `metrics_groups`**"的负向断言因此**从约定升级为事实**（键都没了，想回退也无处可退），但**断言仍要写**：它守的是"不许换个名字把旧格子重建回来"。
 - 🔴 **`ui/pages/plan_review.py`（护栏 1 + 护栏 3 展示，v2.0 新增）**：①成功标准在计划展示区**顶部**只读展示，**不得埋在一堆字里**（PRD §4.11.2），沿用既有"用户可调整任何部分"通道，**不新增交互种类、不新增按钮**；②`:1015` 的 `_render_plan_check_warnings` 调用**多传一个已在 payload 里的 `paper_analysis_summary`**（`:1005` 就在读它）⇒ **警示展示通道零改动、"不阻断审批"契约一字不动**。
 
 ### `config.py`
@@ -573,14 +826,20 @@ A-S8-08（支撑物证一条都不成立 → 封顶「仅代码跑通」）PM �
 `docs/sprint5/architecture.md:323` 的二选一裁决（选文件扫描、弃扩展 `<METRICS>` 多块）**本次两条路都不再是主通道**：
 
 - `<METRICS>` 通道：**整体退场**（决策 3）。
-- 文件扫描 `_collect_grouped_metrics`：**保留为兜底**（S7-13 已把它降为"agent 一组都没报时才扫盘"，`execution.py:2961`），本次**不删、不改**——它是 agent 完全不服从时唯一还剩的数据来源（R-S8-09 提示词服从率实测约 75%）。
-  - 🔴 **v2.1 补充（防止把「三档删了它为什么不删」读成标准不一致）**：**`_collect_grouped_metrics` 与三档不同类，不可类推** —— 前者**有生产调用者**，且其**数据源在本 Sprint 被强化**（编码侧新增结果文件产出约定）；后者的**输入源（`<METRICS>` 教学文本）本批被同批拆除**。⇒ **三档删、它留，是同一条标准的两种结论，不是双标。**
+- ~~文件扫描 `_collect_grouped_metrics`：**保留为兜底**（S7-13 已把它降为"agent 一组都没报时才扫盘"，`execution.py:2961`），本次**不删、不改**——它是 agent 完全不服从时唯一还剩的数据来源（R-S8-09 提示词服从率实测约 75%）。~~
+  - ~~🔴 **v2.1 补充（防止把「三档删了它为什么不删」读成标准不一致）**：**`_collect_grouped_metrics` 与三档不同类，不可类推** —— 前者**有生产调用者**，且其**数据源在本 Sprint 被强化**（编码侧新增结果文件产出约定）；后者的**输入源（`<METRICS>` 教学文本）本批被同批拆除**。⇒ **三档删、它留，是同一条标准的两种结论，不是双标。**~~
+- 🔴 **v2.2 推翻上面两条：`_collect_grouped_metrics` 改判为整体删除。原文保留在上，不删，因为它记录的是一次判断的转向。**
+  - **v2.1 那段补充里有一句话现在不成立了**：它说该函数「**数据源在本 Sprint 被强化**（编码侧新增结果文件产出约定）」。**恰恰相反** —— 编码侧的新产出约定是「结果文件**落在计划声明的位置**、**结构由编码环节自己定**」（决策 4 / PRD §4.2 第 2 条），而该函数硬编码了三条前提：目录必须是 `outputs/`（`execution.py:1730`）、文件名必须是 `summary.json`（`:1733`）、**只收顶层标量**（`:1749-1754`）。⇒ **新约定不是强化了它的数据源，是取消了对它那三条前提的保证。**
+  - ⇒ 本版之后它的正确定性是：**从"有契约保证的兜底"降级为"碰运气才命中的兜底"**。留着它，等于留一个"看着像防线"的空壳 —— 与 `metrics[].source` 被砍时逐字记下的理由同款（`execution.py:1083-1089`：「**一个没有消费点的字段就是过度工程本身**」「不要先摆一个看着像防线的空壳」）。
+  - **并且它自带预设形状**：组名 = 目录路径、结构 = `{组名: {指标: 值}}` 二维、只收顶层标量 —— 这三条正是本次回炉要拆掉的东西。**把它留作兜底 = 把旧格子留一半，在 agent 不服从时自动请回来**，与 PRD §4.6.5 #4「绝不兜底回旧的二维表」直接冲突。
+  - 🔴 **代价如实登记，不粉饰**：删掉之后，**agent 完全不汇报结果块时，系统确实没有任何结果数据**（R-S8-20 的能力回退是真的）。**唯一的缓解不是重建兜底，而是既有的产物清单** —— `collect_artifacts`（`sandbox/local_venv.py:786-806`）的默认 glob 含 `*.png` / `*.json` / `*.csv` 等（`:797` docstring 逐字列着，取值在 `_DEFAULT_ARTIFACT_PATTERNS`），报告的「产物清单（Artifacts）」节（`reporting.py:884`）本来就在印这些路径。⇒ **裁定：块为空且 artifacts 非空时，结果节印一句「本次执行未汇报可展示的结果块；系统在产物清单中发现 N 个产物文件，请前往「产物清单」节自行查看」**。这是"如实说没有 + 指路"，不是"替 agent 编一张表"。
+  - ⚠ **归属提醒**：**是否接受这次能力回退是 PRD §13 第 4 条、归 Maria 拍板**；本节提供的是**拍板依据的更正**（前提已被拆除），不是替她拍板。若她要求保留兜底，最小改法见 §16.6 的备选 B。
 
 当年三条弃选理由今天的状态（PRD §0.2 发现②已实证，此处只作架构留痕）：①"需改 coding 产出约定"——本次正是要做的事；②"对已有回归样本不可用"——已过期（S7-13 真跑夹具已建）；③"解析仍依赖 agent 服从度"——选了文件扫描后依赖不但没消除反而更糟（那个约定从没进过编码提示词）。**⇒ 本次不是推翻当年的判断力，是推翻当年的前提。**
 
 ---
 
-## 14. v1.0 → v2.0 跟改说明（第四轮拍板）
+## 14. 跟改说明（§14.1/14.2 = v1.0 → v2.0 第四轮拍板；**§14.3 = v2.1 → v2.2 回炉；§14.4 = v2.2 → v2.3 重裁 AR-S8-10；§14.5 = v2.3 → v2.4 §13 五条拍板**）
 
 ### 14.1 逐条跟改清单
 
@@ -612,6 +871,130 @@ A-S8-08（支撑物证一条都不成立 → 封顶「仅代码跑通」）PM �
 - 读 PRD v3.0 §8 表时，把那一行 **"Q-S8-07（护栏 3 落点与 `plan_checks.py` 红线再次解锁）" 读作 "Q-S8-09"**。
 - PRD 里其余 `Q-S8-01` ~ `Q-S8-06` 与本文档**逐一对应，无偏差**。
 - **架构不改 PRD**（铁律：只改本文档）⇒ 这处编号偏差**已知且留档在此**，不是遗漏。若 PM 后续改版 PRD，建议直接采用 `Q-S8-09`。
+- 🔴 **v2.2 追记**：PRD v4.0 新增的 **`Q-S8-10`** 与本文档**不撞车**（本文档 v2.1 只占到 `Q-S8-09`），**编号直接沿用、无须换发**。本文档 §16 即 `Q-S8-10`。
+
+### 14.3 🔴 v2.1 → v2.2 跟改说明（PRD v4.0 的 S8-06 / S8-07 回炉）
+
+### 14.3.0 🔴 先记这一条：**本版是在纠正一次架构侧的误判**（不许省，留给后人看）
+
+> **这一节写的是我自己判错的一次。** 不写下来，下次还会照同样的机制再判错一遍。
+
+**被纠正的裁决**：v0.1 PRD 里 PM 提的「**停止压扁嵌套**」，被 **v0.2 的架构评估推翻**，改判为方案 A「把维度写进组名」。否决理由逐字记在 `docs/sprint8/prd.md` §12.1：「`reporting._lookup_metric_value`（`:160-176`）只从组内顶层取且只认数值」。
+
+**这条否决有两处硬伤，均已上磁盘验实**：
+
+| # | 硬伤 | 磁盘依据 |
+|---|---|---|
+| 1 🔴 | **拿来当约束的那个"现状"，在同一个 Sprint 内被我自己判了死刑。** `_lookup_metric_value` 正是本文档 §5.1 裁定「**整体删除**」的函数（理由写得很清楚："唯一调用点是 `_verify_trend`，留着就是死代码"）。⇒ **为了迁就一个下个批次就要拆掉的东西，把新设计改窄了；拆掉之后没有人回头把设计改回来。** | 否决理由指向 `reporting.py:160-176`；本文档 §5.1 同一行裁"整体删除" |
+| 2 🔴 | **把「判定路径」与「渲染路径」混为一谈。** 窄的**只有判定路径**（`_lookup_metric_value` 只从组内顶层取、`:174` 排除 bool 与非数值）；**渲染路径一直是通用的** —— `_flatten_entries`（`reporting.py:440-471`）自 Sprint 5（AC-S5-20）起就能把任意嵌套 dict / list 递归降维成标量行，自带 `_NEST_MAX_DEPTH=4` 深度上限（`:435` / `:451` / `:465`）与显式省略占位（`:452` / `:466` "（嵌套过深，已省略）"）。⇒ **"下游读不了"这句话，对报告的渲染层从来就不成立。** | `reporting.py:435-471` 全文；`:174` 的数值过滤 |
+
+**⇒ 我要留给后人的那条机制性教训（比结论重要）**：
+
+🔴 **用"现有代码做不到"去否决一个新设计、或去缩小一个新设计之前，必须先问三个问题**：
+
+1. **那段代码在本 Sprint 之后还活着吗？** 活着才算约束。**本 Sprint 自己要删的代码，不构成对本 Sprint 新设计的约束。** —— 这是一条**可机械执行的自查**：否决理由引用的每一个 `文件:行号`，都要去本文档的删除清单（§12）里搜一遍。
+2. **做不到的是哪条路径？** 判定路径读不了 ≠ 渲染路径读不了。**"下游"不是一个整体**，笼统地说"下游"就是在把两条不同生命周期的代码路径捆在一起当理由。
+3. 🔴 **（v2.3 新增，Maria 点名要求写进来）「我说的『做不到』，是只有这一条路做不到，还是所有路都做不到？」**
+   - **可机械执行的自查**：凡是得出"**验不了 / 读不了 / 拿不到**"这类结论，必须**列出已经检查过的路径清单**，并说明**为什么这份清单是穷尽的**。**列不出清单的，那个结论不成立。**
+   - **并且不许在"做不到"处停下** —— "按 A 做不到"的正确下一步是"**那按 B 呢**"，不是"那就不做了"。**"不做"是一个需要独立论证的结论，不能由"这一条路走不通"直接推出。**
+
+🔴 **这三条不是三件事，是同一个毛病的三种长相：把"我检查过的那一条路"当成了"全部的路"。** 磁盘上已经有两次同形的实例：
+
+| 次 | 我验证了什么 | 我下的结论 | 我没走的那条路 |
+|---|---|---|---|
+| 一（v0.2，本节上文） | **判定路径**读不了嵌套（`_lookup_metric_value` 只从组内顶层取、`:174` 排除非数值） | "下游读不了" ⇒ 把新设计改窄成方案 A | **渲染路径一直是通的**：`_flatten_entries`（`reporting.py:440-471`）自 Sprint 5 起就能递归降维任意嵌套 |
+| 二（v2.2 的 AR-S8-10，本次） | **产物路径**验不了论文值（它不在 `code_output_dir` 下，验钞第④重必然不成立） | "验不了" ⇒ **论文值不进台账、不验钞** | **状态里的分析结果一直在那**：`baseline_results` 有完整记录链（`paper_analysis.py:45`/`:96`/`:224` → `state.py:80` → `planning.py:381`） |
+
+⚠ **第二次比第一次更贵**：第一次的后果是"设计被改窄"（能力损失），**第二次的后果是"防线被打开"**（AR-S8-14：把对照基准往低了编 —— S7-11 反向激励的第三个变种，直接改的是"事实"那一侧，而基准看起来是"论文说的"、没人会去质疑）。**同一个思维毛病，第二次踩到的是安全面。**
+
+**第三条（PRD §4.6.1 第 3 条独立挖出，架构复核同意）**：方案 A 还**违背了它自己引用的决策 4** —— 决策 4 原文（`docs/TODO.md:913`）后半句明写「维度信息可直接写进文件，**不必再靠目录名当组名**」，而方案 A 恰恰就是靠名字串承载维度。**⇒ 三条理由指向同一个结论：PM 的 v0.1 方向本来是对的。**
+
+**并且坍缩根本不是 agent 造成的，是系统折的（已上磁盘验实）**：agent 汇报的本来就是**平坦记录数组**（`EXECUTION_OUTPUT_SCHEMA.metrics`，`execution.py:1114-1135`，每条是 `{name, value, group}`）；是 `_split_reported_metrics` 用 `collected.setdefault(group, {})`（`:1827`）把它折成二维、并在撞名时 `continue  # 先到先得`（`:1831`）**丢弃**。⇒ **"三维装不下"是折叠动作自己制造出来的伤，方案 A 是在给这道自伤打补丁；"撞名怎么办"（AR-S8-08）也是同一个动作制造出来的问题。不折叠，两个问题一起消失。**
+
+**⇒ 本版遵守的新硬约束（Maria 2026-08-05 定为红线，非背景资料）**：
+
+1. **结果长什么样由执行环节决定，代码不许预设格子与表头**（已进头部贯穿硬约束第三条总纲）。
+2. 🔴 **不许再用"现有下游代码读不了"去约束新设计** —— 报告侧本 Sprint 本来就要大改。**这正是上次翻车的机制。**
+3. ⚠ **也不许滑到另一个极端**：约束定在**语义层**，不得定在**形状层**。本文档 §16.1 的四条语义约束逐条标注了"为什么它是语义而不是形状"，就是为了守住这条边界的**两个方向**。
+
+### 14.3.1 逐条跟改清单
+
+| # | 跟改项 | 落点 | 性质 |
+|---|---|---|---|
+| 1 🔴 | **新增 Q-S8-10 全裁**：结果块契约 / 证据台账 / 收编落点 / 通用渲染 / 展示上限 / 截断检测 / 四个折叠扫盘函数的去留 | **新增 §16**（七个小节） | 新增 |
+| 2 🔴 | **Q-S8-05 重裁**：报告侧由"改造指标对比表"改为"删除对比表 + 通用块渲染" | §0 表 / **§5.1 加四行** / **新增 §5.9 逐条差异表** | **重裁** |
+| 3 🔴 | **新识别：degraded 形态不渲染任何结果章节** ⇒「仅代码跑通」那一档的结果块会整节消失 | **新增 §5.8** | **新识别缺陷** |
+| 4 🔴 | **`conclusion` 形态由"内联证据"改为"台账 + 引用"**，并加 `result_blocks` / `report_caveats` 两个子键 | §2.1 重写（v1.0 原形态折叠保留） | 改判 |
+| 5 🔴 | **`_collect_grouped_metrics` 由"保留为兜底"改为"整体删除"** —— 推翻 v2.1 §13 的补充 | §13 重写（原文保留划删）+ §16.6 | **推翻 v2.1** |
+| 6 | **AR-S8-08（撞名策略）整条作废** —— 随折叠动作消失 | §10 表（划删保留） | 议题消失 |
+| 7 | **新增 AR-S8-09 ~ AR-S8-13** 五条架构侧风险（块内数字不受验钞约束 / 论文值无产物物证 / `conclusion` 体积上界 / 旧快照重放不再含对比表 / schema 重生成路径的块内容） | §10 表 | 新增 |
+| 8 | **步骤骨架 4.4 / 4.5 删除，4.75 扩为三函数** | §1.5 | 改判 |
+| 9 | **批次 2 / 3 扩围 + 新增第三条前置约束**（PRD §13 五条拍板与批次的卡口关系） | §11 | 扩围 |
+| 10 | **§12 开发交接清单跟改**：`state.py` / `execution.py` / `reporting.py` / `ui/` 四节 | §12 | 跟改 |
+| 11 | **头部三处订正**：新增第三条总纲（语义层 / 形状层分离）、新增"上限不等于预设形状"的口径澄清、架构级结论重算（并订正 v2.1 少算的 reporting 函数数） | 头部 | 订正 |
+| 12 | **§2.2 加同名防误读登记 + 子键不占状态契约额度的口径** | §2.2 表后 | 订正 |
+
+**明确不重裁的三项**：
+
+- **Q-S8-01（判定不进收集器）**：**本版一字不动。** 其论证基于**数据的产生方式**（终态一次写 vs 逐次累积），结果块与档位同源于**同一次 `<result>`** ⇒ 论证原样适用，块**同样**不进收集器。
+- **Q-S8-02 §2.5（`ReproductionPlan.success_criteria`）**：**一字不动。** 本次回炉动的是"结果怎么呈现"，与"达标线由谁写"正交。
+- **Q-S8-03 / Q-S8-04 / Q-S8-06 / Q-S8-07 / Q-S8-08 / Q-S8-09**：**均一字不动。**
+
+### 14.3.2 本版**没有**做的事（避免下一位以为是漏做）
+
+1. **不碰 `docs/sprint8/prd.md`**（PM 刚定稿 v4.0）、**不碰 `docs/sprint8/dev-plan.md`**（开发随后跟改）、**不碰两份全局文档**、**不碰 `docs/TODO.md`**、**不碰任何生产代码与测试**。
+2. **Sprint 8 的全局架构文档（`docs/technical-architecture.md`）回填仍不做** —— 代码零行，时机未到（架构 2026-07-28 自定的规矩：全局架构文档走**代码交付后回填**，与全局 PRD 走"先写计划"不同，MEMORY §3.5 末段已固化两者时机不同）。
+3. **不替 Maria 拍 PRD §13 那五条。** 本文档按其默认取值裁定，卡口关系写在 §11 前置③。
+
+### 14.4 🔴 v2.2 → v2.3 跟改说明（重裁 AR-S8-10：论文报告值「换个东西验」）
+
+**起因**：Maria 读 v2.2 的 AR-S8-10 后问「论文报告的数值会被系统自己判成"来源不可信"这一条，**论文值难道在前期的计划和分析节点没记下来**？」——**记下来了，四条记录链已上磁盘核实**（`paper_analysis.py:45`/`:96`/`:224` → `state.py:80` → `planning.py:381`）。
+
+**v2.2 那条裁定的问题**：它写「论文值**不进证据台账、不参与验钞、不因此被标注异常**」——**治好了误判**（不会再印"论文报的 0.62 来源不可信"），**却打开了编造**：按此方案 agent 在块里写「论文报的是 0.95」时系统一个字都不核验，而四档里「复现成功」的达标线常写成「数值与论文报告对上」⇒ **把论文值往低了编，自己跑出来的数就"对上了"**（AR-S8-14）。
+
+**思维毛病的定位**：「论文值不该按产物文件验」这一步**没错**，错在由此**直接推出**「那就不验了」——**中间少了一步「那就换个东西验」**。剖析与第三条自查见 §14.3.0。
+
+| # | 跟改项 | 落点 | 性质 |
+|---|---|---|---|
+| 1 🔴 | **AR-S8-10 后半句改判**：论文值**进台账、按 `baseline_results` 核验两重** | §10 表（v2.2 原文划删保留） | **推翻 v2.2** |
+| 2 🔴 | **新增 AR-S8-14**：把对照基准往低了编（S7-11 反向激励第三变种） | §10 表 | 新增风险 |
+| 3 🔴 | **新增 §16.3.2**：两种出处两套验法 + 三个细节裁定（键名精确匹配 / 对不上只标注不封顶 / 空值一律不成立）+ 两条局限登记 + 「不违反 AC-S8-08②」的边界澄清 | §16.3 拆为 16.3.1 / **16.3.2** | 新增 |
+| 4 | **`_verify_evidence` 多一个形参 `baseline_results`** | §3.1 / §12 | 扩围 |
+| 5 | **schema 的 `evidence` items：加 `metric`、去掉 `required: ["path"]`** | §16.2 | 订正 |
+| 6 | **§16.1 第③条接口补丁重写**；提示词新增"用原键名引用论文值"一句 | §16.1 / §12 | 改判 |
+| 7 | **§16.7 验证：B12 重写 + 新增 B18（★命门·须验红）/ B19 / B20** | §16.7 | 扩围 |
+| 8 🔴 | **§14.3.0 立第三条机制性自查**：「我说的『做不到』，是只有这一条路做不到，还是所有路都做不到？」+ 两次同形错误对照表 | §14.3.0 | **新增红线** |
+
+**不变的三项（明确登记，免得以为顺手改了）**：
+
+- 🔴 **AR-S8-04 一字不动**：`_decide_conclusion` 仍然**只读 `level` + 数封顶**，不读证据形态、**不读出处**、不解析证据语义。新分支只落在 `_verify_evidence` 里。
+- 🔴 **不新增第四条封顶**：编低的论文值走**既有两个出口**（逐条落「无法核实」/ 支撑物证全不成立时封顶 3），零新机制。取向与 §2.5.6 逐字同源。
+- **§3 两个闸的边界不变**：工具层 `_is_within_workspace` 一字不动；证据边界仍限 `code_output_dir`（**它管的本来就只是产物物证**）。
+
+**交主控派单的一条（架构不改 PRD）**：PRD §4.6.2 语义层约束②「每块要说清数据来自哪个产物、哪一步」**只覆盖了产物那一侧**。建议 PM 扩为覆盖两种出处（或新增约束⑤：引用论文报告值时须指明它对应论文分析里的哪个指标名）。**约束③的条件句写法不必改**——本次裁定使它从劝导变成可执行。
+
+### 14.5 🔴 v2.3 → v2.4 跟改说明（Maria 拍完 PRD §13 五条）
+
+**拍板结果**：第 2 / 3 / 4 / 5 条**确认架构默认取值**（相关章节一字未动，逐条对照见 §11 前置③ 的表）；🔴 **第 1 条推翻默认取值 —— `ExecutionResult.metrics` / `metrics_groups` 本 Sprint 删键**，原话「**旧字段要是确认没有用了就删掉**」。
+
+| # | 跟改项 | 落点 | 性质 |
+|---|---|---|---|
+| 1 🔴 | **两键删除**（含前置条件核实、落点、键数账） | **新增 §2.6**（五个小节） | **Maria 推翻架构默认取值** |
+| 2 🔴 | **复核并推翻我自己那笔"71 处回归面"的账** | §2.6.2 | **自我订正** |
+| 3 🔴 | **两处被突破的自设约束显式处置**：「状态契约新增上限两处」改写为「新增两处 + 删除两处」；**`dev-plan.md:1358` CP-2.10-3 判定为推翻并换发**（不是放宽、更不是删掉） | §2.6.4 + 头部 | **例外登记 + 派单** |
+| 4 | `_build_execution_result` 两个形参**由"保留带默认值"改判为一并删除** | §12（v2.2 原文划删保留） | 改判 |
+| 5 | `core/state.py` 落点由"注释改写为停产说明"改判为"两行声明删除 + docstring 加删键留痕" | §12（同上） | 改判 |
+| 6 🔴 | **§7 加一层边界**：`Enum` 成员必须保留 vs `TypedDict` 键可以删 —— **判别式是"有没有运行时成员查找"**，三个带 metrics 的东西不可类推 | §7 | 新增边界澄清 |
+| 7 | §0 表 Q-S8-02 行、§5.9 第 7 条、§16.6 末行、§12 `ui/` 条目跟改；§11 前置③ 由"三条卡口"改写为"已全部结清"表 | 各处 | 跟改 |
+| 8 | **顺带发现**：`mypy.ini` 债务清单的行号注释本 Sprint 后大面积失真（`:124` L520 在被删的 `_parse_metrics` 内、`:146` L995 在被删的 `_render_metrics_comparison` 内），且这是一次零成本 ratchet 收紧机会 | §2.6.5 | **新登记，交开发** |
+
+**🔴 本次自我订正里最该被记住的一条（§2.6.2 末段）**：我把 **`grep` 命中数当成了改动面**。71 处里绝大多数**在"停产"那一刻就已经要改了**，把它们记在"删键"头上，等于**把一笔本来就要付的账重复计了一次**，再用它去支撑"不要删"。⇒ **给改动面报数，必须先按"做这条改动 vs 不做这条改动"做差，不能拿总命中数当差值。**
+
+**不变的三项**：
+
+- **§16 全部裁定**（结果块契约 / 台账 / 收编 / 渲染 / 上限 / 截断检测）**一字未动** —— 第 2/3/4/5 条确认了默认取值。
+- **§16.3.2（v2.3 论文值两重核验）一字未动** —— 与本次删键正交。
+- **§7 的核心裁定一字未动**：`ErrorCategory.NO_METRICS` 枚举成员**仍然必须保留**（新增的只是它与状态键的边界澄清）。
 
 ---
 
@@ -661,3 +1044,287 @@ A-S8-08（支撑物证一条都不成立 → 封顶「仅代码跑通」）PM �
 | G5 ★契约回归 | 两参调用 `check_plan(plan, resource_info)` | 不抛异常、**既有五条 W 的输出与改前逐字节相同**、W6 不出现 |
 | G6 ★产品契约 | UI 上出现 W6 警示时 | **审批按钮仍可用**（不阻断，AC-S8-13③） |
 | G7 ★验红 | 去掉 W6 判据 | G2 / G4 必红 |
+
+---
+
+## 16. Q-S8-10（v2.2 新增；**§16.3.2 为 v2.3 重裁**）：结果块的契约、收编与通用渲染
+
+> **产品决策不推翻**：「结果的形状由执行环节决定、报告只提供通用渲染容器」是 Maria 2026-08-05 的拍板（PRD §4.6 / §4.7）。本节只裁"契约长什么样、收编落在哪、渲染怎么通用、上限怎么设、异常怎么标"。
+>
+> 🔴 **本节全程遵守两条方向相反的红线**：**既不许代码预设形状**（上次翻车的方向），**也不许滑向"什么都不约束"**（另一个极端）。**每条约束都标注了它属于语义层还是形状层**，越界的一律不写进设计。
+
+### 16.1 结论：约束定在语义层，形状层一行代码都没有
+
+| 层 | 谁定 | 落在哪 | 定什么 |
+|---|---|---|---|
+| **语义层** | 产品（PRD §4.6.2） | **execution 的系统提示词**（稳定前缀，进提示词哈希基线） | ①每块要有给人看的**中文标题**；②每块要说清**数据来自哪个产物、哪一步**；③**若上下文给了论文报告值**，论文值与本次复现值**在同一块内可对照**；④**不得覆盖或合并**不同来源的同名数字 |
+| **形状层** | **执行环节 agent** | **只存在于它汇报的数据里** | 分几块、每块叫什么、用表格还是文字、表有**哪几列**、列叫什么、**行怎么排序**、块与块的先后 |
+
+**四条语义约束逐条自查"它是语义还是形状"**（这一栏是本节最该被审的地方——PM 初稿在第③条上越过了自己划的线，已被指出并订正）：
+
+| # | 约束 | 是语义还是形状？ | 判据 |
+|---|---|---|---|
+| ① | 标题必须是给人看的中文 | **语义** | 它约束的是"这段文字对谁说话"，不约束标题里必须出现什么词、也不规定标题分几级 |
+| ② | 说清数据来自哪个产物、哪一步 | **语义** | 它约束的是"必须可溯源"，不规定用什么字段装、也不规定溯源信息放表里还是放说明里 |
+| ③ | **若上下文给了论文报告值**，论文值与复现值**同块内可对照** | **语义（订正后）** | 🔴 措辞是"**同一块内可对照**"，**不是"必须有两列"**——agent 可以直接写一句"论文报 0.62，本次 0.61"。**规定列 = 又在预设表头，正是本次要禁的。**（PM v4.0 初稿写的是"必须并排给出复现值与论文值"，那是形状约束，已订正） |
+| ④ | 不得覆盖或合并不同来源的同名数字 | **语义** | 它约束的是"不许伪造同一性"，不规定该用什么结构避免——**这条正是被删掉的折叠动作干过的事**（`:1827` 折 + `:1831` 丢），现在写进提示词，禁的是 agent 重蹈系统的覆辙 |
+
+🔴 **第③条必须写成条件句，不许写成无条件的"必须"。** 依据：`baseline_results` 走的是"非空才注入"（§6.1）⇒ **论文分析没抽出报告值时，这条约束在结构上不可能被满足**；无条件措辞会诱导 agent **编一个论文值**出来。措辞固定为「**若上下文给出了论文报告值，则……**」。
+
+🔴 **第③条的接口补丁（AR-S8-10 / AR-S8-14，PRD 未写，本节补；v2.3 重裁）**：
+
+- **前提不变**：论文报告值**没有产物物证**（它来自注入的上下文，不在 `code_output_dir` 下）⇒ **按产物验钞的五重对它不适用**。提示词须说明"**不必也不应为它编一个产物路径**"——漏写这句，验钞第④重会把论文值那一列全判不成立，报告会印出自相矛盾的东西。
+- ~~⇒ 它不进证据台账、不参与验钞、不因此被标注异常。~~ 🔴 **v2.3 改判**：**"不按产物验"不等于"不验"** —— 论文值有**另一个**核对物：`state["paper_analysis"]["baseline_results"]`（`core/state.py:80`，由 `paper_analysis.py:224` 的 `_coerce_dict` 落库，schema 见 `:45`，提示词 `:96` 明写"优先来自 Experiments / Results 章节"，且 `planning.py:381` 的透传名单里就有它）。**记录链完整、有出处、有留存，不是黑箱。**
+- ⇒ **论文值物证照样进台账，走另一套两重核验**（§16.3.2）。**不验的代价是 AR-S8-14**：达标线常写「数值与论文报告对上」，**不验 ⇒ agent 把论文值报低，自己跑出来的数就"对上了"**。
+- ⇒ **提示词第③条同批新增一句**：「**引用论文报告值时，须写明它对应上下文 `baseline_results` 里的哪个指标名（用原键名），并原样使用那里的数值。**」
+- ⚠ **这句是语义约束不是形状约束**（自查过）：它约束的是"**论文值也要可溯源**"（与约束②"说清数据来自哪个产物哪一步"同族，只是溯源对象换成论文分析），**不规定块要有几列、也不规定论文值放表里还是放文字里**。声明落在 `evidence` 数组，**不落在表格里**。
+- ⚠ **给 PM 的一条建议（架构不改 PRD）**：PRD §4.6.2 语义层约束②的措辞只覆盖了"产物"这一侧，建议扩为覆盖两种出处，或新增一条约束⑤。**约束③的条件句写法不变** —— 且本次裁定**使它从"劝导"变成"可执行"**：没有原料时不但不许编，编了也过不了验钞。
+
+**另有一条用户可见文本的新入口**：块标题 / 说明 / 单元格**直通报告与界面**，而 `humanize` 只作用于内部枚举、自由文本绕过它（MEMORY §4.2）。⇒ 提示词写死"标题用中文、不要用代码变量名或英文缩写"；术语守门只能做**负向抽样断言**（断言"不含已知内部枚举串"），**不得做正向白名单**——正向白名单就是在预设内容。
+
+### 16.2 契约落点：`conclusion["result_blocks"]`，单元格一律字符串
+
+**① 放哪（Q-S8-10①）**
+
+| 方案 | 形态 | 取舍 |
+|---|---|---|
+| **A（采纳）** | `conclusion["result_blocks"]`（子键） | ✅ **零 TypedDict 改动、零状态契约额度、零新增旧快照防御读点**（`conclusion` 已是 `Dict[str, Any]`，且消费侧已统一 `.get("conclusion") or {}`）；✅ 与 `evidence_ledger` **同一个 dict** ⇒ "引用同一份台账"不跨键，`_render_goal_checks(conclusion)` 与 `_render_result_blocks(conclusion)` 各自单参就够；✅ 与档位同源于**同一次 `<result>`**、同刻由 `_decide_conclusion` 单点写入、随 `exec_result` 一次 commit ⇒ Q-S8-01 的取数单点与幂等纪律③**原样适用，不需要第二套论证** |
+| B | `ExecutionResult` 顶层新键 `result_blocks` | ❌ 突破"状态契约新增严格限两处"；且要付三处降级构造点补默认值 + 三处防御读 + 回归面的账；且台账与块跨键 ⇒ 渲染函数要收两个入参，"引用不漂移"从结构保证退化成调用约定 |
+| C | 复用 `metrics_groups` 装块 | ❌ 与 §2.2 方案 C 同族的语义污染；且 🔴 **v2.4 起该键本 Sprint 直接删除**（§2.6）⇒ 方案 C **物理上不再存在** |
+
+⚠ **采 A 的代价（如实说）**：`conclusion` 这个名字从"档位判定"扩为"**执行环节收尾汇报经核验后的落盘产物**"。⇒ **`ExecutionResult.conclusion` 的 docstring 与 `_decide_conclusion` 的 docstring 必须同批把这层语义写清楚**，否则下一位会以为块是判定依据。**并写死：`_decide_conclusion` 不得读 `result_blocks`**（AR-S8-04 的同款静态断言对象——否则"块里有几行"会悄悄变成隐性判据）。
+
+**② schema 形态（Q-S8-10③ 的前半，技术可行性已核实）**
+
+```jsonc
+"result_blocks": {
+  "type": "array",
+  "description": "本次执行的结果，按你认为最便于人阅读的方式自行分块与排版。",
+  "items": {
+    "type": "object",
+    "properties": {
+      "title":   {"type": "string"},                                   // 中文标题
+      "note":    {"type": ["string", "null"]},                         // 可选说明：数据来自哪个产物、哪一步
+      "columns": {"type": "array", "items": {"type": "string"}},       // 列名由你定，列数不限
+      "rows":    {"type": "array", "items": {"type": "array",
+                                             "items": {"type": "string"}}},
+      "evidence": {"type": "array", "items": {"type": "object",        // 本块的来源物证
+                    "properties": {
+                      "path":   {"type": ["string", "null"]},          // 产物物证：本次产出文件相对路径
+                      "metric": {"type": ["string", "null"]},          // 🔴 v2.3：论文值物证：baseline_results 的原键名
+                      "value":  {"type": ["string", "null"]},
+                      "source_note": {"type": ["string", "null"]}}
+                    }}                                                 // 🔴 v2.3：items 内不设 required（见下）
+    },
+    "required": ["title"]
+  }
+}
+```
+
+🔴 **v2.3 订正两处**（v2.2 此处写的是 `"required": ["path"]`）：
+
+1. **`evidence` 的 items 里不再设 `required: ["path"]`** —— 论文值物证**没有** `path`（§16.3.2）。
+2. **改为"`path` 与 `metric` 互斥且必居其一"，由收编函数在代码里判，不靠 schema 判**。理由：JSON Schema 表达"二选一"要用 `oneOf`，而 `oneOf` **不在 strict 子集内**（与 §16.2③ 拒绝 union type 同一条理由），且这里的 schema 只是兜底路径、主通道是自由 JSON ⇒ **放代码里判更强也更简单**。两者都有 / 都无 ⇒ 该条不成立 + WARNING（畸形，不静默吞）。
+
+**四条已上磁盘核实的技术依据**：
+
+1. **主通道本来就是自由 JSON**：finalize 解析的是 `<result>` 标签里的整段 JSON（`react_base.py:713-716` → `_extract_result_payload:93-100`）⇒ **任意形状今天就能流过来**；`EXECUTION_OUTPUT_SCHEMA` 只在"预算耗尽强制产出"与"解析失败重生成"两条**兜底路径**生效。
+2. **实测为非 strict**：`react_base.py:431` 调 `with_structured_output(normalized, method=method)` **未传 `strict`**；旁证是 `execution.py:1138` 的 `"additionalProperties": True` 在 OpenAI strict 子集里非法，而它今天跑得通。
+3. **列名做成数据、不做成 schema 键**：`columns: [str]` + `rows: [[str]]` 的**位置化**表示 ⇒ 任意列数可表达，**且在 strict 子集内也合法**（将来要开 strict 不必重做）。**反例（否决）**：`rows: [{列名: 值}]` 会把列名变成 schema 键，要么写死列名（= 预设表头），要么依赖 `additionalProperties`（strict 下非法）。
+4. **顶层 `required` 不含 `result_blocks`**（AR-S8-07）：`_missing_required_fields`（`react_base.py:486-497`）**把空数组也算缺失** ⇒ 列进去会让"跑挂了、零结果"的回合每次白烧一次 schema 重生成调用。⚠ **`items` 内部的 `required: ["title"]` 不受此限** —— 该函数只读顶层 `schema.get("required")`（`:483`），嵌套 required 它根本不看。
+
+**③ 单元格一律字符串（Q-S8-10 与 PRD §13 第 3 条，默认取值「一律字符串」，架构同意）**
+
+三条理由：①union type 不在 strict 子集内；②渲染终点本就是 Markdown 表 / `st.table`；③🔴 **一旦 cell 是数值，下个 Sprint 必然有人写"取 cell 数值做比较"——那就是本次病根的原样复发**（`_lookup_metric_value:174` 排除非数值、`_verify_trend` 拿它比大小，正是这条路走过一遍的证据）。
+
+**代价说实话**：失去"值是数值"的类型保证。**该保证本 Sprint 已无消费者**——`_decide_conclusion` 只读 `level` + 数封顶（AR-S8-04 写死），验钞第③重做的是**前缀字符串匹配**（复裁 8：`0.6201` 匹配 `0.62014732`），本来就不需要数值类型。
+
+### 16.3 证据台账（Q-S8-10②）
+
+> **PRD §4.6.4 定的原则**（唯一台账 / 验钞只跑一次 / 引用不漂移）**全部保留**。本节裁两件它没裁的事：**§16.3.1 id 从哪来**、**🔴 §16.3.2（v2.3 新增）论文报告值拿什么去验**。
+
+#### 16.3.1 id 由**系统**生成，agent 一个 id 都不写
+
+| 方案 | 做法 | 取舍 |
+|---|---|---|
+| **A（采纳）** | **agent 在每处只写 `{path, value?, source_note?}`；系统在 `_verify_evidence` 里按 `(path, value)` 去重成台账、生成 `E1`/`E2`… 序号 id、逐条验钞一次；`_collect_result_blocks` 与 goal_checks 收编时把各处的 `{path, value}` 回填成 `evidence_ids`** | ✅ **悬空 id 在结构上不可能发生**（R-S8-23 不适用，不是"被缓解"是"不存在"）；✅ **id 冲突不可能发生**（`(path, value)` 相同 ⇒ 就是同一条记录 ⇒ 验钞结果必然相同，**天然无撞名**）；✅ agent 少一项服从要求——在一个实测服从率约 75% 的系统里，**每砍掉一项对 agent 的格式要求都是净收益**；✅ 台账只跑一次验钞、引用不漂移两条原则**满足得比 PRD 原案更强** |
+| B（PRD 原案） | agent 自己生成 id，块与逐条引用它 | ❌ 引入一个**agent 自造的命名空间**，随之而来三种失效：悬空 id、两条不同记录同 id、id 拼写错。🔴 **而"自造命名空间 + 撞名怎么办"正是本次要拆掉的那套东西的同构物**（方案 A 靠组名串承载维度、撞名先到先得）——**在同一次回炉里重建一个同型问题，说不过去** |
+| C | 保持内联，不建台账 | ❌ PRD §4.6.4 已论证：验钞读盘跑 N 次 + 两处独立数组必然漂移 |
+
+⚠ **采 A 的代价（如实说）**：payload 里同一个路径串会在多处重复出现（块级 + 逐条级），比短 id 费字节。**量化**：块级引用的粒度是"一张表"不是"一行"（PRD §4.6.4 已定），12 块 × 约 2 条来源 × 约 40 字符 ≈ 1 KB，相对 `DEFAULT_LLM_MAX_TOKENS=8192`（`config.py:19`）约 3%。⇒ **可接受**，且换掉了三种失效形态。
+
+> 🔴 **v2.3 追记（上表写于 v2.2，此处补齐，表内原文不改）**：上表里的 `{path, value?, source_note?}` 与去重键 `(path, value)` **说的是产物物证这一种**。v2.3 之后台账还收**论文值物证** `{metric, value, source_note?}`，去重键相应扩为 `(("P", path) 或 ("B", metric), value)`。**方案 A 的三条优点逐条仍然成立**（悬空不可能 / 撞车不可能 / 少一项对 agent 的服从要求），**选型不变**。详见 §16.3.2。
+
+**去重与验钞的确定性口径（写死，否则重放不字节一致）**：
+
+1. **台账键 = `(path 原样串, value 原样串或 None)`**；`source_note` **不进键**（同一条物证不同措辞不该拆成两条）；同键的第一个 `source_note` 胜出（**首见优先**，与 `_flatten_mapping:484` 已有的"重复标签首见优先（确定性）"同款取向）。
+2. **id 按台账**首次出现顺序**分配 `E1`、`E2`…**；台账顺序 = agent 汇报里的出现顺序（先逐条结论、后结果块，固定遍历序），**不排序**。
+3. 🔴 **`value` 为 `None` 时，验钞第③重（数值前缀匹配）不适用，其余四重照跑。** 这是**定性物证的正路**——"图产出了、文件存在且可读"本来就没有数值可查（AC-S8-12 的构造前提）。**不是漏洞**：无数值的物证支撑不了数值主张，而它能支撑的定性主张正是本 Sprint 要让它支撑的。**这条必须写进代码注释**，否则开发要么让它崩、要么让它无条件通过。
+
+#### 16.3.2 🔴 v2.3 新增：**两种出处，两套验法** —— 论文报告值按 `baseline_results` 核验
+
+> **本小节推翻的是 v2.2 自己写的 AR-S8-10 后半句「论文值不进台账、不参与验钞」。** 推翻理由不是"考虑不周"，是**推理少走了一步**：从"论文值不该按产物文件验"直接跳到了"那就不验了"，中间漏掉「**那就换个东西验**」。剖析见 §14.3.0 第三条自查。
+
+**磁盘事实（四条，均已核实，构成本裁定的全部依据）**：
+
+| # | 事实 | 依据 |
+|---|---|---|
+| 1 | 论文分析的输出契约里就有 `baseline_results`（object） | `core/nodes/paper_analysis.py:45` |
+| 2 | 提示词明写它"**优先来自 Experiments / Results 章节**" | `paper_analysis.py:96` |
+| 3 | 经 `_coerce_dict` 落库，进 `PaperAnalysis` | `paper_analysis.py:224` → `core/state.py:80` |
+| 4 | 规划节点的透传名单里就有它（不是孤字段） | `core/nodes/planning.py:381` |
+
+⇒ **论文值有出处、有留存、跨节点被消费，是一份完整的记录链，不是凭空注入的黑箱。** ⇒ **它完全可以当核对物。**
+
+**裁定：`evidence_ledger` 的记录按「出处」二选一，各走各的核验**
+
+| 出处 | 记录形态 | 核验 | 依据 |
+|---|---|---|---|
+| **本次跑出来的** | `{path, value?, source_note?}` | **既有五重**（§3.1）：①存在②可读③数值前缀可查④落在 `code_output_dir` 之下⑤未在计划外命令参数里字面出现 | 不变 |
+| 🔴 **论文报告的** | `{metric, value, source_note?}` | **两重（新）**：①`metric` 能在 `state["paper_analysis"]["baseline_results"]` 里查到；②`value` 与该键的值**双向前缀匹配** | 本小节 |
+
+**`path` 与 `metric` 互斥且必居其一**；两者都有 / 都无 ⇒ 该条不成立 + WARNING（畸形，不静默吞）。
+
+**三个 Maria 点名交给架构裁的细节**：
+
+1. **键名匹配的宽严 ⇒ 精确匹配（仅大小写与首尾空白不敏感），此外一字不差。**
+   - 🔴 **绝不做归一化模糊匹配**：`_normalize_group_key`（`reporting.py:130-133`，`re.sub(r"[^a-z0-9]+", "_", …)`）+ `_match_metrics_group` 的那套**正是 S7-13 真跑挖出的歧义源**，本 Sprint §5.1 正在删它们 —— **不能在隔壁重建一个同型物**。
+   - **不做模糊匹配的成本被 S8-10 抵消了**：`baseline_results` 的**原键名已经在 agent 眼前**（§6.1 整份 dict 注入、`json.dumps(sort_keys=True)`）⇒ 抄准是零成本。**提示词写死"用原键名"。**
+   - **多个候选键归一后同时命中 ⇒ 判歧义、该条不成立 + WARNING，不做任何 tie-break**（沿 `_match_metrics_group` 当年"命中 2 条判歧义返 None"的保守取向 —— **那条取向本身是对的，被删的是它的模糊匹配前提，不是它的保守出口**）。
+2. **对不上时：标注，不封顶 —— 🔴 不新增第四条封顶。**
+   - 该条 `ok=false` ⇒ 自动落进**两个既有出口**：①**引用它的逐条结论落「无法核实」**（PRD §4.8 第 3 条"物证不过验 ⇒ 该条落无法核实"，保守出口，已写死）；②**档位的支撑物证若全不成立 → 既有封顶 3「仅代码跑通」**（§4.5.3 第三条 / A-S8-08）。
+   - ⇒ **AR-S8-14 那条路被堵在"逐条结论"这一层**：把论文值编低 ⇒ 论文值物证不成立 ⇒ 「数值与论文报告对上」这条预期判不成「印证上了」⇒ 拿不到它想要的那一档。**零新机制。**
+   - 🔴 **明确不自造新规则**（取向与 §2.5.6 逐字同源）：**开发不得另写一条"论文值对不上则降档"的分支** —— 既有两个出口已完全覆盖，写第二处必然与第一处打架。
+3. **空值时的行为：`baseline_results` 为空 ⇒ agent 报的任何论文值物证一律不成立。**
+   - 🔴 **这条零误伤，理由是结构性的**：`_build_execution_agent_context` **只注入 `baseline_results`，不注入整个论文分析、更没有论文原文**（A-S8-07 / §6.1"只送 `baseline_results`"）⇒ **agent 手上唯一的合法论文值来源就是那份注入**。注入为空时它**没有任何合法途径**知道论文报了什么 ⇒ 此时它报出来的数**只可能是编的**。
+   - ✨ **附带收获：A-S8-07（只送 `baseline_results`）从"反过度工程"升级为一条防线** —— 正因为不送论文原文，"报的值必须对得上注入"才是一个**完备**核验。**这条关系须写进代码注释**，否则日后有人为了"让 agent 看得更全"把整份 `paper_analysis` 塞进去，会**在毫无察觉的情况下把这条核验掏空**。
+   - **`baseline_results` 非空但不含该键** ⇒ 同样不成立，reason 用「论文分析里没有这个指标的报告值」。**文案必须中性**：这不是造假指控，是"无从核对"（同 §5.6 审计文案的中性要求）。
+   - 与 PRD §4.6.2 约束③的条件句写法**严丝合缝**：**有原料才做，没原料不许编** —— 本裁定使这句话从劝导变成可执行。
+4. **数值匹配口径：双向前缀匹配**（`"0.62"` 与 `0.6201` 互相成立），与复裁 8 的前缀口径同族。**严格相等不可取** —— 浮点字符串化（`0.62` vs `0.6200000000000001`）会造成大面积误伤。
+
+⚠ **局限如实登记（不得包装成"杜绝编造"）**：**它挡的是"把 0.95 编成 0.61"这一档量级级别的改动，挡不住"把 0.62 报成 0.6"** —— 后者仍能通过前缀匹配。⇒ **正确表述**：「agent 引用的论文值必须与论文分析抽出来的对得上，**但前缀口径下小数位级别的放宽仍可能通过**。」登记体例同 §15.4（W6 挡空话挡不住"具体但宽松"）、口径纪律同 R-S8-01。
+
+⚠ **另一条真实残留**：**论文分析自己抽错了值**，则 agent 抄它抄得再准也是错的 —— **本条核验保证的是"agent 没有二次编造"，不保证"论文值本身是对的"**。⇒ 追溯责任落在论文分析节点，不在本环节；**不得对外说成"论文值已核实"**，正确说法是"**agent 引用的论文值与论文分析记录一致**"。
+
+⚠ **它不是"按证据形态分支"，不违反 AC-S8-08②（必须写清，否则测试会误伤）**：
+- AC-S8-08② 禁的是**按证据的内容形态**（数值 / 趋势 / 定性）分支 —— 禁它是为了守病③（照着某类论文设计，某类论文结构性拿不到高档）。
+- 本条分的是**出处**（这个数字自称来自产物文件，还是自称来自论文），**出处决定的是"拿什么去核对它"，不是"这篇论文属于哪一类"**；两种出处对**所有**论文同时存在，**不会让任何一类论文结构性拿不到高档** ⇒ **不复发病③**。
+- 且它**只落在 `_verify_evidence` 里**：🔴 **AR-S8-04 的红线一字不动 —— `_decide_conclusion` 仍然只读 `level` + 数封顶，不读证据形态、不读出处、不解析证据语义。**
+
+**去重键随之扩一位**：`(("P", path) 或 ("B", metric), value)` —— 两个命名空间分开，防止某个路径串恰好等于某个指标名。**其余确定性口径（首见优先 / 按出现顺序分配 id / 不排序）一字不变。**
+
+### 16.4 疑似截断的检测（Q-S8-10⑥）：🔴 用确定性信号，不用长度启发式
+
+**先订正一处 PRD 的机理描述（已上磁盘验实，PRD §4.6.5 #1 / R-S8-18 说的路径不对）**：
+
+- PRD 说：`max_tokens` 截断后 `_repair_truncated_json_prefix`（`react_base.py:268`）会把它修成合法 JSON 且不留痕。
+- **磁盘事实**：`_RESULT_TAG_PATTERN`（`react_base.py:87-89`）是 `re.escape(OPEN) + "(.*?)" + re.escape(CLOSE)`，**必须同时匹配开、闭两个标签**。⇒ 输出被 `max_tokens` 从中间切断时，`</result>` **根本没来得及吐出来** ⇒ `_extract_result_payload` 返回 `None`（`:97-99`）⇒ **`_repair_truncated_json_prefix` 这条路压根走不到**，走的是 `:721-724` 的 WARNING「`<result>` tag not found」→ `:727-752` 的 **schema 重生成**。
+- ⇒ **真实风险不是"静默修补成一个更短的 JSON"，而是"让模型重说一遍"**（AR-S8-13）：重说的那份块可能更少、更简，且 `result_blocks` 不进 `required` ⇒ 它可以整个不给。
+- ⇒ **"静默"这个词也要订正**：日志层**有痕**（一条 WARNING + 一条 INFO `finalize: schema-enforce regen`，`:733-738`）；**无痕的是报告** —— 用户侧确实看不出来。**风险成立，机理不同，检测手段因此可以做得更硬。**
+
+**裁定（检测口径，纯确定性、零阈值、零启发式）**：
+
+- **落点**：execution 侧 `_resolve_agent_report`（§1.3，它本来就在逆序扫 messages 找 `<result>`），**顺带**判一个布尔：**末条 AIMessage 文本里 `REACT_RESULT_TAG_OPEN` 出现过、而 `REACT_RESULT_TAG_CLOSE` 没出现过** ⇒ 疑似输出被截断。
+- **零新依赖**：两个常量就是 `config.REACT_RESULT_TAG_OPEN` / `REACT_RESULT_TAG_CLOSE`（`config.py:61-62`），§1.3 已裁"execution 侧按同一对常量自建 pattern，不 import 私有符号"，**本项复用同一对常量，不新建任何东西**。
+- **产物**：往 `conclusion["report_caveats"]` 追加一条中文句子（execution 侧模块常量），渲染层原样印在结果节**之前**。
+- 🔴 **`react_base.py` 一字不动**（四个节点共用的基础设施，PRD §4.6.5 #1 已定此边界）。
+- **同一条 caveat 通道另收两个来源**：`budget_truncated=True`（R-S8-19，`force_finish_node` 强制产出、agent 根本没跑完）、以及**块结构不合法**（下节）。**三个来源、一条通道、三句不同的中文**。
+
+⚠ **为什么不用 PRD 建议的"自比 `<result>` 原文长度与解析后长度"**：那要选一个阈值（差多少算截断？），而 JSON 反序列化本来就会因空白与转义产生长度差 ⇒ **必然要调参、必然有假阳/假阴**。上面那条是**布尔事实**，没有可调的东西。
+
+### 16.5 通用渲染与展示上限（Q-S8-10③④）：🔴 收编在 execution 侧，渲染层只转义与拼装
+
+**① 落点裁定（本节最容易被写反的一条）**
+
+```
+execution 侧  _collect_result_blocks(raw_blocks, ledger_index) -> List[Dict]
+    ① 脱敏：每个 title / note / cell 过 mask_value（core/secrets_store.py:261）
+    ② 长度：每个 title / note / cell 截断到 _BLOCK_CELL_MAX_LEN，超长**截断不丢弃**并留标注
+    ③ 对齐：len(row) != len(columns) → 短的补占位、长的截断，块级 caveats 记"N 行已按表头对齐"
+    ④ 上限：块数 / 列数 / 行数各自截断，**每次截断都往 caveats 写一句中文并指向产物路径**
+    ⑤ 引用：把块自带的 {path, value} 回填成 evidence_ids（§16.3）
+    ⑥ 不合法：非 dict / 无 title / columns 与 rows 都缺 → 该块降级为"原样文本块"（先截断再放），
+              块级 caveats 记"未按可渲染结构汇报"，**绝不兜底回旧的二维表**
+
+reporting 侧  _render_result_blocks(conclusion) -> List[str]
+    只做三件事：Markdown 行内转义（_md_escape_inline，reporting.py:406-412）、拼装、印 caveats。
+    **零判断、零裁剪、零排序、零默认值。**
+```
+
+**四条理由（为什么收编不放在渲染侧——PRD §4.7 第 6 条的字面写法是"落 reporting.py"）**：
+
+1. 🔴 **脱敏纪律要求 `mask_value` 在落 state 之前做** —— 既有两处先例逐字如此（`execution.py:1753` / `:1777`）。⇒ **execution 侧本来就必须有一个收编函数**；把其余归一化也放进去是**零新增抽象**，放到渲染侧则变成"两处都要碰"。
+2. 🔴 **它让"给定同一份状态重放 → 报告字节一致"在结构上成立**（AC-S8-19③ 换发后的确定性口径）。反之若在渲染侧收编，`mask_value` 依赖 `secrets_store` 的运行时状态 ⇒ 同一份 state 在不同时刻可能渲染出不同的报告。**这一条是决定性的。**
+3. **checkpoint 体积可控**：state 里存的就是已截断的结果，不是 agent 吐的原始巨物（AR-S8-11）。
+4. **"标注了什么"集中在一处**：截断、对齐、降级三类标注同源同格式，不会一半在 execution、一半在 reporting。
+
+⚠ **这是对 PRD §4.7 第 6 条一句实现措辞的精确化**（属"怎么实现"层，架构可裁），**PRD 的规范内容原样保留**：上限是**模块级常量、不做成 `config.py` 可配置项**（非目标 10）。**已如实登记，不静默通过**（体例同 §15.2）。
+
+**代价说实话**：上限日后调值**不影响旧快照重放**（旧快照按当时的上限已裁剪好）。**架构认为这反而是对的**——报告应当忠实于当时落盘的状态。
+
+**② 四个常量（Q-S8-10④）**
+
+| 常量 | 取值 | 依据 |
+|---|---|---|
+| `_BLOCK_MAX` | **12** | 真跑现场最细切法 4 方法 × 3 数据集 正好 12（PRD §4.7 第 6 条） |
+| `_BLOCK_COL_MAX` | **12** | 同上量级；超过 12 列的表在 Markdown 与 `st.table` 里都已不可读 |
+| `_BLOCK_ROW_MAX` | **50** | 真跑实测 24 条的 2 倍余量 |
+| `_BLOCK_CELL_MAX_LEN` | **120** | 🔴 **它是 `_GROUP_METRIC_STR_MAX_LEN`（`execution.py:1706`）的改名继任者**：后者的两个消费者（`:1752` / `:1774`）随 §16.6 一并删除，取值 120 原样搬到新名下。**不是新造第二个常量，是同一个常量换了个准确的名字。** ⚠ **也不是"从 reporting 侧 import execution 私有符号"**——那条路已由 §1.3 / §3.2 方案 B 明令否决（跨模块 import 私有符号造成隐性耦合）。**PRD §4.7 第 6 条那句"逐字复用 `execution.py:1706` 的常量"指的是复用取值，不是复用符号**，此处一并说清 |
+
+**③ 渲染纪律（可静态断言，AC-S8-19② 的对象）**
+
+- **块按 `result_blocks` 的数组顺序渲染**；`_render_result_blocks` 函数体内**不得出现 `sorted()`**（今天 `reporting.py:997` 那个 `sorted()` 就是代码在替 agent 决定组的先后）。
+- 函数体内**不得出现任何写死的表头字符串 / 结果分节标题**（今天 `:938` / `:986` / `:993` / `:995` 四处）。
+- **入参只有 `conclusion`**，不得取 `state`、不得取 `exec_result`（取了就会有人从 `paper_analysis.baseline_results` 再拼一列论文值，预设表头当场复发）。
+- 🔴 **导语必须写明核验边界（AR-S8-09）**：「下表由执行环节汇报，系统核验的是它标注的来源文件与逐条结论的物证，**未逐格核对表内每一个数字**。」**不得省略、不得软化。**
+- **空块早退返 `[]`**，不印空标题（§5.8：degraded 路径上块为空是常态）。
+
+**④ 确定性口径的换发（不许把"不排序"读成"确定性不重要"）**
+
+- **仍然成立**：「**给定同一份状态重放 → 报告字节一致**」。顺序**已经落盘在状态里**，渲染是纯函数。
+- **不再成立**：「两次真跑的结果可以直接 diff」。⇒ **测试口径必须按前者写**（AC-S8-19③）。
+
+### 16.6 四个折叠 / 扫盘函数的去留（Q-S8-10⑤）
+
+| 函数 / 常量 | 裁定 | 理由 |
+|---|---|---|
+| `_split_reported_metrics`（`execution.py:1781-1856`，调用点 `:2938`） | 🔴 **整体删除** | **折叠动作就是病根**：`:1827` `collected.setdefault(group, {})` 把平坦记录数组折成二维、`:1831` `continue  # 先到先得` 在撞名时丢弃。**不折叠 ⇒ 不撞名 ⇒ 没有"撞名怎么办"** ⇒ AR-S8-08 与 PRD 原方案 A 的"撞名两条都丢弃"**一并作废** |
+| `_coerce_reported_value`（`:1764-1778`） | **随之删除** | 唯一调用点 `:1821` |
+| `_collect_grouped_metrics`（`:1709-1756`，调用点 `:2961`） | 🔴 **整体删除**（**推翻本文档 v2.1 §13 的"不删、不改"**） | 三条硬编码前提（目录 `outputs/`：`:1730`；文件名 `summary.json`：`:1733`；只收顶层标量：`:1749-1754`）在本 Sprint 之后**不再由任何契约保证**（新约定是"落在计划声明的位置、结构自定"）；且它自带的三样东西（组名=目录路径 / 二维结构 / 只收顶层标量）**正是本次回炉要拆的**。留作兜底 = **在 agent 不服从时把旧格子自动请回来**，与 PRD §4.6.5 #4 直接冲突。详见 §13 |
+| `_GROUP_METRIC_STR_MAX_LEN`（`:1706`） | **随之删除**，取值 120 由 `_BLOCK_CELL_MAX_LEN` 继承 | 两个消费者都没了 |
+| `ExecAgentOutput.reported_metrics`（`:1205` 注释点名） | **随之删除** | 零消费者；`report` 字段是唯一取数口径（§1.3） |
+| `ExecutionResult.metrics` / `metrics_groups`（`core/state.py:175` / `:183`） | ~~**键保留声明、停产停消费**，注释改写为"仅供旧快照反序列化"~~ 🔴 **v2.4 改判：两键删除** | ~~PRD §13 第 1 条**默认取值**。⚠ **此项归 Maria**；若改判为"删键"，则连带 `dev-plan.md:1358` CP-2.10-3「类型签名逐字未变」失效、`grep metrics_groups tests/` 上百处回归面 —— **架构建议维持默认**（改动面不成比例）~~ 🔴 **Maria 2026-08-06 拍板删键**（「旧字段要是确认没有用了就删掉」）。**架构那句"上百处回归面"的账已上磁盘复核、是错的** —— 真实净增量 4 处断言 / 1 个文件；CP-2.10-3 的处置见 §2.6.4。全账见 **§2.6** |
+
+🔴 **备选 B（仅在 Maria 否掉 PRD §13 第 4 条、要求保留扫盘兜底时启用，架构不推荐）**：保留 `_collect_grouped_metrics`，在 `result_blocks` 为空时把扫到的每个 `summary.json` 转成**一个块**（`title` = 文件相对路径、`columns` = `["字段", "值"]`、`rows` = 顶层标量）。
+**不推荐的理由**：那个 `["字段", "值"]` 就是**代码替 agent 决定的形状**，虽然是退化形状，性质与被禁的预设表头相同；而它换来的能力，在新的产出约定下**没有契约保证会命中**。**如实登记两难，不替 Maria 拍。**
+
+### 16.7 验证（逐条可落成测试；与 AC-S8-19 / AC-S8-20 对齐，**v2.3 另牵动 AC-S8-06 / AC-S8-08 / AC-S8-15**）
+
+> 🔴 **v2.3 的 AC 连带影响（交主控转 PM / 测试，架构不改 PRD）**：
+> - **AC-S8-06「五重验钞逐重成立 + 逐一放宽每一重必红」**：射程须扩为「**产物物证五重 + 论文值物证两重**，**共七重逐重成立、逐一放宽各自必红**」（B18 / B19 / B20 即新增的三条）。**不扩，AR-S8-14 那条路就没有验收对象。**
+> - **AC-S8-08②「代码里不存在按证据形态分支的逻辑」**：须**加一句边界澄清** —— 禁的是**按证据内容形态**（数值/趋势/定性）分支，**按出处**（产物 / 论文）二选一走不同核验**不在禁列**（理由见 §16.3.2 末）。**不澄清，测试会把 §16.3.2 的正当实现判红。**
+> - **AC-S8-15「论文报告值确已送达执行环节」**：现有三条断言不变，建议**补一条** —— 论文值不只是"送到了"，而是"**送到的那份成了核对物**"（即 B18 的行为断言）。
+
+| # | 验证 | 构造 | 期望 | 属性 |
+|---|---|---|---|---|
+| B1 ★命门 | **零丢弃** | 真跑夹具 24 条（4 方法 × 3 数据集 × 2 指标）以块形态汇报 | **24 条全部呈现、零丢弃**；报告里不存在"撞名"概念 | 直接证否坍缩 |
+| B2 ★验红 | **代码不预设形状** | 静态审查 `reporting.py` / `result_report.py` | **不存在写死的结果表头字符串、写死的结果分节标题、对块或块内行列的 `sorted()`** | **验红：加回任一 → 必红** |
+| B3 ★验红 | **入参边界** | 静态审查 `_render_result_blocks` | 入参只有 `conclusion`；函数体不出现 `state` / `paper_analysis` / `baseline_results` | **验红：改成取 state → 必红** |
+| B4 | **列数不符** | `len(row) != len(columns)`（短、长各一） | 短的补占位、长的截断，**块级 caveats 有中文标注**，无静默 | §16.5① |
+| B5 | **超上限** | 13 块 / 13 列 / 51 行 / 121 字符 各一 | 各自截断 + **各自有显式中文标注并指向产物路径**，不是省略号、不是脚注 | §16.5② |
+| B6 | **结构不合法** | 块非 dict / 无 title / columns 与 rows 都缺 | 降级为**先截断后原样打印**的文本块 + 标注"未按可渲染结构汇报" + 指向完整日志；🔴 **绝不出现旧的三列表头** | R-S8-08 |
+| B7 ★验红 | **转义与脱敏** | cell 含 `\|`、含换行、含敏感串各一 | 全部过 `_md_escape_inline` + `mask_value`，表不破形、敏感串已掩码 | **验红：去掉任一处理 → 对应用例必红** |
+| B8 ★命门 | **截断检测** | 末条 AIMessage 有 `<result>` 无 `</result>` | `report_caveats` 有"本次汇报可能不完整"一句；报告显著印出 | §16.4 |
+| B9 | **预算耗尽标注** | `budget_truncated=True` | 块渲染带醒目前置标注 | R-S8-19 |
+| B10 ★命门 | **台账不漂移** | 同一条 `(path, value)` 同时被 1 条 goal_check 与 2 个块引用 | 台账里**只有一条**记录、**验钞只跑一次**（可用调用计数断言）、三处 `evidence_ids` 指向同一个 id | §16.3 |
+| B11 | **无数值物证** | `value` 为 `None` 的图产物物证 | 第③重跳过、其余四重照跑；可支撑「印证上了」 | §16.3 第 3 条 |
+| B12 🔴 **v2.3 重写** | **论文值走另一套验法（不是不验）** | 块引用 `{metric: "knn_accuracy", value: "0.62"}`，而 `baseline_results = {"knn_accuracy": 0.6201}` | 该条**在台账里**、**不被判"路径越出代码目录"**（五重不适用）、**两重通过 `ok=true`**、报告不标红 | AR-S8-10 |
+| B18 ★命门·须验红 🔴 **v2.3 新增** | **把对照基准编低 → 判不成功** | 同一份产物 + 达标线「数值与论文报告对上」+ `baseline_results = {"knn_accuracy": 0.95}`，agent 报 `{metric: "knn_accuracy", value: "0.61"}` 并自称「印证上了」 | 该条证据 `ok=false`（值对不上）⇒ 逐条结论落「**无法核实**」⇒ **拿不到「复现成功」**；报告中性标注"引用的论文值与论文分析记录不一致" | **验红：让论文值物证无条件通过 → 本用例必红。** AR-S8-14 |
+| B19 🔴 **v2.3 新增** | **无原料时不许编** | `baseline_results` 为空 / 不含该键，agent 仍报论文值物证 | 该条 `ok=false`，reason 为**中性**措辞（"论文分析里没有这个指标的报告值"，**不得暗示造假**）；⚠ 另一向：`baseline_results` 为空且 agent **没报**论文值 ⇒ **零告警、零标注**（条件句语义，没原料不做不算错） | §16.3.2 第 3 条 |
+| B20 🔴 **v2.3 新增** | **键名精确匹配、歧义不猜** | ①键名大小写/首尾空白不同 → 命中；②归一后多个候选键同时命中 → **判歧义、不成立 + WARNING、不做 tie-break**；③键名少一个字符 → 不命中 | 三向如期；🔴 **静态审查：`_verify_evidence` 内不得出现 `re.sub(r"[^a-z0-9]+"…)` 那类归一化模糊匹配** | §16.3.2 第 1 条（防在隔壁重建 `_normalize_group_key`） |
+| B13 ★验红 | **确定性口径换发** | 同一份 state 重放两次 | **报告字节一致**；🔴 **不得**断言"两次真跑结果可 diff" | AC-S8-19③ |
+| B14 | **degraded 形态** | `level="仅代码跑通"`（`success=False`）且块非空 | **degraded 报告里能看到结果块** | §5.8 |
+| B15 | **空块早退** | 块为空 | 结果节整节不渲染，**不印空标题**；界面结果页文案为"本次执行未汇报可展示的结果块"，**不回退 `metrics` / `metrics_groups`** | §5.8 / §12 |
+| B16 🔴 **v2.4 扩围** | **旧快照重放（含已删键）** | 旧 checkpoint 里**有 `metrics` / `metrics_groups`（本次已删的两键）、无 `conclusion`** | 不崩（TypedDict 零校验）；**结果节不渲染**；🔴 **不再出现指标对比表**（AR-S8-12，预期行为变更，须换发既有快照断言）；🔴 **v2.4 加一向静态断言：交付后 `core/` 与 `ui/` 对这两个键的读取点为零**（不许"旧快照就读旧键渲染旧表"） | AR-S8-12 + §2.4 末条 |
+| B21 🔴 **v2.4 新增** | **状态契约键数账对平** | `ExecutionResult` 的键集合 | **恰为 10 键**（今天 11 键 − `metrics` − `metrics_groups` + `conclusion`）；🔴 **四处精确键集合断言同批换发，且仍用 `==` 精确语义**（清单见 §2.6.2 丙类）——**禁止放宽成 `>=` / "包含"来规避** | §2.6.3 + AC-S8-21 红线 |
+| B17 ★验红 | **块不参与判定** | 同一份物证 + 两份块数完全不同的汇报 | **`conclusion.level` 逐字相同** | AR-S8-04 同款 |
