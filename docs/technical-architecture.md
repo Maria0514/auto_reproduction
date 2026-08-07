@@ -1,9 +1,9 @@
 # 论文自动复现系统 -- 技术架构文档
 
 **产品名称**：Auto-Reproduction
-**版本**：v1.4
+**版本**：v1.6
 **日期**：2026-05-06
-**最后更新**：2026-08-04
+**最后更新**：2026-08-07
 **状态**：正式定稿（当前权威活文档，随代码演进持续更新）
 
 ---
@@ -182,7 +182,7 @@ class ReActState(TypedDict):
 | resource_scout | 30（REACT_MAX_ROUNDS_RESOURCE_SCOUT，S7-07 由 20 上调） | 4-8 | web_search, search_papers, get_paper_brief, git_clone_and_analyze, check_url_reachable, **probe_environment**（共 6 工具；Sprint 6 MF-5 摘除 PwC 通道后已无 `search_pwc`；S7-06 新增只读环境探测，装配处 `core/nodes/resource_scout.py:758-765` 的 6 项 lambda，末项 `make_probe_environment_tool` 在 `:764`） |
 | planning | 16 | 3-5 | read_section, get_paper_structure, web_search, check_url_reachable, git_clone_and_analyze |
 | coding | 24（REACT_MAX_ROUNDS_CODING） | 视修复轮次 | write_code_file, read_code_file, list_dir, read_section, web_search, run_command, request_user_input（共 7 工具） |
-| execution（内嵌子图） | 20（REACT_MAX_ROUNDS_EXECUTION，FLOOR） | 视执行步骤 | prepare_environment, run_in_sandbox, request_user_input |
+| execution（内嵌子图） | 20（REACT_MAX_ROUNDS_EXECUTION，FLOOR） | 视执行步骤 | prepare_environment, run_in_sandbox, request_user_input, **read_code_file, list_dir**（共 **5** 工具；装配处 `core/nodes/execution.py:1582-1605`。⚠ 后两项由 sp8 批次 1a 挂入，该改动**截至 2026-08-07 仍在工作区、未提交**。**本行只照实记录现状数字**；其设计说明（为何接入、边界如何划）待 sp8 收口后按回填制补入 §3.2.2，届时删除本句） |
 
 > 注：`reporting` 现为纯函数三形态报告（非 ReAct），不在此表；`execution` 行指其内嵌 ReAct 子图（`_run_execution_agent`），编排层收尾本身不调 LLM（仅指标解析档 3 LLM 抽取兜底除外），预算按子图实际轮次由编排层单点扣减。
 >
@@ -230,7 +230,7 @@ class ReActState(TypedDict):
 - **中断点**：`planning` 节点完成后，使用 LangGraph 的 `interrupt()` 函数暂停图执行
 - **用户审核**：Streamlit UI 展示复现计划及候选仓库列表（含质量评分），用户可进行以下操作：
   - **确认**：同意计划及仓库选择，恢复图执行，进入 `coding` 节点
-  - **修改**：调整计划内容后重新提交，`planning` 节点根据用户反馈修订计划
+  - **修改**：与审核页的**规划讨论助手**多轮对话敲定修改方向（S2-12，UI 侧、graph 之外），敲定后由同一模型把本轮讨论总结成一段中文「修改方向纪要」，以该纪要（**不是对话原文**）作 `user_feedback` 走 `resume_with({"decision": "revise", ...})`，`planning` 节点据此重新生成整份计划（机制详见本节末「审核页讨论助手」注）
   - **更换仓库**：查看候选仓库列表，选择不同的仓库（或要求重新搜索），`planning` 节点基于更换后的仓库信息重新生成计划
   - **切换模式**：选择"只编码不执行"（code_only）时，coding 完成后不进入 execution 直接出报告（当前无独立 `coding_only` 节点）
 - **恢复执行**：用户确认后，通过 `graph.invoke(Command(resume=user_feedback))` 恢复图执行
@@ -240,6 +240,21 @@ class ReActState(TypedDict):
   - **C. 终止任务**：terminate 直接路由到 END（不经 reporting、不生成终止报告，`core/graph.py` `_route_after_execution`）；checkpoint 与 workspace 产物（论文分析、计划、代码、日志）原样保留，可手动取用
 
 - **通用用户交互中断（interrupt#3）**：coding / execution 两 agent 在缺信息（凭证 / 参数 / 决策 / 输入）时，经 `request_user_input` 工具（`core/tools/interaction_tools.py`，两 agent 共用的唯一交互工具）内 `interrupt(payload)` 暂停主图（`interrupt_kind="user_input_request"`）；UI 收集用户输入后经 `Command(resume=值)` 恢复，agent 拿到值继续。凭证认证失败（如 git clone 私有仓库）是首要用例。交互细则：一直暂停不设硬超时（checkpoint 天然保留）；无交互前端时按信息缺失降级；一次问一个信息项（逐条问）。敏感值经 sandbox `extra_env` 注入子进程、不进 state（详见 §7.4 / `docs/sprint4/prd.md`）。
+
+> **审核页讨论助手（S2-12 交付、S7-08 扩上下文；⚠ 2026-08-07 才回填本节——代码从 Sprint 2 起就在磁盘上，两份全局文档此前零记载）**
+>
+> interrupt#1 暂停期间，审核页提供一个与规划模型多轮对话的面板（`ui/pages/plan_review.py::_render_revise_chat`）。它**运行在 graph 之外的 Streamlit 主线程**：不进图、不写 state、不新增中断种类、不新增决策类型（决策仍恰 5 类）。三条契约：
+>
+> 1. **硬边界：对话不直接产出计划。** system prompt 明写「不要现在就重写完整复现计划、不要输出大段 JSON 或代码」（`_build_chat_system_prompt`），真正的重规划只发生在 `planning` 节点。这条边界存在的理由是**避免对话与 graph 各出一份不一致的计划**——故落定路径唯一：讨论 → 模型总结「修改方向纪要」→ 纪要作 `user_feedback` → 复用既有 revise 的 `resume_with` + awaiting 轮询链路（`_apply_chat_revision`）。总结调用失败时退化为拼接本轮用户发言，仍触发重规划、不空跑。
+> 2. **grounding 恰四键**（`_format_plan_context`，`ui/pages/plan_review.py:176-195`）：`reproduction_plan` / `paper_analysis_summary` / `resource_info` / `local_env_facts`。
+>    - 前三键**与 `planning` 节点重规划喂的是同一批字段**（`core/nodes/planning.py::_format_planning_context`），刻意对齐——讨论与重规划的上下文一旦割裂，用户"讨论好的方向"会在重规划时凭空消失。
+>    - 第四键 `local_env_facts` 为 S7-08 补入（架构 sp7 §18.8 ②，Maria 2026-07-29 裁决 9）：用户讨论"换一种缩法"时，助手若看不到本机实测事实，就会建议这台机器根本跑不动的方案。**既有三键与渲染形态一字未动，只在字典里多一项。**
+>    - 渲染用 `json.dumps(..., sort_keys=True, ensure_ascii=False, default=str)`，同一 payload 稳定可直测；`tests/test_plan_review_logic.py::test_cp_5_10_4_format_plan_context_exactly_four_keys` 以**精确等值**（`set(keys) == {...}`，非 `issubset`）守住"恰四键"——增删任一键都会当场变红。
+> 3. **边界语第 4 条 = 用户可见文案红线在运行时文本上的唯一防线。** 上下文是整份计划的**原样 JSON**、里面全是英文键名，故 system prompt 追加一条「不要复述上下文里的字段名、英文标识或英文缩写」（`_CHAT_NO_FIELD_NAME_RULE`）。静态守门扫不到模型生成的内容 ⇒ 这条只是 prompt 契约、不是保证（架构 sp7 §18.8 ③，已知且被接受）。
+>
+> 另：对话历史只存 `st.session_state`、**不持久化、不进 checkpoint**（与 api_key 不落盘同档，刷新或重启即失）；`thread_id` 变更时清空以避免跨任务串话（`_sync_chat_thread`）；模型不可用时降级为一次性文本框，保住 revise 核心能力不丢。对话调用次数与重试预算的关系见 **§12.7 注脚**（**不回写** `retry_budget_remaining`，属经评估的设计选择而非缺口）。
+>
+> ⚠ **一处已知的表示法不对称（2026-08-07 回填本节时发现，未修）**：`local_env_facts` 在 `planning` 节点有两条并存出口，"未知"的表示法**刻意不同**——给规划模型的 `_format_planning_context` **为空就不写这个键**（`core/nodes/planning.py:440-441`，"键不存在即未知"，不造哨兵值，且系统提示词里有明确条款告诉模型这时该写"未探测/未知"）；而 interrupt payload **恒写、空串兜底**（`:988`，那是给人看的展示位）。讨论助手取的是**后者**，`_format_plan_context` 还再套一层 `or ""` ⇒ **探测失败时助手看到的是一个空串键，而它的 system prompt 里没有任何一句说明空串是什么意思**。同时，审核页给用户看的那句兜底文案（`_LOCAL_ENV_FACTS_FALLBACK`）**不进**助手上下文，即"用户看到的说明"与"助手看到的输入"在此处不一致。后果轻微（助手大概率忽略空串），登记备查、本次不修。
 
 ### 3.4 条件路由
 
@@ -532,7 +547,11 @@ class GlobalState(TypedDict):
     last_files_written: List[str]            # 上一轮 coder 改动的文件列表（供 execution append 写进 FixLoopRecord.files_touched）；单点写 last-write-wins，绝不加 reducer
 
     # --- Sprint 7 只读环境探测结论（S7-06，⚠ 2026-08-04 补：v1.3 回填 §7.5 时漏了本镜像）---
-    # resource_scout 单点写（从 ReAct 工具历史确定性提取，非 LLM <result> 字段）；planning 单点读。
+    # resource_scout 单点写（从 ReAct 工具历史确定性提取，非 LLM <result> 字段）；GlobalState 侧
+    # planning 单点读，但该值经 planning 的 interrupt payload 中继给**第二个消费方**——审核页的
+    # 讨论助手（`_format_plan_context` 第 4 键，S7-08；见 §3.3 末注，2026-08-07 补记）。
+    # ⚠ 两条出口的"未知"表示法刻意不同：给规划模型的上下文**为空即不写该键**，给人/给讨论助手的
+    # interrupt payload **恒写、空串兜底**（core/nodes/planning.py:440-441 对 :988）。
     # 单值 last-write-wins，**绝不加 reducer**；旧 checkpoint 无此键由消费侧 .get("local_env_facts", "") 兜底。
     local_env_facts: str                 # 预渲染多行字符串（本机实测环境事实），空串即表示"未知"（core/state.py:318）
 
@@ -609,7 +628,7 @@ auto_reproduction/
 │   │   ├── __init__.py
 │   │   ├── paper_input.py        # 页面1: 论文输入
 │   │   ├── analysis_progress.py  # 页面2: 分析进度
-│   │   ├── plan_review.py        # 页面3: 计划审核（S7-08 起含"本机实测情况 + 本机适配说明"只读展示块）
+│   │   ├── plan_review.py        # 页面3: 计划审核（S2-12 起含与规划模型多轮对话的"讨论助手"面板，替代原一次性修改文本框，见 §3.3 末注；S7-08 起含"本机实测情况 + 本机适配说明"只读展示块）
 │   │   ├── execution_monitor.py  # 页面4: 执行监控（含 interrupt#2 三选项 + interrupt#3 用户输入面板）
 │   │   ├── result_report.py      # 页面5: 结果报告
 │   │   └── task_list.py          # 任务列表与重连入口
@@ -836,6 +855,13 @@ v2 版本将支持 Docker 容器作为远程执行沙箱，提供更强的隔离
 - **拦截点位置是硬要求**：必须在解释器解析之后、子命令实际执行之前早退（`core/nodes/execution.py:995`）。因为既有早退分支全部在"结果并入台账"之前 ⇒ 被拒命令**不进 `run_results`、不进 `step_ledger`**，因而不污染 `exit_ok`、不被步骤对账当成"完成"。**放错位置，这条硬防线会自己制造假绿。**
 - **提示词写形态、不写阈值数字**：执行冻结区只写"行内 `-c` 只用于简短探针，需要写文件或塞成段实现的一律先落成脚本再运行"。不写数字有两条独立理由——① 正文里的数字与代码常量是同一事实的两份拷贝、无任何机械链条绑定，下一个调值的人改了常量提示词就无声说谎；② LLM 数不准自己正要生成的载荷有多少字符，给一个它算不出来的预算等于没给。**这句提示词是降低误伤成本的效率措施，永远不是保证；硬保证 100% 来自工具层拒绝。**
 - **已知且被接受的残留**：极短的写码（约 30 字符量级）任何可行阈值都拦不住。这是"单一规则、拒绝动词枚举"的已知代价，**不得以此为由回头加动词枚举**。
+- 🔴 **验证状态：离线已验证 / 生产未验证，且当前结构上无法验证（架构师裁定 2026-08-07）**。
+  - **事实**：这条硬防线**至今没有一次生产路径上的实际触发记录**。全部信心来自离线用例（真起子进程喂原始罪证载荷 + 正负边界组，非 mock）——够强，但不等于生产路径验过。
+  - **⚠ 关键：那个"触发 0 次"不是观测结果，是仪器恒读 0。** 拒绝走 `run_in_sandbox` 工具闭包内的早退分支（`core/nodes/execution.py:996-1004`），而**早退位置在 `collector.run_results` / `step_ledger` 写入之前本身就是上面那条硬要求**；`exec_logs/round_{N}.log` 的内容又**恰恰只由 `run_results` + `prep` 渲染**（`_persist_round_log` → `_build_error_first_log`，`:2375-2412` / `:2332-2372`）⇒ **一次拒绝在物理上不可能出现在 round log 里**。用 round log 统计拒绝次数，读到的 0 与真实触发次数**无关**。
+  - **也没有第二处留痕**：拒绝时的 `logger.warning`（`:997`）——全仓无 FileHandler 配置，不落盘；活动流（`core/activity_stream.py`）自述"不持久化、不进 checkpoint、不进 state"且只采 `on_tool_start`（采不到工具返回）；ReAct 子图 `graph.compile()`（`core/react_base.py:803`）**无 checkpointer**，承载拒绝文案的 ToolMessage 随节点调用结束即灭。⇒ **一次工具层拒绝在本系统里目前留下零持久痕迹。**
+  - **⇒ 口径裁定**：在补上留痕通道之前，**多次真跑读到 0 一律不构成"已验证"的升级依据**——把一台恒读 0 的仪器多读几次，得到的仍是 0，信息量为零，却会把"未验证"写成"已验证"。这与 S7-06「工具做好了但 agent 从不调用、真跑触发 0 次」**不可类比**：那条链路的结论落进 `local_env_facts`（进 state、进 checkpoint、可回查），所以那个 0 是真观测；本条没有这个条件。
+  - **补通道的最小方案（已裁定方向，代码待立项）**：在工具闭包内加一个**旁路**收集器（拒绝原因 + 脱敏后的命令前缀），**只供 `_persist_round_log` 渲染成一个非空才出现的独立小节，绝不进 `run_results` / `step_ledger`** ⇒ 上面那条"拒绝不进台账"的硬约束一字不动，而痕迹落进每次真跑必产、已被当过三次取证现场的 `exec_logs/round_{N}.log`。零新增 state 键、零 checkpoint 负担、零冻结前缀扰动；副作用有益（coder 从此看得到 execution 撞过这道防线）。**已否决的两条**：①进 state 加跨轮计数器（要改 `core/state.py` + 跨 checkpoint 累计，多一层抽象只换来一个总数）；②给 logging 配 FileHandler 落盘（跨切面，与现有归档体系不对齐）。
+  - **另换一个有信息量的指标**：拒绝次数是离散且期望为 0 的量，天生难以证伪。更该统计的是**载荷长度到阈值的余量分布**——把每次真跑里所有行内 `-c` 的载荷长度取出来，对着 `_INLINE_PY_MAX_CHARS` 看还差多远。它**对已归档的历次真跑可零成本回溯计算**（round log 里逐条记着真 argv），且能区分"agent 离这条线很远"与"差一点就撞上"，而这两种情况对防线的意义完全不同。
 
 **(b) shell 元字符显式拒绝（S7-12）**——把「悄悄不生效」改成「明说不支持 + 指路」：
 
@@ -1218,13 +1244,20 @@ def call_with_structured_output(llm, prompt, output_schema, max_retries=3):
 #### LLM 上下文窗口溢出应对
 
 ```
-预防层: 调用 LLM 前估算 token 数，超限时主动截断/分段
+预防层: 调用 LLM 前估算 token 数，超限时主动截断/分段    ← ⚠ 尚未实现，见下方标注
 应对层: paper_analysis → 切换为 brief + 关键章节摘要
         coding → 拆分为模块逐个处理
         planning → 精简输入只保留关键字段
 兜底层: 分段后仍溢出，记录错误并生成"简化版"输出
 ```
 
+> 🔴 **「预防层」尚未实现，已登记 backlog（2026-07-29 Maria 裁定「下个 sprint」，与 token / 成本追踪 + 可观测性合并立项；2026-08-07 补标）**：`core/llm_client.py:442-449` 定义了 `estimate_tokens`、`:452-455` 定义了 `check_context_limit`，但 **`check_context_limit` 在生产代码里零调用点** —— 全仓命中只有自身定义、`tests/test_sprint1_smoke.py:67`/`:69`/`:74-75`（仅 import + `callable` 断言）与若干 sprint1 历史文档，`core/` `ui/` `sandbox/` `app.py` **零命中**。即「能估」但「没接」。
+>
+> **真实运行的只有另外两条，都不是预防层**：①**事后分类** `LLMContextOverflowError`（`core/errors.py:84` 定义、`core/llm_client.py:174` 抛出）；②工具结果**定长截断** `config.TOOL_RESULT_MAX_LENGTH`。**预算口径亦与 token 无关，按 LLM「调用次数」计**：`config.py` `MAX_TOTAL_LLM_CALLS`、`core/state.py` `retry_budget_remaining`、`core/nodes/execution.py` `total_calls = react_rounds_used + llm_calls_used`。
+>
+> **不补实现的理由（PM 建议、Maria 采纳）**：真做「调用前估算」的最大价值不在截断（事后 `LLMContextOverflowError` 已能兜），而在**成本追踪**；而成本追踪已定为可观测性立项内容 ⇒ 两者应合并立项，不宜在此单独补一个没有消费方的估算函数（反过度工程，MEMORY §4.1）。
+>
+> ⚠ **本条的挂账史本身是个教训**：`docs/sprint7/global-prd-review.md` §三 第 2 条 2026-07-29 就已核实并给出处置建议，Maria 当日即裁「下个 sprint」；但 2026-08-04 那次 v1.4 回填的任务原文明写「须一并处置不符 4 / 5 / 6」，**实际只做了 4 和 6，本条（不符 5）漏做** ⇒ 「已裁决」与「已落到读者看得见的地方」是两件事，前者不蕴含后者（同 §4.2.2 兼容性维度那条：登记在 sprint 文档里等于没登记）。
 #### 节点函数统一错误处理模板
 
 ```python
@@ -1463,3 +1496,13 @@ prepare_venv() 失败
 *2026-07-29 更新（v1.3，Sprint 7 收口批量同步 · S7-06 / S7-07 代码交付后回填）：`docs/sprint7/prd.md` 已于 2026-07-28 定稿 v1.0，按本文档「代码交付后回填」制回填两条已 commit 的交付（S7-06 `d7cd8d3` 只读环境探测、S7-07 `8cf95c7` 探测改必做步骤），修订清单详见 `docs/sprint7/global-prd-review.md`。（1）§3.1 resource_scout 职责行：补"给出仓库结论前必做一步只读环境探测"，输出补 `local_env_facts`（`core/nodes/resource_scout.py:526-531`）。（2）§3.2.1 各节点配置表 resource_scout 行：工具 **5→6**（新增 `probe_environment`，装配处 `core/nodes/resource_scout.py:711-717`）、`max_rounds` **20→30**（`config.py:70`，S7-07）、预期消耗 4-7→4-8；表下新增 S7-06 / S7-07 注（工厂闭包绑定 `workspace_dir` 致 `bind_tools` 前缀"破一次"属一次性静态变更；S7-07 删除段内轮次紧张暗示是主因、放大轮次上限是保险）。（3）§5 模块结构树新增 `core/tools/env_probe_tool.py`。（4）§7.5 摘除「设计已裁决 / 代码未交付」状态行，改为「代码已交付」并回填源码行号锚点（允许清单 15 条 `:75-82`、判定 `:85-86` / `:204-210`、工具工厂 `:177-251`、超时 `:95`、返回端上限 `:107`、结论落点 `core/state.py:296` / `:389` 与 `core/nodes/planning.py:308` / `:357-358` / `:723`），并登记一处**已知未修缺口**：摘要渲染端 `_PROBE_OUTPUT_MAX_CHARS=400`（`core/nodes/resource_scout.py:57`，`:496` 按头截断）小于返回端 2500 字节，会把返回端保尾留下的 `torch` / `transformers` 重新按头切掉（R-S7-25 渲染端复发，修法已裁但代码未交付）。（5）§12.5 resource_scout 搜索策略：明确只读环境探测**不参与**三级降级链、探不到不触发 `from_scratch`。（6）§12.9 错误分类全景 resource_scout 行：补环境探测类失败（命令被拒 / 超时 / 本机无该命令 / 输出为空）一律结构化返回、不进 `degraded_nodes`、`local_env_facts` 空串即"未知"不造哨兵值。（7）版本头 v1.2→v1.3、最后更新 07-28→07-29。**本次明确不含 S7-08**（planning 平台感知规划）——其 PRD §10 与架构 §18 已定稿但 `scale_reduced` / `local_fit_note` 全仓 grep 零命中、代码零行，按回填制不预写；待回填清单见 `docs/sprint7/global-prd-review.md`。*
 
 *2026-08-04 更新（v1.4，Sprint 7 S7-08 ~ S7-13 六个 commit 的交付后回填 + 一条假陈述订正）：v1.3 停在 2026-07-29，此后 `8b254e0`（S7-08 planning 平台感知规划）/ `c480990`（S7-10 计划与编码执行落点对齐）/ `f5a68d7`（S7-11 执行完整度进判定 + S7-12 shell 元字符拒绝，两批合并提交）/ `717ccb6`（BUG-S7-11-01 完成度分母修复）/ `4a7420f`（S7-13 agent 指标汇报出口）/ `1e2577d`（S7-13 砍掉无消费点的 `metrics[].source` 字段）**六个 commit 一条未回填**，按本文档「代码交付后回填」制本次一次性清账。**全部"已实现"判定均逐处上磁盘核实（附 文件:行号），不采信 commit message、不拿文档证明文档。**（1）🔴 **订正一条假陈述**：§7.5 末尾的「已知缺口（当前实现，未修）」称摘要渲染端 `_PROBE_OUTPUT_MAX_CHARS=400`（`core/nodes/resource_scout.py:57`）小于返回端 2500——**磁盘实为 `:68` = 2600，且新增总长上限 `_PROBE_DIGEST_MAX_CHARS=8000`（`:80`），S7-08 早已交付**。原文以删除线保留留痕，并补记本次确立的结构性原则「外层上限必须 ≥ 内层上限，否则内层的截断方向选择被外层作废」。**把已修的说成未修比欠账本身更危险**，故列为本次第一项。（2）§3.1 节点定义表三行更新：`planning` 补消费 `local_env_facts` 与三级优先级、产出两个新键；`execution` 补 S7-11 三合取项成功判定与 S7-13 指标汇报出口；`reporting` 补第 4 条正交标注 `scale_reduced`。（3）§3.2.1 表下注新增 S7-11 / S7-13 两条，其中显式记下 `EXECUTION_OUTPUT_SCHEMA` 的 `metrics` 项**只有 `name`/`value`/`group` 三属性**（`source` 已被砍，勿照抄早期设计稿）。（4）§3.2.2 新增「执行完整度进判定（S7-11）」与「agent 指标汇报出口（S7-13）」两段：单点谓词 `_completion_insufficient`、分母改走可执行步数（跨模块单一取数点 `core.state.completion_denominator`）、单轮全量口径、改判走 feedback 通道不走路由旁路、`_audit_declared_steps` 纯观测留痕；S7-13 的两条自律（主通道零指标时不采信自报、分组指标刻意不合并两个来源）。（5）§3.4 execution 后路由补 S7-11 的新回边成因。（6）§4 状态镜像三处订正/补齐：`ReproductionPlan` 补 sp5 的 `expected_results` Dict→List 与 `required_credentials`（**均为 sp5 遗留漏记，本次一并订正**）+ S7-08 两键；`ExecutionResult` 补 sp5 四键（`step_reconciliation` / `budget_truncated` / `metrics_groups` / `degraded_credentials`，**同为 sp5 遗留漏记**）+ S7-11 的 `planned_actionable` 子键；`GlobalState` 补 `local_env_facts`（**v1.3 回填 §7.5 时漏了本镜像**）。（7）§5 模块结构树补 5 个磁盘上存在却从未入树的模块——`core/plan_checks.py` / `core/honesty_audit.py` / `core/activity_stream.py` / `ui/term_map.py` / `ui/pages/task_list.py`，职责表新增 `core/plan_checks.py` 行。该树 2026-07-05 曾按磁盘实况重写过一次，此后新增模块未同步。（8）新增 **§7.6 执行通道的命令边界**：S7-10 内联写码硬拦截（界线走"内容从哪来"、单一规则不做动词枚举、拦截点必须在并入台账之前、提示词写形态不写阈值数字）+ S7-12 shell 元字符显式拒绝（沙箱不经 shell ⇒ 元字符本就不生效却回 exit 0，命中即拒 + 可行动文案），并写明两条谓词同址 `core/plan_checks.py`、计划期 W4/W5 与执行期各查一次。（9）§12.9 execution 行补 `INCOMPLETE_EXECUTION` 及"不复用 NO_METRICS"的三条理由；§12.10 代码执行阶段表补内联写码与 shell 元字符两行。（10）版本头 v1.3→v1.4、最后更新 07-29→08-04。**本次明确不含 Sprint 8**——sp8 生产代码零行，按回填制回填前提不具备，其设计仍以 `docs/sprint8/architecture.md` 为准，待批次交付后再回填本文档。（11）**顺带订正 v1.3 回填留下的一整批漂移锚点**：`core/nodes/resource_scout.py` 的 `:526-531`→`:573-580`（`_with_env_facts`）、`:711-717`→`:758-765`（工具装配）、`:104-109`→`:136-147`（探测段落）；`core/state.py` 的 `:296`→`:318`、`:389`→`:437`；`core/nodes/planning.py` 的 `:308`→`:391`、`:357-358`→`:440-441`、`:723`→`:814`——**全部因 S7-08（`8b254e0`）扩写这三个文件而整体下移**，v1.3 写下时是对的、之后没人回头核。`core/tools/env_probe_tool.py` 的六处锚点经核实**未漂移**（该文件本轮未被改动）。⚠ **教训**：行号锚点会随每次交付漂移，"回填制"下它天然是易腐信息 ⇒ **判定某实现是否存在应以函数名 / 常量名为准，行号只作定位辅助**；本次已把关键锚点尽量改写为"函数名 + 行号"的成对形式。两条历史更新日志（v1.3 / 本条以上部分）中的旧行号**刻意不改**——它们是当时写下什么的历史记录，不是现状陈述。*
+
+*2026-08-07 更新（v1.5，补做 v1.4 漏掉的那一项：§12「LLM 上下文窗口溢出应对」预防层的超前承诺标注）：**本次不含任何 Sprint 8 回填**（sp8 批次 1a 生产改动仅 `core/nodes/execution.py` 执行侧工具列 3→5，其余批次未交付，按「代码交付后回填」制时机未到）⟦**2026-08-07 同日口径订正**：这句话的**结论**已被 v1.6 推翻——那个 3→5 是**现状数字**，不该跟"设计说明"捆在一起延后，现已订正进 §3.2.1 表。原文一字不改保留（changelog 只追加不回改），此处只加指针防止与正文打架，原委见 v1.6 ⟦同日追加⟧段⟧。**唯一改动**：§12「LLM 上下文窗口溢出应对」代码块的「预防层: 调用 LLM 前估算 token 数，超限时主动截断/分段」一行**加行内提示 + 块后完整标注**，写明该层**尚未实现、已登记 backlog**（2026-07-29 Maria 裁「下个 sprint」，与 token / 成本追踪 + 可观测性合并立项），并附三类磁盘证据：①`estimate_tokens`(`core/llm_client.py:442-449`) / `check_context_limit`(`:452-455`) 已定义但**生产侧零调用点**（`core/` `ui/` `sandbox/` `app.py` 全零命中，只有 `tests/test_sprint1_smoke.py` 的 import + `callable` 断言）；②真实运行的只有事后分类 `LLMContextOverflowError` 与工具结果定长截断，均非预防层；③预算按**调用次数**计、与 token 无关。**体例参照 `product-design-specification.md:239`「兼容性维度」那条**（同为「已裁决 backlog 但正文无标注」）。⚠ **这条是 v1.4 那次回填的漏项**：`docs/TODO.md:1095` 的任务原文明写「回填时须一并处置不符 4 / 5 / 6」，v1.4 实际只做了不符 4（§7.5 假的「代码未交付」）与不符 6（产品设计 §4.2.2 兼容性维度），**不符 5（本条）漏做**，2026-08-07 主控清账时挖出。⇒ 记一条口径：**「Maria 已裁决」不等于「读者在文档里看得见」**，处置清单必须逐条对回落点，不能按「大部分做完了」结案。*
+
+*2026-08-07 更新（v1.6，三件事：一处「代码做了、全局文档没写」的回填 + 一条防线验证状态的口径裁定 + ⟦同日追加⟧ 一处现状数字订正）。**关于 Sprint 8 的口径（本次经 Maria 拍板改准）：现状数字照实记，设计说明按制度延后——这是两件事，不再笼统写成"本次不含任何 Sprint 8 回填"**（原委见文末⟦同日追加⟧段）。*
+***一、回填「审核页讨论助手」**（`docs/sprint7/global-prd-review.md` §二 清单 #4，该表 10 条里当时唯一未结清的一条）：代码自 **Sprint 2（S2-12）** 起就在磁盘上、S7-08 又扩过它的上下文，而本文档此前 grep `plan_context` / 「讨论」**零命中** —— 与 §6.2 硬件探测那条**同型反向**（那条是文档写了代码没做，这条是代码做了文档没写）。（1）§3.3 人在回路机制的「修改」条：由「调整计划内容后重新提交」改为真实形态——与规划讨论助手多轮对话敲定方向 → 同一模型总结「修改方向纪要」→ 以纪要（**不是对话原文**）作 `user_feedback` 走 `resume_with({"decision":"revise"})`。（2）§3.3 末新增「审核页讨论助手」注，写清三条契约：**对话不直接产出计划**（避免对话与 graph 各出一份不一致的计划，落定路径唯一）、**grounding 恰四键**（前三键与 `planning` 重规划同源刻意对齐；第 4 键 `local_env_facts` 为 S7-08 补入，理由是助手看不到本机事实会建议这台机器跑不动的方案；`tests/test_plan_review_logic.py::test_cp_5_10_4_format_plan_context_exactly_four_keys` 以**精确等值**守住"恰四键"）、**边界语第 4 条**（上下文是原样 JSON 全是英文键名，故禁助手复述字段名；静态守门扫不到运行时文本，这条只是 prompt 契约不是保证）；并注明对话不持久化 / thread 变更即清空 / 模型不可用时降级为一次性文本框，预算关系交叉引用 §12.7 注脚。（3）§4 状态镜像 `local_env_facts` 注订正：原写「planning 单点读」不准确——GlobalState 侧确为单点读，但该值经 interrupt payload **中继给第二个消费方**（审核页讨论助手）。（4）§5 模块结构树 `plan_review.py` 行补 S2-12 讨论助手面板。**（5）回填时新发现并登记一处未修的表示法不对称**：同一个 `local_env_facts`，给规划模型的上下文**为空即不写该键**（`core/nodes/planning.py:440-441`，且提示词有明确条款告诉模型"没这项就写未探测"），而 interrupt payload **恒写、空串兜底**（`:988`）；讨论助手取的是后者且再套一层 `or ""` ⇒ 探测失败时助手看到一个**空串键、且没有任何一句话告诉它空串是什么意思**，同时给用户看的那句兜底文案并不进助手上下文。后果轻微，登记备查、本次不修。*
+***二、§7.6(a) 新增「验证状态」条 —— 推翻测试工程师提出的升级口径**（其依据见 `docs/sprint7/test-reports/2026-08-07_s710-t69-realrun-handoff.md` §3）。该报告按 `docs/sprint7/dev-plan.md:2964` 的要求补记「工具层拒绝触发次数 = 0」，并建议「累计 2~3 次真跑仍为 0 即升级为『上游约束已使 C 成为兜底而非常规路径』」。**裁定：维持"不为它单独烧配额"，推翻"多次读到 0 即升级"。** 理由是**那个 0 不是观测结果、是仪器恒读 0**——拒绝走工具闭包内的早退分支（`core/nodes/execution.py:996-1004`），而"早退必须在 `run_results` / `step_ledger` 写入之前"本身就是 §7.6 立的硬要求；`exec_logs/round_{N}.log` 又恰恰只由 `run_results` + `prep` 渲染（`_persist_round_log` → `_build_error_first_log`）⇒ **一次拒绝在物理上不可能出现在 round log 里**。且无第二处留痕：`logger.warning` 全仓无 FileHandler 不落盘、活动流自述不持久化且只采 `on_tool_start`、ReAct 子图 `graph.compile()` 无 checkpointer 故 ToolMessage 随调用即灭。⇒ **一次工具层拒绝目前在系统里零持久痕迹**，把恒读 0 的仪器多读几次仍是 0、信息量为零。与 S7-06 那个"触发 0 次"**不可类比**（那条的结论落进 `local_env_facts` 进了 checkpoint、可回查，是真观测）。同条内一并裁定**补通道的最小方案**（工具闭包内加旁路收集器 → 只供 round log 渲染成非空才出现的小节，绝不进台账；否决"进 state 加计数器"与"给 logging 配 FileHandler"两条）与**一个更有信息量的替代指标**（行内 `-c` 载荷长度到 `_INLINE_PY_MAX_CHARS` 的余量分布，对已归档真跑可零成本回溯计算）。*
+
+***三、⟦同日追加·Maria 2026-08-07 拍板⟧ §3.2.1 execution 行工具集 3 → 5 的现状数字订正，并同批改准「不含 sp8 回填」的口径。** 磁盘落点 `core/nodes/execution.py:1582-1605`（新增 `read_code_file` / `list_dir`，sp8 批次 1a 挂入）。**⚠ 该代码改动截至本次落盘仍在工作区、未提交**，Maria 知情并据此拍板。**唯一改动是把 3 写成 5 并附装配处行号**——**刻意不写**接入理由、不写两个闸的边界、不写任何 S8-03 设计内容，那些等 sp8 收口后按既有回填制补入 §3.2.2（表内已留删除标记，届时一并摘除）。*
+***为什么推翻同日早些时候（v1.5 / v1.6 开头）"本次不含任何 Sprint 8 回填"那个判断**：把「现状数字」与「设计说明」笼统打包成一句"时机未到"，会让 §3.2.1 这张**读者拿来判断"现在是什么"的现状表**停在一个错的数字上——那与 §7.5 曾经白纸黑字写着"该文件当前尚不存在"而文件已在磁盘上，是**完全同族、方向相反**的同一种失真。Maria 的原话是根因：**这两天挖出的问题追到底都是"文档上的数字跟磁盘对不上"，而这些几乎全是"等一等再改"等出来的——「本次未跑」「待交付后回填」「待确认 4 项」，写的时候都想着回头再改，然后就没有然后了。** ⇒ **确立口径：「代码交付后回填」制约束的是"要不要写这个功能的设计说明"，从不允许"让现状表停在错的数字上"。数字与磁盘不符属事实错误，任何时候都即时订正，不受批次边界与提交状态约束。***
+***版本号处理**：**维持 v1.6，不另起 v1.7**——本次与 v1.6 同日、同一轮工作、同一份文档，v1.6 尚未被任何外部引用固化；沿 2026-07-28 那次「本次不升版本号的理由」先例（版本号绑"一批同步"而非"一次编辑"），避免版本号通胀。故本条并入 v1.6 日志，以⟦同日追加⟧标出批次边界，不掩盖它是拍板后补的这一事实。*

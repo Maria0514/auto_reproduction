@@ -76,13 +76,32 @@ def test_cp_b2_1_write_creates_parent_dirs(workspace):
     assert target.exists()
 
 
-def test_cp_b2_1_write_absolute_outside_rejected(workspace):
+def test_cp_b2_1_write_absolute_outside_rejected(workspace, tmp_path):
+    """工作区之外的**绝对路径**必须被拒，且一个字节都不许落盘。
+
+    落点用 tmp_path 下、被 patch 的 WORKSPACE_DIR **之外**的绝对路径，语义与旧写法
+    `/tmp/evil.py` 完全一致（绝对路径 + 不在工作区内 + 断言未落盘），但落点随用例隔离。
+
+    为什么必须隔离（P-S8-20 实证）：旧写法把断言挂在**全局固定路径**上。做验红时（把
+    `_is_within_workspace` 改成恒 True）该用例真把 `/tmp/evil.py` 写了出来，**还原生产代码
+    后它依然红**——文件校验双 OK 而测试不绿，白排查一轮。断言语义一分未降，只是落点不再是
+    进程间共享的全局状态。
+    """
+    ws, _code_dir = workspace
+    outside = tmp_path / "outside" / "evil.py"
+    # 前置自证：该路径确实在工作区之外（否则本用例守的东西就跑偏了）
+    assert not outside.is_relative_to(ws)
+    assert outside.is_absolute()
+    assert not outside.exists()
+
     tool = make_write_code_file_tool()
-    out = tool.invoke({"path": "/tmp/evil.py", "content": "x"})
+    out = tool.invoke({"path": str(outside), "content": "x"})
+
     payload = json.loads(out)
     assert payload["success"] is False
     assert "越界" in payload["error"]
-    assert not Path("/tmp/evil.py").exists()
+    assert not outside.exists()
+    assert not outside.parent.exists()  # 连父目录都不许被 mkdir 出来
 
 
 def test_cp_b2_1_write_dotdot_escape_rejected(workspace):

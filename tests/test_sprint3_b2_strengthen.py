@@ -85,10 +85,19 @@ def test_bug_s1_02_list_output_parseable_by_extract(workspace):
     assert "src/" in parsed["entries"]
 
 
-def test_bug_s1_02_error_json_parseable_by_extract(workspace):
-    """工具的错误 JSON（success=False）同样合规可解析（错误也是结构化往返）。"""
+def test_bug_s1_02_error_json_parseable_by_extract(workspace, tmp_path):
+    """工具的错误 JSON（success=False）同样合规可解析（错误也是结构化往返）。
+
+    触发越界错误的落点用 tmp_path 下、WORKSPACE_DIR 之外的绝对路径（语义同旧写法
+    `/tmp/evil.py`：绝对路径 + 不在工作区内），但不再依赖全局固定路径——见
+    `test_sprint3_b2.py::test_cp_b2_1_write_absolute_outside_rejected` 的 P-S8-20 说明。
+    """
+    ws, _code_dir = workspace
+    outside = tmp_path / "outside" / "evil.py"
+    assert not outside.is_relative_to(ws) and outside.is_absolute()
+
     tool = make_write_code_file_tool()
-    out = tool.invoke({"path": "/tmp/evil.py", "content": "x"})
+    out = tool.invoke({"path": str(outside), "content": "x"})
 
     msg = ToolMessage(content=out, name="write_code_file", tool_call_id="c3")
     parsed = extract_last_tool_result([msg], "write_code_file")
@@ -96,6 +105,7 @@ def test_bug_s1_02_error_json_parseable_by_extract(workspace):
     assert parsed is not None
     assert parsed["success"] is False
     assert "越界" in parsed["error"]
+    assert not outside.exists()  # 顺带守住：报错的同时一个字节都没落盘
 
 
 def test_bug_s1_02_str_dict_counterexample_fails_to_parse():
