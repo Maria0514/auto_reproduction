@@ -74,6 +74,7 @@ from core.state import (
     GlobalState,
     completion_denominator as _completion_denominator,
 )
+from core.tools.code_fs_tools import make_list_dir_tool, make_read_code_file_tool
 from core.tools.interaction_tools import make_request_user_input_tool
 from sandbox.local_venv import (
     SandboxPrepareResult,
@@ -1582,6 +1583,25 @@ def _run_execution_agent(
             make_prepare_environment_tool(work_dir, plan, collector, extra_env),
             make_run_in_sandbox_tool(work_dir, collector, extra_env, python_exe_ref),
             make_request_user_input_tool(state.get("credential_degradations") or {}),  # interrupt#3（B2 门禁已过，2026-07-04）
+            # sp8 T-S8-1a-4（S8-03，架构 Q-S8-03 方案 A）：执行环节接入两个**只读**
+            # 文件工具 —— 没有它，agent 既看不到自己刚跑出来的 outputs/、也没法读
+            # 参考仓库里的结果表来诊断问题，"让执行环节自己判断复现结果"整件事无从谈起。
+            # 🔴 **不新造工具**（PRD §4.3 明令）：直接复用 coding 侧既有的两个工厂。
+            #
+            # 🔴 **两个闸物理分处两文件，永远不许合并**（架构 §3.3）：
+            #   ┌ 工具边界 = "agent 能读什么" → code_fs_tools._is_within_workspace
+            #   │   作用域 = **整个工作区**（含参考仓库 selected_repo.local_path）。
+            #   │   本次 code_fs_tools.py **一字不改**；明确否决给 make_read_code_file_tool
+            #   │   加 base_dir 在工具层收窄（架构 §3.2 方案 C）——那会砍掉"读参考仓库
+            #   │   诊断问题"的能力，**直接违反 PRD §4.3**。
+            #   └ 证据边界 = "什么能当判定物证" → execution._verify_evidence 第④重
+            #       （批次 2 T-S8-2-5），作用域 = **仅 code_output_dir 之下**。
+            # ⇒ agent 读参考仓库里的结果表**不被拒绝**，但**拿它当物证一律不成立**。
+            #
+            # ⚠ 只读：两个工具都不写盘。"执行环节不得写代码"的硬防线
+            # （is_inline_code_write / 管道重定向拒绝）本次一字不动。
+            make_read_code_file_tool(),
+            make_list_dir_tool(),
         ]
 
         # 装配项 2：消息装配（Prompt Cache 方案 A）。

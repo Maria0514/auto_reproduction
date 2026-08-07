@@ -259,10 +259,36 @@ def test_cp_e2_1_missing_llm_config_set_error_path(caplog):
     assert any("execution ReAct 子图执行失败" in r.message for r in caplog.records)
 
 
-def test_cp_e2_1_three_tools_mounted(monkeypatch, tmp_path):
+def test_cp_e2_1_five_tools_mounted(monkeypatch, tmp_path):
+    """execution ReAct 子图挂载的工具集合（精确相等，非包含）。
+
+    ⚠ sp8 T-S8-1a-4（S8-03）换发：**3 个 → 5 个**。原名
+    ``test_cp_e2_1_three_tools_mounted``，改名仅因"three"与断言内容不符
+    （全仓无其它引用点，已 grep 确认）。
+
+    **只换不弱化**（dev-plan §0.3 第 3 条）：
+      - 仍用 ``==`` **精确集合语义**，🔴 **禁止放宽为 ``>=`` / ``issubset``**
+        ——那样"有没有被顺手多挂一个工具"就没人守了；
+      - 断言**强度不降反升**：新增装配顺序断言（按 ``tool.name``，不按下标）
+        + 只读工具不得引入写盘工具的负向断言。
+
+    新增的两个工具（``read_code_file`` / ``list_dir``）来自
+    ``core/tools/code_fs_tools.py`` 既有工厂，**不新造工具**（PRD §4.3 明令）。
+    🔴 **``write_code_file`` 绝不出现在执行侧** —— "执行环节不得写代码"是硬防线。
+    """
     cap = _capture_assembly(monkeypatch, _base_state(), str(tmp_path / "wd"), _plan())
     names = {t.name for t in cap["tools"]}
-    assert names == {"prepare_environment", "run_in_sandbox", "request_user_input"}
+    assert names == {
+        "prepare_environment", "run_in_sandbox", "request_user_input",
+        "read_code_file", "list_dir",
+    }
+    # 装配顺序：既有三个在前且顺序一字不动，新增两个只读工具追加在后。
+    assert [t.name for t in cap["tools"]] == [
+        "prepare_environment", "run_in_sandbox", "request_user_input",
+        "read_code_file", "list_dir",
+    ]
+    # 负向：执行侧不得挂任何写盘工具（AC-S8-05 硬防线的装配层自证）。
+    assert "write_code_file" not in names
 
 
 def test_cp_e2_1_system_message_byte_identical_across_tasks(monkeypatch, tmp_path):
