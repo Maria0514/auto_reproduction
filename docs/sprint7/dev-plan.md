@@ -202,9 +202,9 @@ graph TD
 4. **零逻辑改动**——所有下游读常量自动传导（`state.py:340` `retry_budget_remaining=MAX_TOTAL_LLM_CALLS` 初值、planning payload 展示、面板分母、S7-01 revise 重置、S7-03 收窄公式均读常量，架构 §3.1 已逐条核派生依赖，无隐式比例依赖被打破）。
 
 **自测检查点**：
-- [ ] CP-0.1-1 13 常量值断言：逐个断言翻倍新值（`MAX_TOTAL_LLM_CALLS==240` / `MAX_DEV_LOOP_LLM_CALLS==120` / `MAX_NODE_LLM_CALLS==20` / `MAX_FIX_LOOP_COUNT==20` / `DEV_LOOP_MIN_CALLS_PER_ROUND==4` / `CAP==60` / 各节点轮次翻倍值），类型仍 int/Path（AC-S7-06 常量面）
-- [ ] CP-0.1-2 **联动等式 + 强约束断言**：`REACT_MAX_ROUNDS_EXECUTION_CAP == MAX_DEV_LOOP_LLM_CALLS // 2`（60==60）；`MAX_DEV_LOOP_LLM_CALLS < MAX_TOTAL_LLM_CALLS`；`REACT_MAX_ROUNDS_EXECUTION <= REACT_MAX_ROUNDS_EXECUTION_CAP`（AC-S7-06 联动面）
-- [ ] CP-0.1-3 config 内 4 处注释无旧值字面残留（`grep "60 < 120"` / `"=120"` / `"60/2"` 在 config.py 相关行零命中）
+- [x] CP-0.1-1 13 常量值断言：逐个断言翻倍新值（`MAX_TOTAL_LLM_CALLS==240` / `MAX_DEV_LOOP_LLM_CALLS==120` / `MAX_NODE_LLM_CALLS==20` / `MAX_FIX_LOOP_COUNT==20` / `DEV_LOOP_MIN_CALLS_PER_ROUND==4` / `CAP==60` / 各节点轮次翻倍值），类型仍 int/Path（AC-S7-06 常量面） ⟦补勾 2026-08-06 @主控：`tests/test_sprint5_t11_config.py:20/33/57-61` 逐条断言翻倍新值（CAP60 / EXEC20 / NODE20 / TOTAL240 / FIX20 / DEV_LOOP120 / FLOOR4）；2026-08-06 实测绿⟧
+- [x] CP-0.1-2 **联动等式 + 强约束断言**：`REACT_MAX_ROUNDS_EXECUTION_CAP == MAX_DEV_LOOP_LLM_CALLS // 2`（60==60）；`MAX_DEV_LOOP_LLM_CALLS < MAX_TOTAL_LLM_CALLS`；`REACT_MAX_ROUNDS_EXECUTION <= REACT_MAX_ROUNDS_EXECUTION_CAP`（AC-S7-06 联动面） ⟦补勾 2026-08-06 @主控：联动等式 `tests/test_sprint5_t25_budget_link.py:242`（CAP*2==DEV_LOOP）+ `:226`；强约束 DEV_LOOP<TOTAL 见 `tests/test_sprint3_a1.py:121` / `test_sprint3_a_boundary.py:107` / `test_sprint3_f1.py:258`；2026-08-06 实测绿⟧
+- [x] CP-0.1-3 config 内 4 处注释无旧值字面残留（`grep "60 < 120"` / `"=120"` / `"60/2"` 在 config.py 相关行零命中） ⟦补勾 2026-08-06 @主控：2026-08-06 实测 `config.py` 旧值字面（`=120` / `60 < 120` / `60/2`）零命中⟧
 
 ### 任务 T-S7-0-2：planning / graph 外部注释同步（S7-01 翻倍，架构 §3.3）
 
@@ -220,8 +220,8 @@ graph TD
 3. `graph.py:73` **核对**：架构 §3.3 列此行为"MAX_TOTAL_LLM_CALLS=120"注释同步项，但**实测该行内容为 `MAX_TOTAL_LLM_CALLS 总预算 + cancel 主动出口三重自然兜底`，不含 "=120" 字面**（见 §14 落点勘误 P-1）——**无需改**，仅确认无旧值字面残留即可。
 
 **自测检查点**：
-- [ ] CP-0.2-1 `planning.py` 无 "=120" 旧值注释残留（`grep "=120" core/nodes/planning.py` 零命中）；`graph.py:73` 确认无旧值字面（勘误 P-1 已核）
-- [ ] CP-0.2-2 planning payload `max_total_llm_calls` 值随常量翻倍为 240（读常量自动传导，非注释）
+- [x] CP-0.2-1 `planning.py` 无 "=120" 旧值注释残留（`grep "=120" core/nodes/planning.py` 零命中）；`graph.py:73` 确认无旧值字面（勘误 P-1 已核） ⟦补勾 2026-08-06 @主控：2026-08-06 实测 `core/nodes/planning.py` `=120` 零命中；`core/graph.py:70-76` 无旧值字面（只提常量名）⟧
+- [x] CP-0.2-2 planning payload `max_total_llm_calls` 值随常量翻倍为 240（读常量自动传导，非注释） ⟦补勾 2026-08-06 @主控：`core/nodes/planning.py:979` 读常量传导（非注释）；`tests/test_sprint2_c1_e2e.py:212` 断言 payload 值 == MAX_TOTAL_LLM_CALLS⟧
 
 ### 任务 T-S7-0-3：硬编码断言同步 + 全量回归（S7-01 翻倍，架构 §3.4）
 
@@ -238,9 +238,9 @@ graph TD
 4. 全量非 e2e 回归零失败（账目精确闭合）。
 
 **自测检查点**：
-- [ ] CP-0.3-1 §3.4 清单逐文件断言同步完成（`grep -rn` 精确清点，无遗漏旧值断言）
-- [ ] CP-0.3-2 联动公式断言用例（`test_sprint5_t25_budget_link.py`）翻倍后仍绿：`CAP == DEV_LOOP//2` / `DEV_LOOP < TOTAL` 等式两边数字同步为 60==120//2 / 120<240
-- [ ] CP-0.3-3 **全量非 e2e 回归 `.venv/bin/pytest -q -m "not e2e"` 相对 sp6 基线 1951 零退化零失败**（翻倍断言同步毕，账目闭合，AC-S7-06 回归面）
+- [x] CP-0.3-1 §3.4 清单逐文件断言同步完成（`grep -rn` 精确清点，无遗漏旧值断言） ⟦补勾 2026-08-06 @主控：⚠ 证据强度较弱：无单点证据物，由 commit `4dc0a75` 自述（断言同步清单）+ 全量回归零失败佐证。2026-08-06 全量非 e2e 复测 2635 passed / 0 failed⟧
+- [x] CP-0.3-2 联动公式断言用例（`test_sprint5_t25_budget_link.py`）翻倍后仍绿：`CAP == DEV_LOOP//2` / `DEV_LOOP < TOTAL` 等式两边数字同步为 60==120//2 / 120<240 ⟦补勾 2026-08-06 @主控：2026-08-06 实测 `tests/test_sprint5_t25_budget_link.py` 全绿（60==120//2 / 120<240）⟧
+- [x] CP-0.3-3 **全量非 e2e 回归 `.venv/bin/pytest -q -m "not e2e"` 相对 sp6 基线 1951 零退化零失败**（翻倍断言同步毕，账目闭合，AC-S7-06 回归面） ⟦补勾 2026-08-06 @主控：commit `4dc0a75` 记 1990 绿（基线 1951+39）；2026-08-06 全量非 e2e 复测 2635 passed / 0 failed⟧
 
 > **批次 0 收口门**：CP-0.1~0.3 全绿 + 全量非 e2e 回归零失败（AC-S7-06 达标）。**停手等 Maria 确认再开批次 1。**
 
@@ -275,11 +275,11 @@ graph TD
 4. **零改计量口径**（`_dev_loop_llm_calls` 累加 :1828 `_map_execution_result` 一字不动）、**零 react_base 改动**（复用现成 `budget_check_node` :621-629 刹车）、**零 config 常量新增**、**零 state 字段**。
 
 **自测检查点**：
-- [ ] CP-1.1-1 **收窄逻辑单测**（AC-S7-08）：构造 `_dev_loop_llm_calls=118`（逼近 120）+ 联动值 60 的 state → 断言 `_run_execution_agent` 收窄后 `effective_max_rounds == max(1, min(60, 120-118)) == 2`；`dev_calls_so_far=0` → `min(60, 120) == 60`（不逼近时无收窄，退回联动值）
-- [ ] CP-1.1-2 **保底 1 轮**（R-S7-5）：`_dev_loop_llm_calls=120`（已触顶）→ `remaining_sub_budget=0` → `max(1, min(60,0)) == 1`（不退化为 0 轮死锁）
-- [ ] CP-1.1-3 **越界上界断言**（AC-S7-08）：构造"单轮内高频调用"场景，断言总冲过头幅度 ≤ force_finish 1 轮 + metrics 抽取额度（确定性小值，远小于实测 32）
-- [ ] CP-1.1-4 **R-PC4 无扰**：截取两个不同 `_dev_loop_llm_calls` 值下的 execution HumanMessage，`max_rounds` 数字保持联动值恒定（不随 dev_calls 抖动）——收窄未污染 context 通道
-- [ ] CP-1.1-5 **须验红**（沿 sp6 教训）：注掉收窄 clamp 后，CP-1.1-1 断言 `effective_max_rounds` 回到 60、CP-1.1-3 越界回到数十级 → 断言必须变红
+- [x] CP-1.1-1 **收窄逻辑单测**（AC-S7-08）：构造 `_dev_loop_llm_calls=118`（逼近 120）+ 联动值 60 的 state → 断言 `_run_execution_agent` 收窄后 `effective_max_rounds == max(1, min(60, 120-118)) == 2`；`dev_calls_so_far=0` → `min(60, 120) == 60`（不逼近时无收窄，退回联动值） ⟦补勾 2026-08-06 @主控：`test_sprint7_s7_03_max_rounds_clamp.py::test_cp_1_1_1_clamp_narrows_when_dev_calls_approach_ceiling` + `::test_cp_1_1_1_no_narrow_when_dev_calls_zero`；2026-08-06 实测绿⟧
+- [x] CP-1.1-2 **保底 1 轮**（R-S7-5）：`_dev_loop_llm_calls=120`（已触顶）→ `remaining_sub_budget=0` → `max(1, min(60,0)) == 1`（不退化为 0 轮死锁） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_1_1_2_floor_one_round_when_budget_exhausted` + `::test_cp_1_1_2_floor_one_round_when_over_ceiling`；2026-08-06 实测绿⟧
+- [x] CP-1.1-3 **越界上界断言**（AC-S7-08）：构造"单轮内高频调用"场景，断言总冲过头幅度 ≤ force_finish 1 轮 + metrics 抽取额度（确定性小值，远小于实测 32） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_1_1_3_over_run_bound_is_deterministic_small`；2026-08-06 实测绿⟧
+- [x] CP-1.1-4 **R-PC4 无扰**：截取两个不同 `_dev_loop_llm_calls` 值下的 execution HumanMessage，`max_rounds` 数字保持联动值恒定（不随 dev_calls 抖动）——收窄未污染 context 通道 ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_1_1_4_context_max_rounds_invariant_across_dev_calls`；2026-08-06 实测绿⟧
+- [x] CP-1.1-5 **须验红**（沿 sp6 教训）：注掉收窄 clamp 后，CP-1.1-1 断言 `effective_max_rounds` 回到 60、CP-1.1-3 越界回到数十级 → 断言必须变红 ⟦补勾 2026-08-06 @主控：⚠ 证据强度较弱：**一次性验红，无常驻用例**——证据仅 commit `4dc0a75` 自述「S7-03 clamp 注掉 5 红恢复 6 绿」，今日不可复核。对照：批次 3 的同类验红做成了常驻用例（`test_cp_3_6_2_ring{1,2,3}_break_turns_red`），批次 1 没有⟧
 
 ### 任务 T-S7-1-2：S7-02 `_persist_round_log` 落盘 + 主流程接线（S7-02，架构 §5.3）
 
@@ -301,12 +301,12 @@ graph TD
 6. **红线**：零 state 字段、零 ExecutionResult 字段（路径确定性推导不存）、零工具改动、零新增工具。
 
 **自测检查点**：
-- [ ] CP-1.2-1 `_persist_round_log` 落盘：构造 import 失败现场（含 `No module named 'src'` 的 run_results）→ 断言 `<code_output_dir>/exec_logs/round_{n}.log` 存在且内容含真报错行（AC-S7-05 落盘面）
-- [ ] CP-1.2-2 **错误优先编排**（R-S7-3）：断言真报错行落在文件头 **8000 字符内**（模拟尾部为成功步 stdout 的现场，验前置有效）
-- [ ] CP-1.2-3 命名确定性：`fix_loop_count=0` → `round_0.log`；`=2` → `round_2.log`（无时间戳/uuid，R-PC4 无扰）
-- [ ] CP-1.2-4 mask 口径一致：落盘内容与 `execution_result.logs` 同脱敏级别（凭证不泄）
-- [ ] CP-1.2-5 **落盘兜底不炸**（R-S7-4）：模拟写文件 IO 失败（如目录不可写）→ `_persist_round_log` try/except 兜底，节点不阻断（execution 主流程继续）
-- [ ] CP-1.2-6 guard 命中路径不重落：self-loop 重入（`already_committed=True`）路径不触发 `_persist_round_log`（sandbox 不重跑、日志上轮已落）
+- [x] CP-1.2-1 `_persist_round_log` 落盘：构造 import 失败现场（含 `No module named 'src'` 的 run_results）→ 断言 `<code_output_dir>/exec_logs/round_{n}.log` 存在且内容含真报错行（AC-S7-05 落盘面） ⟦补勾 2026-08-06 @主控：`test_sprint7_s7_02_persist_log.py::test_cp_1_2_1_persist_import_failure` + `::test_cp_1_2_1b_mainflow_wiring_persists`；2026-08-06 实测绿⟧
+- [x] CP-1.2-2 **错误优先编排**（R-S7-3）：断言真报错行落在文件头 **8000 字符内**（模拟尾部为成功步 stdout 的现场，验前置有效） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_1_2_2_error_first_within_8000` + `::test_cp_1_2_2_no_error_no_prefix`（含对照）；2026-08-06 实测绿⟧
+- [x] CP-1.2-3 命名确定性：`fix_loop_count=0` → `round_0.log`；`=2` → `round_2.log`（无时间戳/uuid，R-PC4 无扰） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_1_2_3_deterministic_naming`（参数化 fix_count→round_{n}.log）；2026-08-06 实测绿⟧
+- [x] CP-1.2-4 mask 口径一致：落盘内容与 `execution_result.logs` 同脱敏级别（凭证不泄） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_1_2_4_mask_parity`；2026-08-06 实测绿⟧
+- [x] CP-1.2-5 **落盘兜底不炸**（R-S7-4）：模拟写文件 IO 失败（如目录不可写）→ `_persist_round_log` try/except 兜底，节点不阻断（execution 主流程继续） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_1_2_5_persist_io_failure_no_crash` + `::test_cp_1_2_5_persist_failure_does_not_block_node`；2026-08-06 实测绿⟧
+- [x] CP-1.2-6 guard 命中路径不重落：self-loop 重入（`already_committed=True`）路径不触发 `_persist_round_log`（sandbox 不重跑、日志上轮已落） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_1_2_6_guard_reentry_no_repersist`；2026-08-06 实测绿⟧
 
 ### 任务 T-S7-1-3：S7-02 coding 反馈路径化（S7-02，架构 §5.4）
 
@@ -332,11 +332,11 @@ graph TD
 5. **execution 侧修复反馈维持 stderr_tail 尾部不改路径**（架构 §5.4 末 / AA-S7-3：execution agent 工具无 `read_code_file`，改路径反使其更瞎；S7-02 只作用于 coding 反馈链路——PRD §0.7 坐实的信息链路 bug 现场正是 coder 侧）。
 
 **自测检查点**：
-- [ ] CP-1.3-1 `_digest_execution_feedback` 返回含 `log_file_path` 子键，指向 `<code_output_dir>/exec_logs/round_{fix_round}.log`（AC-S7-05 反馈面）；`error_category` 快速提示保留
-- [ ] CP-1.3-2 **端到端可读**（AC-S7-05）：落盘 + 路径推导联跑——断言 `read_code_file(log_file_path)` 能读到含 `No module named 'src'` 的日志内容
-- [ ] CP-1.3-3 **AC-S7-07 设计取舍守门（须验红）**：断言 `stderr_tail` **不再是** `logs[-2000:]` 截断产物（现 :247），而是固定指引串（不含日志内容）；断言反馈以 `log_file_path` 为准。**验红**：注掉落盘 + 路径注入后断言必须变红（防"路径写了但反馈没真指过去"假绿，沿 sp6 AC-S6-10 教训）
-- [ ] CP-1.3-4 路径确定性推导：落盘失败/文件不存在时 `read_code_file` 读到"文件不存在"串，反馈退回 `errors` 摘要不炸（R-S7-4 降级面）
-- [ ] CP-1.3-5 `representative_stderr` 未被 S7-02 触碰（保恒空 + payload 键结构冻结）；execution 侧 `_build_execution_agent_context` 的 stderr_tail 维持尾部（AA-S7-3 正交）
+- [x] CP-1.3-1 `_digest_execution_feedback` 返回含 `log_file_path` 子键，指向 `<code_output_dir>/exec_logs/round_{fix_round}.log`（AC-S7-05 反馈面）；`error_category` 快速提示保留 ⟦补勾 2026-08-06 @主控：`test_sprint7_s7_02_coding_feedback.py::test_cp_1_3_1_log_file_path_subkey_and_error_category` + `::test_cp_1_3_1_off_by_one_matrix`；2026-08-06 实测绿⟧
+- [x] CP-1.3-2 **端到端可读**（AC-S7-05）：落盘 + 路径推导联跑——断言 `read_code_file(log_file_path)` 能读到含 `No module named 'src'` 的日志内容 ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_1_3_2_end_to_end_readable`；2026-08-06 实测绿⟧
+- [x] CP-1.3-3 **AC-S7-07 设计取舍守门（须验红）**：断言 `stderr_tail` **不再是** `logs[-2000:]` 截断产物（现 :247），而是固定指引串（不含日志内容）；断言反馈以 `log_file_path` 为准。**验红**：注掉落盘 + 路径注入后断言必须变红（防"路径写了但反馈没真指过去"假绿，沿 sp6 AC-S6-10 教训） ⟦补勾 2026-08-06 @主控：常驻断言 `::test_cp_1_3_3_stderr_tail_is_guidance_not_truncation` 今日绿；⚠ **验红部分同 CP-1.1-5 为一次性**（commit `4dc0a75`），无常驻验红用例⟧
+- [x] CP-1.3-4 路径确定性推导：落盘失败/文件不存在时 `read_code_file` 读到"文件不存在"串，反馈退回 `errors` 摘要不炸（R-S7-4 降级面） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_1_3_4_missing_file_degrades_to_errors` + `::test_cp_1_3_4_none_code_output_dir_returns_none_path`；2026-08-06 实测绿⟧
+- [x] CP-1.3-5 `representative_stderr` 未被 S7-02 触碰（保恒空 + payload 键结构冻结）；execution 侧 `_build_execution_agent_context` 的 stderr_tail 维持尾部（AA-S7-3 正交） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_1_3_5_representative_stderr_untouched` + `::test_cp_1_3_5_execution_side_stderr_tail_stays_tail`；2026-08-06 实测绿⟧
 
 ### 任务 T-S7-1-4：S7-01 预算门下沉 + reason 链 + revise 预算重置（S7-01，架构 §2.3/§2.4/§1.2）
 
@@ -390,12 +390,12 @@ graph TD
 6. **红线**：零 state 字段、零 interrupt payload 键、零 graph 路由改动（`_route_after_execution` 完全不动，预算耗尽复用 `await_dev_loop_interrupt` 与 `user_fix_decision` 三态既有出边）、不加第四态、`execution_monitor.py` 零改（面板文案走数据通道，架构 §4.5）。
 
 **自测检查点**：
-- [ ] CP-1.4-1 **路由不再静默降级**（AC-S7-01）：mock state（`budget=0`/`success=False`）驱动 `_maybe_interrupt_or_return`——断言**不再**返回 `_mark_degraded_for_report`（degraded_nodes 不含 execution 的 budget_exhausted 降级）、而是置 `_dev_loop_route="await_dev_loop_interrupt"`（首次进入 `already_committed=False`）；以 `checkpoints_s7_99eef17bccf2.db` 同构 state 为回归靶
-- [ ] CP-1.4-2 **两段式幂等**（AC-S7-02）：mock 时序断言两段式（首次 return await 标记、self-loop 重入后 `already_committed=True` 函数体 interrupt 恰一次）；既有 S-1 / interrupt#2 幂等套件零退化（guard 逻辑 :2110-2113 不动）
-- [ ] CP-1.4-3 **面板文案 + 三态守门**（AC-S7-03）：预算耗尽 → 面板 `error_summary` 含"预算已耗尽"语义关键词；**对照用例**（非预算耗尽情形：预算充足 + 子上限触顶）不含该文案（防文案泛化）；payload 键集合与 sp6 逐字一致；`payload["options"] == ["terminate","revise_plan","export_code"]`（无第四态）
-- [ ] CP-1.4-4 **硬上限守门**（AC-S7-04）：构造 `_dev_loop_llm_calls=120` / `retry_budget_remaining` 达顶 state，断言不突破 240/120；revise_plan 重置后再验子上限（:2036/:2077）仍拦（预算重置不越子上限硬顶，R-S7-2）
-- [ ] CP-1.4-5 **revise 预算重置**（AC-S7-04）：`_route_user_fix_decision({"decision":"revise_plan"})` → `retry_budget_remaining == MAX_TOTAL_LLM_CALLS`（240）+ `fix_loop_count==0`；`_dev_loop_llm_calls` 累计未被重置
-- [ ] CP-1.4-6 **R-S7-1 对照防误伤**：预算充足失败路径（`budget >= DEV_LOOP_MIN_CALLS_PER_ROUND` + auto_fixable）→ 仍正常回 coding 修复（路由未被预算门下沉误伤）；`_route_after_execution` 零改动（复用既有出边）
+- [x] CP-1.4-1 **路由不再静默降级**（AC-S7-01）：mock state（`budget=0`/`success=False`）驱动 `_maybe_interrupt_or_return`——断言**不再**返回 `_mark_degraded_for_report`（degraded_nodes 不含 execution 的 budget_exhausted 降级）、而是置 `_dev_loop_route="await_dev_loop_interrupt"`（首次进入 `already_committed=False`）；以 `checkpoints_s7_99eef17bccf2.db` 同构 state 为回归靶 ⟦补勾 2026-08-06 @主控：`test_sprint7_s7_01_budget_gate_sink.py::test_cp_1_4_1_no_silent_degrade_first_entry` + `::test_cp_1_4_1_degrade_return_deleted_from_function`（源码级锁）；2026-08-06 实测绿⟧
+- [x] CP-1.4-2 **两段式幂等**（AC-S7-02）：mock 时序断言两段式（首次 return await 标记、self-loop 重入后 `already_committed=True` 函数体 interrupt 恰一次）；既有 S-1 / interrupt#2 幂等套件零退化（guard 逻辑 :2110-2113 不动） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_1_4_2_two_phase_idempotent_budget_exhausted`；2026-08-06 实测绿⟧
+- [x] CP-1.4-3 **面板文案 + 三态守门**（AC-S7-03）：预算耗尽 → 面板 `error_summary` 含"预算已耗尽"语义关键词；**对照用例**（非预算耗尽情形：预算充足 + 子上限触顶）不含该文案（防文案泛化）；payload 键集合与 sp6 逐字一致；`payload["options"] == ["terminate","revise_plan","export_code"]`（无第四态） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_1_4_3_budget_exhausted_panel_text_and_three_state` + `::test_cp_1_4_3_control_non_budget_no_budget_text`（防文案泛化对照）；2026-08-06 实测绿⟧
+- [x] CP-1.4-4 **硬上限守门**（AC-S7-04）：构造 `_dev_loop_llm_calls=120` / `retry_budget_remaining` 达顶 state，断言不突破 240/120；revise_plan 重置后再验子上限（:2036/:2077）仍拦（预算重置不越子上限硬顶，R-S7-2） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_1_4_4_dev_loop_ceiling_still_blocks_after_revise` + `::test_cp_1_4_4_budget_reset_does_not_exceed_total_cap`；2026-08-06 实测绿⟧
+- [x] CP-1.4-5 **revise 预算重置**（AC-S7-04）：`_route_user_fix_decision({"decision":"revise_plan"})` → `retry_budget_remaining == MAX_TOTAL_LLM_CALLS`（240）+ `fix_loop_count==0`；`_dev_loop_llm_calls` 累计未被重置 ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_1_4_5_revise_resets_budget_not_dev_calls` + `::test_cp_1_4_5_terminate_export_no_budget_reset`；2026-08-06 实测绿⟧
+- [x] CP-1.4-6 **R-S7-1 对照防误伤**：预算充足失败路径（`budget >= DEV_LOOP_MIN_CALLS_PER_ROUND` + auto_fixable）→ 仍正常回 coding 修复（路由未被预算门下沉误伤）；`_route_after_execution` 零改动（复用既有出边） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_1_4_6_sufficient_budget_still_retries_coding` + `::test_cp_1_4_6_budget_gate_lowered_boundary`；2026-08-06 实测绿⟧
 
 > **批次 1 收口门**：CP-1.1~1.4 全绿 + **AC-S7-05/07/08 验红通过**（注掉对应改动断言变红）+ execution.py + coding.py 触碰区回归零退化 + `execution_monitor.py` 零改（面板文案走数据通道守门）+ S-1 / interrupt#2 幂等套件零退化。**主控单收口令：四子任务一次串行改写，函数级不重叠已坐实。停手等 Maria 确认再开批次 2。**
 
@@ -426,10 +426,10 @@ graph TD
 8. **测试盲区（架构 §9.3）**：预算耗尽 + import 反复失败是低频边界路径，常规 e2e 未必触达——必须专门构造 `retry_budget_remaining=0` / import 现场（沿 sp5 AC-S5-03 mock e2e 假绿教训）。
 
 **自测检查点**：
-- [ ] CP-2.1-1 逐 AC 测试点断言逐条适配完成（AC-S7-01~08，只换断言目标不弱化语义，清单记 TODO）
-- [ ] CP-2.1-2 **AC-S7-05/07/08 三项验红**：注掉落盘/路径注入/收窄 clamp 后对应断言变红（防假绿，架构 §9.3）
-- [ ] CP-2.1-3 **全量非 e2e 回归 `.venv/bin/pytest -q -m "not e2e"` 相对 sp6 基线 1951 零退化零失败**（翻倍断言 + sp7 新增用例账目精确闭合）
-- [ ] CP-2.1-4 AC-S7-01~08 覆盖矩阵审计：每条 AC 至少一个可测断言映射（映射表落 handoff）
+- [x] CP-2.1-1 逐 AC 测试点断言逐条适配完成（AC-S7-01~08，只换断言目标不弱化语义，清单记 TODO） ⟦补勾 2026-08-06 @主控：报告 `test-reports/2026-07-19_batch2-regression-targeted.md`（逐 AC 断言适配清单）⟧
+- [x] CP-2.1-2 **AC-S7-05/07/08 三项验红**：注掉落盘/路径注入/收窄 clamp 后对应断言变红（防假绿，架构 §9.3） ⟦补勾 2026-08-06 @主控：报告 `test-reports/2026-07-19_ac-coverage-matrix.md`（AC-S7-05/07/08 三项验红记录）。⚠ 同 CP-1.1-5：一次性验红，无常驻用例⟧
+- [x] CP-2.1-3 **全量非 e2e 回归 `.venv/bin/pytest -q -m "not e2e"` 相对 sp6 基线 1951 零退化零失败**（翻倍断言 + sp7 新增用例账目精确闭合） ⟦补勾 2026-08-06 @主控：报告 `2026-07-19_batch2-regression-targeted.md` 记 1985 绿（确定性口径 not e2e and not browser）；2026-08-06 全量非 e2e 复测 2635 passed / 0 failed⟧
+- [x] CP-2.1-4 AC-S7-01~08 覆盖矩阵审计：每条 AC 至少一个可测断言映射（映射表落 handoff） ⟦补勾 2026-08-06 @主控：报告 `2026-07-19_ac-coverage-matrix.md`：AC-S7-01~08 八条全覆盖零缺口⟧
 
 ### 任务 T-S7-2-2：现场靶测收口（架构 §9.1）
 
@@ -448,10 +448,10 @@ graph TD
 3. **LLM 服从度类回归纪律**：sp7 判定全为确定性代码（预算门/收窄/落盘均无 LLM），服从度敏感面低——现场靶测按确定性单测收口即可；涉幂等/两段式的时序敏感用例按项目纪律连跑（复现率高 ≥50% 连跑 3 次、低 10%~50% 连跑 5 次含全量回归）。
 
 **自测检查点**：
-- [ ] CP-2.2-1 `checkpoints_s7_99eef17bccf2.db` 三缺陷靶测全绿（S7-01 路由 / S7-02 落盘+反馈 / S7-03 越界约束）
-- [ ] CP-2.2-2 低频边界构造（budget=0 + import 现场）确定性单测收口全绿
-- [ ] CP-2.2-3 fixture 只读不写：靶测后 `checkpoints_s7_99eef17bccf2.db` md5 与固化时一致（源库 `checkpoints.db` 零变动）
-- [ ] CP-2.2-4 AC-S7-01~08 逐条覆盖矩阵闭环（无 AC 缺测）
+- [x] CP-2.2-1 `checkpoints_s7_99eef17bccf2.db` 三缺陷靶测全绿（S7-01 路由 / S7-02 落盘+反馈 / S7-03 越界约束） ⟦补勾 2026-08-06 @主控：`tests/test_sprint7_targeted.py` 7 靶测（现场真数据驱动）；2026-08-06 实测 7 条全绿⟧
+- [x] CP-2.2-2 低频边界构造（budget=0 + import 现场）确定性单测收口全绿 ⟦补勾 2026-08-06 @主控：报告 `2026-07-19_batch2-regression-targeted.md`；`test_sprint7_targeted.py::test_cp_2_2_2_*` 两条 2026-08-06 实测绿⟧
+- [x] CP-2.2-3 fixture 只读不写：靶测后 `checkpoints_s7_99eef17bccf2.db` md5 与固化时一致（源库 `checkpoints.db` 零变动） ⟦补勾 2026-08-06 @主控：🔴 **核心契约成立但报告证据链有两处失真（2026-08-06 主控核实挖出，已另立开放条目）**：①报告 `:103` 记 fixture 固化基线 md5 `3483890cd0197a27309543a48a2ece3f`，而**入库并留存至今的文件实为 `9c00dcd2060f67718a9b8ec5c4348ce6`**（磁盘 mtime 2026-07-19 09:19 晚于报告写就的 08:57 ⇒ 报告归档后 fixture 又被重生成一次、基线值没跟着更新）；②报告 `:104` 称「无 -wal/-shm 旁文件」，而 2026-08-06 跑完靶测后 `checkpoints_s7_99eef17bccf2.db-shm` mtime 被刷新为当日 ⇒ **靶测确实产生 WAL 旁文件**（`8d37fe9` 往 .gitignore 补 WAL 忽略规则即是旁证）。**主库只读契约本身今日实测成立**：跑完靶测后磁盘 md5 == `git show HEAD:` blob md5，`git status --porcelain` 为空⟧
+- [x] CP-2.2-4 AC-S7-01~08 逐条覆盖矩阵闭环（无 AC 缺测） ⟦补勾 2026-08-06 @主控：报告 `2026-07-19_ac-coverage-matrix.md`（AC-S7-01~08 逐条覆盖矩阵闭环）⟧
 
 ### 任务 T-S7-2-3：真跑项（Maria 授权点）+ handoff（架构 §9.4）
 
@@ -466,8 +466,8 @@ graph TD
 2. handoff：AC-S7-01~08 覆盖矩阵 + 已知限制（R-S7-4 落盘失败降级 sp6 现状 / R-S7-3 极端超长日志 list_dir 逐读兜底）+ 运行入口交测试工程师。
 
 **自测检查点**：
-- [ ] CP-2.3-1 **现场同构真实 e2e 闭环**（S7-01 问用户 / S7-02 coder 自读定位 / S7-03 单轮刹车）——须 Maria 授权
-- [ ] CP-2.3-2 真跑证据齐（预算耗尽 interrupt#2 触发截图/日志 + 落盘 round_{n}.log 含真报错 + 单轮 dev_calls 不冲过头度量）+ handoff 归档
+- [x] CP-2.3-1 **现场同构真实 e2e 闭环**（S7-01 问用户 / S7-02 coder 自读定位 / S7-03 单轮刹车）——须 Maria 授权 ⟦补勾 2026-08-06 @主控：报告 `test-reports/2026-07-19_t723-real-run-window.md`（Maria 授权真跑到预算耗尽；核心 real_5「预算耗尽→interrupt#2→export」PASSED）⟧
+- [x] CP-2.3-2 真跑证据齐（预算耗尽 interrupt#2 触发截图/日志 + 落盘 round_{n}.log 含真报错 + 单轮 dev_calls 不冲过头度量）+ handoff 归档 ⟦补勾 2026-08-06 @主控：同报告：TestRealChainE2E 7 项 4 passed / 3 failed，3 失败零 sp7 源码回归（逐条根因判定在报告内）；凭证卫生达标⟧
 
 > **批次 2 收口门（= Sprint 7 总闸门）**：全量回归零退化（CP-2.1-3）+ 现场靶测全绿（CP-2.2-1）+ AC-S7-05/07/08 验红通过 + AC-S7-01~08 全覆盖 + 现场同构真实 e2e 闭环（CP-2.3-1）。真跑项须 Maria 明确授权具体动作。**Sprint 7 交付。**
 
@@ -709,8 +709,8 @@ graph TD
 2. **退化路径确认（R-S7-8）**：**万一**后续实现发现某边界拿不到 files_written（如 react_messages 为空的降级回合），`last_files_written` 置 `[]`，`files_touched` 留空，历史段其余四元组（round/category/fix_note/log_path）照常渲染——不阻断功能（架构 §13.9 R-S7-8）。
 
 **自测检查点**：
-- [ ] CP-3.1-1 核实结论落档：`_map_coding_result` 经 react_messages 的 write_code_file ToolMessage 可解析出 files_written 路径列表（复用 `_has_written_any_file` 同款 `json.loads` + code_dir 落点校验 + 失败 ToolMessage 过滤）——**走正常实现，不走 R-S7-8 退化**
-- [ ] CP-3.1-2 退化兜底确认：拿不到 files_written 的边界（react_messages 空/无成功 write）→ `last_files_written=[]`、files_touched 留空、其余四元组照常（R-S7-8 路径可用）
+- [x] CP-3.1-1 核实结论落档：`_map_coding_result` 经 react_messages 的 write_code_file ToolMessage 可解析出 files_written 路径列表（复用 `_has_written_any_file` 同款 `json.loads` + code_dir 落点校验 + 失败 ToolMessage 过滤）——**走正常实现，不走 R-S7-8 退化** ⟦补勾 2026-08-06 @主控：走正常实现已落地：`core/nodes/coding.py:568` `_collect_written_files`（`json.loads` + code_dir 落点校验 + 失败 ToolMessage 过滤）；断言见 `test_sprint7_s705_memory.py::test_cp_3_3_5_files_written_json_parse_and_filter`；2026-08-06 实测绿⟧
+- [x] CP-3.1-2 退化兜底确认：拿不到 files_written 的边界（react_messages 空/无成功 write）→ `last_files_written=[]`、files_touched 留空、其余四元组照常（R-S7-8 路径可用） ⟦补勾 2026-08-06 @主控：退化兜底断言合并在 `::test_cp_3_3_5_files_written_json_parse_and_filter`（拿不到 → `last_files_written==[]`）；2026-08-06 实测绿⟧
 
 ### 任务 T-S7-3-2：state 字段 + FixLoopRecord 扩展（+4 键，架构 §13.7）
 
@@ -730,9 +730,9 @@ graph TD
 3. **旧 checkpoint 兼容红线**：均 TypedDict 加键（`total=False` 语义或消费侧 `.get(..., "")` / `.get(..., [])` 兜底）——`task-99eef17bccf2` 旧 checkpoint 无这 4 键，helper/append 读时 `.get` 兜底，不 KeyError。**不改既有字段、不改字段顺序**（`FixLoopRecord` 既有 round_number/error_summary/error_category/fix_strategy/timestamp 全保留）。
 
 **自测检查点**：
-- [ ] CP-3.2-1 `GlobalState` 含 `last_fix_note: str` / `last_files_written: List[str]` 两键；`FixLoopRecord` 含 `fix_note: str` / `files_touched: List[str]` 两键（类型标注正确）
-- [ ] CP-3.2-2 **旧 checkpoint 兼容**：构造无这 4 键的旧 state dict（模拟 task-99eef17bccf2 现场），消费侧 `.get(..., "")` / `.get(..., [])` 读不 KeyError；既有 FixLoopRecord 字段（round_number 等）不变
-- [ ] CP-3.2-3 既有 state 契约零退化：GlobalState / FixLoopRecord 既有字段与类型不变，既有 state 套件零失败
+- [x] CP-3.2-1 `GlobalState` 含 `last_fix_note: str` / `last_files_written: List[str]` 两键；`FixLoopRecord` 含 `fix_note: str` / `files_touched: List[str]` 两键（类型标注正确） ⟦补勾 2026-08-06 @主控：`test_sprint7_s705_memory.py::test_cp_3_2_1_state_keys_present`；2026-08-06 实测绿⟧
+- [x] CP-3.2-2 **旧 checkpoint 兼容**：构造无这 4 键的旧 state dict（模拟 task-99eef17bccf2 现场），消费侧 `.get(..., "")` / `.get(..., [])` 读不 KeyError；既有 FixLoopRecord 字段（round_number 等）不变 ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_3_2_2_old_checkpoint_compat`；2026-08-06 实测绿⟧
+- [x] CP-3.2-3 既有 state 契约零退化：GlobalState / FixLoopRecord 既有字段与类型不变，既有 state 套件零失败 ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_3_2_3_initial_state_defaults`；2026-08-06 实测绿⟧
 
 ### 任务 T-S7-3-3：coder fix_note 输出约定 + `_map_coding_result` 落库 + `_FIX_NOTE_MAX_CHARS` 常量（架构 §13.2.1/§13.7）
 
@@ -755,12 +755,12 @@ graph TD
 4. **既有 `_map_coding_result` 字段零退化**（红线）：code_output_dir / current_step / simulation_notice / node_errors / degraded_nodes 全不变，只增 2 键。
 
 **自测检查点**：
-- [ ] CP-3.3-1 `_FIX_NOTE_MAX_CHARS == 120`（常量存在，Maria 拍板定值）
-- [ ] CP-3.3-2 **R-PC4 稳定前缀守门**（AC-S7-13 面）：新增 fix_note 指令是固定文案——两次不同 state（不同论文/不同轮）下截取 `_CODING_SYSTEM_PROMPT_BODY`/system prompt 该段字节相同；注入 fix_note 约定前后稳定前缀字节一致（无动态插值）
-- [ ] CP-3.3-3 `_map_coding_result` 落库：result 含 `fix_note="定位X修复Y"` → `updates["last_fix_note"]=="定位X修复Y"`；含成功 write ToolMessage → `updates["last_files_written"]` 为路径列表（复用 `_has_written_any_file` 解析）
-- [ ] CP-3.3-4 **fix_note 校验 + 截断**（R-S7-8/R-S7-9）：result 无 fix_note / fix_note 为空/非字符串 → `last_fix_note==""`（不炸）；fix_note 超 120 字 → 截断到 120
-- [ ] CP-3.3-5 files_written 抽取走 `json.loads` 合法 JSON + 过滤失败 ToolMessage（BUG-S1-02 规避自查：不用 `str(dict)` repr）；拿不到 → `last_files_written==[]`（R-S7-8）
-- [ ] CP-3.3-6 既有 `_map_coding_result` 字段零退化（code_output_dir/simulation_notice/node_errors/degraded_nodes 不变）
+- [x] CP-3.3-1 `_FIX_NOTE_MAX_CHARS == 120`（常量存在，Maria 拍板定值） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_3_3_1_fix_note_max_chars_const`；`core/nodes/coding.py:78` `_FIX_NOTE_MAX_CHARS: int = 120`；2026-08-06 实测绿⟧
+- [x] CP-3.3-2 **R-PC4 稳定前缀守门**（AC-S7-13 面）：新增 fix_note 指令是固定文案——两次不同 state（不同论文/不同轮）下截取 `_CODING_SYSTEM_PROMPT_BODY`/system prompt 该段字节相同；注入 fix_note 约定前后稳定前缀字节一致（无动态插值） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_3_3_2_rpc4_stable_prefix_fixed_text`；2026-08-06 实测绿⟧
+- [x] CP-3.3-3 `_map_coding_result` 落库：result 含 `fix_note="定位X修复Y"` → `updates["last_fix_note"]=="定位X修复Y"`；含成功 write ToolMessage → `updates["last_files_written"]` 为路径列表（复用 `_has_written_any_file` 解析） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_3_3_3_map_result_writes_last_fix_note_and_files`；2026-08-06 实测绿⟧
+- [x] CP-3.3-4 **fix_note 校验 + 截断**（R-S7-8/R-S7-9）：result 无 fix_note / fix_note 为空/非字符串 → `last_fix_note==""`（不炸）；fix_note 超 120 字 → 截断到 120 ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_3_3_4_fix_note_validate_and_truncate`；2026-08-06 实测绿⟧
+- [x] CP-3.3-5 files_written 抽取走 `json.loads` 合法 JSON + 过滤失败 ToolMessage（BUG-S1-02 规避自查：不用 `str(dict)` repr）；拿不到 → `last_files_written==[]`（R-S7-8） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_3_3_5_files_written_json_parse_and_filter`；2026-08-06 实测绿⟧
+- [x] CP-3.3-6 既有 `_map_coding_result` 字段零退化（code_output_dir/simulation_notice/node_errors/degraded_nodes 不变） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_3_3_6_map_result_existing_fields_unchanged`；2026-08-06 实测绿⟧
 
 ### 任务 T-S7-3-4：`_append_fix_record` 取 last_fix_note / last_files_written 写入 FixLoopRecord（架构 §13.7）
 
@@ -779,10 +779,10 @@ graph TD
 3. **既有 `_append_fix_record` 字段零退化**（红线）：round_number/error_summary/error_category/fix_strategy/timestamp 全不变、单点 read-modify-write 追加不变（严禁 reducer，沿 must-fix-1）。
 
 **自测检查点**：
-- [ ] CP-3.4-1 `_append_fix_record` 从 `state["last_fix_note"]` / `last_files_written` 取值写进 FixLoopRecord.fix_note / files_touched（AC-S7-11 取端环）
-- [ ] CP-3.4-2 **时序自洽**（R-S7-10）：模拟 coding 写 last_fix_note → execution append，断言 append 后 FixLoopRecord.fix_note == 本轮 coder 输出（非上上轮/非下轮）
-- [ ] CP-3.4-3 **旧 checkpoint 兜底**：state 无 last_fix_note/last_files_written（task-99eef17bccf2 现场）→ `.get` 兜底 fix_note=""/files_touched=[]，不 KeyError
-- [ ] CP-3.4-4 既有 FixLoopRecord 字段零退化（round_number 等不变）；单点 read-modify-write 不变（严禁 reducer）
+- [x] CP-3.4-1 `_append_fix_record` 从 `state["last_fix_note"]` / `last_files_written` 取值写进 FixLoopRecord.fix_note / files_touched（AC-S7-11 取端环） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_3_4_1_append_takes_from_state`；2026-08-06 实测绿⟧
+- [x] CP-3.4-2 **时序自洽**（R-S7-10）：模拟 coding 写 last_fix_note → execution append，断言 append 后 FixLoopRecord.fix_note == 本轮 coder 输出（非上上轮/非下轮） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_3_4_2_time_ordering_self_consistent`；2026-08-06 实测绿⟧
+- [x] CP-3.4-3 **旧 checkpoint 兜底**：state 无 last_fix_note/last_files_written（task-99eef17bccf2 现场）→ `.get` 兜底 fix_note=""/files_touched=[]，不 KeyError ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_3_4_3_old_checkpoint_backfill_safe`；2026-08-06 实测绿⟧
+- [x] CP-3.4-4 既有 FixLoopRecord 字段零退化（round_number 等不变）；单点 read-modify-write 不变（严禁 reducer） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_3_4_4_append_existing_fields_unchanged`；2026-08-06 实测绿⟧
 
 ### 任务 T-S7-3-5：`_digest_fix_loop_history` helper + `fix_history_digest` 注入（架构 §13.3/§13.7）
 
@@ -807,12 +807,12 @@ graph TD
 3. **既有 coding context 键零退化**（红线，AC-S7-14）：last_error_summary / credential_degradations / code_output_dir 等既有键不受影响；human_payload 仍合法 sort_keys JSON。
 
 **自测检查点**：
-- [ ] CP-3.5-1 **digest 内容全保留**（AC-S7-09）：构造 fix_loop_count≥2 现场 mock（task-99eef17bccf2 同构 4 轮 import）→ `_build_coding_context` 返回含 `fix_history_digest`，含各轮 round+category+files_touched+**fix_note**+log_path，轮号升序、多行；**首轮不注入**（fix_count==0 或空历史返回 None）
-- [ ] CP-3.5-2 **全保留控量**（AC-S7-10）：构造 fix_loop_count=20（顶格）mock → digest 含全部 20 轮（无窗口丢弃）、每轮 fix_note ≤120 字符、总字节 ≤ 架构 §13.4 上界估算（≈4500 字符）；**无"仅显示最近K轮"字样**（窗口概念已删）
-- [ ] CP-3.5-3 **log_path 对齐**（AC-S7-12 面）：digest 里 log_path 用 `_resolve_round_log_path` 推导、指向历史轮 `exec_logs/round_{N}.log`（与 S7-02 磁盘落盘对齐）
-- [ ] CP-3.5-4 **字节幂等**（AC-S7-13 面）：同一 state 两次 `_digest_fix_loop_history` 字节相同（轮号升序、无时间戳/uuid）
-- [ ] CP-3.5-5 **sort_keys 避坑**（AC-S7-14）：注入 `fix_history_digest` 后 human_payload 仍合法 sort_keys JSON；既有键（last_error_summary/credential_degradations/code_output_dir）值不变、顺序不乱（历史落单键字符串值、非拆多键插中间）
-- [ ] CP-3.5-6 **旧记录兜底**（R-S7-8）：FixLoopRecord 无 fix_note/files_touched 键（旧 checkpoint）→ 该段留空、其余四元组照常渲染，不炸
+- [x] CP-3.5-1 **digest 内容全保留**（AC-S7-09）：构造 fix_loop_count≥2 现场 mock（task-99eef17bccf2 同构 4 轮 import）→ `_build_coding_context` 返回含 `fix_history_digest`，含各轮 round+category+files_touched+**fix_note**+log_path，轮号升序、多行；**首轮不注入**（fix_count==0 或空历史返回 None） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_3_5_1_digest_full_retain` + `::test_cp_3_5_empty_history_returns_none`（首轮不注入）；2026-08-06 实测绿⟧
+- [x] CP-3.5-2 **全保留控量**（AC-S7-10）：构造 fix_loop_count=20（顶格）mock → digest 含全部 20 轮（无窗口丢弃）、每轮 fix_note ≤120 字符、总字节 ≤ 架构 §13.4 上界估算（≈4500 字符）；**无"仅显示最近K轮"字样**（窗口概念已删） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_3_5_2_full_retain_capacity_20_rounds`；2026-08-06 实测绿⟧
+- [x] CP-3.5-3 **log_path 对齐**（AC-S7-12 面）：digest 里 log_path 用 `_resolve_round_log_path` 推导、指向历史轮 `exec_logs/round_{N}.log`（与 S7-02 磁盘落盘对齐） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_3_5_3_log_path_alignment`；2026-08-06 实测绿⟧
+- [x] CP-3.5-4 **字节幂等**（AC-S7-13 面）：同一 state 两次 `_digest_fix_loop_history` 字节相同（轮号升序、无时间戳/uuid） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_3_5_4_byte_idempotent`；2026-08-06 实测绿⟧
+- [x] CP-3.5-5 **sort_keys 避坑**（AC-S7-14）：注入 `fix_history_digest` 后 human_payload 仍合法 sort_keys JSON；既有键（last_error_summary/credential_degradations/code_output_dir）值不变、顺序不乱（历史落单键字符串值、非拆多键插中间） ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_3_5_5_sort_keys_safe`；2026-08-06 实测绿⟧
+- [x] CP-3.5-6 **旧记录兜底**（R-S7-8）：FixLoopRecord 无 fix_note/files_touched 键（旧 checkpoint）→ 该段留空、其余四元组照常渲染，不炸 ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_3_5_6_old_record_backfill`；2026-08-06 实测绿⟧
 
 ### 任务 T-S7-3-6：CP 测试 AC-S7-09~14 覆盖 + 逐环验红 + 全量回归（架构 §13.8）
 
@@ -835,13 +835,13 @@ graph TD
 7. **全量非 e2e 回归**（`.venv/bin/pytest -q -m "not e2e"`）相对批次 2 收口基线零退化零失败。
 
 **自测检查点**：
-- [ ] CP-3.6-1 AC-S7-09/10 断言全绿（digest 全保留五元组 + 顶格 20 轮控量 + 无窗口字样）
-- [ ] CP-3.6-2 **AC-S7-11 三环逐环验红**（命门）：链路全通断言绿；分别注掉 map 写 / append 取 / digest 渲染 fix_note 三环，每环注掉后对应断言**必须变红**（防"coder 说了但没进历史"假绿）
-- [ ] CP-3.6-3 **AC-S7-12 验红**：digest log_path 与磁盘 round_{n}.log 对齐、read_code_file 读到真错；注掉 `fix_history_digest` 注入后断言**必须变红**
-- [ ] CP-3.6-4 AC-S7-13 R-PC4 守门：system prompt 字节幂等（含新增 fix_note 固定指令后跨 state 恒定）+ digest 同 state 字节幂等
-- [ ] CP-3.6-5 AC-S7-14 回归零退化：既有 coding context + map_result 套件零失败；human_payload 合法 sort_keys JSON、既有键值不变
-- [ ] CP-3.6-6 **全量非 e2e 回归零退化零失败**（相对批次 2 收口基线，账目精确闭合）
-- [ ] CP-3.6-7 AC-S7-09~14 覆盖矩阵审计：每条 AC 至少一个可测断言映射（映射落 handoff）
+- [x] CP-3.6-1 AC-S7-09/10 断言全绿（digest 全保留五元组 + 顶格 20 轮控量 + 无窗口字样） ⟦补勾 2026-08-06 @主控：由 `::test_cp_3_5_1_digest_full_retain` + `::test_cp_3_5_2_full_retain_capacity_20_rounds` 承载（AC-S7-09/10 断言面）；2026-08-06 实测绿⟧
+- [x] CP-3.6-2 **AC-S7-11 三环逐环验红**（命门）：链路全通断言绿；分别注掉 map 写 / append 取 / digest 渲染 fix_note 三环，每环注掉后对应断言**必须变红**（防"coder 说了但没进历史"假绿） ⟦补勾 2026-08-06 @主控：🟢 **本批证据最强的一条**：三环验红做成了**常驻用例**——`::test_cp_3_6_2_full_link_green` + `ring1_map_break` / `ring2_append_break` / `ring3_digest_break_turns_red` 四条；2026-08-06 实测绿⟧
+- [x] CP-3.6-3 **AC-S7-12 验红**：digest log_path 与磁盘 round_{n}.log 对齐、read_code_file 读到真错；注掉 `fix_history_digest` 注入后断言**必须变红** ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_3_6_3_log_path_disk_aligned_and_readable` + `::test_cp_3_6_3_inject_break_turns_red`（常驻验红）；2026-08-06 实测绿⟧
+- [x] CP-3.6-4 AC-S7-13 R-PC4 守门：system prompt 字节幂等（含新增 fix_note 固定指令后跨 state 恒定）+ digest 同 state 字节幂等 ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_3_6_4_system_prompt_byte_identical_across_state` + `::test_cp_3_6_4_digest_byte_idempotent`；2026-08-06 实测绿⟧
+- [x] CP-3.6-5 AC-S7-14 回归零退化：既有 coding context + map_result 套件零失败；human_payload 合法 sort_keys JSON、既有键值不变 ⟦补勾 2026-08-06 @主控：同文件 `::test_cp_3_6_5_existing_context_keys_unchanged`；2026-08-06 实测绿⟧
+- [x] CP-3.6-6 **全量非 e2e 回归零退化零失败**（相对批次 2 收口基线，账目精确闭合） ⟦补勾 2026-08-06 @主控：commit `8d37fe9` 记 2014 绿（零退化）；2026-08-06 全量非 e2e 复测 2635 passed / 0 failed⟧
+- [ ] CP-3.6-7 AC-S7-09~14 覆盖矩阵审计：每条 AC 至少一个可测断言映射（映射落 handoff） ⟦补勾 2026-08-06 @主控：🔴 **留空——拿不出证据**：本条要求「覆盖矩阵映射落 handoff」，而 **`docs/sprint7/` 下不存在任何 S7-05 的 handoff / 覆盖矩阵归档物**（`test-reports/` 12 份报告中无一份属批次 3；对照批次 2 的同类条目 CP-2.1-4 有 `2026-07-19_ac-coverage-matrix.md` 可依）。⇒ 交付时未逐条留证，**不为凑账目而勾**⟧
 
 ### 任务 T-S7-3-7：真跑抽验 coder fix_note 遵守率（Maria 授权点，架构 §13.9 Q4）
 
@@ -863,9 +863,9 @@ graph TD
 3. handoff：AC-S7-09~14 覆盖矩阵 + coder fix_note 遵守率实测 + 已知限制（R-S7-8 fix_note 软点退化 / R-S7-11 历史日志被清 log_path 失效降级 sp6 现状）交测试工程师。
 
 **自测检查点**：
-- [ ] CP-3.7-1 **现场靶 4 轮 import coder fix_note 遵守率抽验**（须 Maria 授权）：真跑度量 coder 输出有效 fix_note 比例 + 记录证据
-- [ ] CP-3.7-2 遵守率低时 R-S7-8 退化验证：fix_note 退化为空、历史段四元组照常、功能不阻断（确定性退化保护生效）
-- [ ] CP-3.7-3 真跑证据齐（fix_note 落库 → append → digest 端到端真跑链路 + 遵守率）+ handoff 归档（合并 T-S7-2-3 授权窗口）
+- [ ] CP-3.7-1 **现场靶 4 轮 import coder fix_note 遵守率抽验**（须 Maria 授权）：真跑度量 coder 输出有效 fix_note 比例 + 记录证据 ⟦补勾 2026-08-06 @主控：🔴 **留空——真跑确已发生但记录物不存在**：commit `8d37fe9` 记「真跑 967s 完整真实链路 fix_note 遵守率 3/4=75%，round3/4 自述明确引用前轮」，`tests/test_sprint7_s705_realrun.py` 亦在磁盘；但本条要求的是「度量 + **记录证据**」，而 `test-reports/` 无对应报告 ⇒ **度量细节不可复核**，按纪律不勾⟧
+- [ ] CP-3.7-2 遵守率低时 R-S7-8 退化验证：fix_note 退化为空、历史段四元组照常、功能不阻断（确定性退化保护生效） ⟦补勾 2026-08-06 @主控：🔴 **留空——同 CP-3.7-1**：commit `8d37fe9` 记「R-S7-8 退化兜底真实生效（round1 空 fix_note 不阻断）」，但无归档报告可复核⟧
+- [ ] CP-3.7-3 真跑证据齐（fix_note 落库 → append → digest 端到端真跑链路 + 遵守率）+ handoff 归档（合并 T-S7-2-3 授权窗口） ⟦补勾 2026-08-06 @主控：🔴 **留空——本条要求的动作本身就没做**：「真跑证据齐 + handoff 归档」中的**归档物在磁盘上不存在**（`docs/sprint7/test-reports/` 最早三份均属批次 2，日期 2026-07-19；批次 3 交付日 2026-07-22 无任何报告落盘）⟧
 
 > **批次 3 收口门（= S7-05 交付）**：CP-3.1~3.6 全绿 + **AC-S7-11 三环逐环验红通过 + AC-S7-12 注入验红通过** + AC-S7-09~14 全覆盖 + 全量非 e2e 回归零退化（CP-3.6-6）+ 既有 coding context / map_result 零退化 + R-PC4 稳定前缀守门（CP-3.6-4）+ 子图隔离不破 + 零 react_base/零 payload 键/零 LLM 调用。真跑抽验（CP-3.7-1）须 Maria 明确授权具体动作（合并 T-S7-2-3 窗口）。**停手等 Maria 确认。S7-05 交付。**
 
@@ -2746,11 +2746,11 @@ graph TD
 5. **对照篇（第 3 顺位可砍）**：若配额允许，再跑一篇有公开仓库的论文交叉验证 A/B 不是 umap 特例。
 
 **自测检查点**：
-- [ ] CP-6.9-1 **DA-S7-10-7（约束 A/B 真值）**：落盘的 `reproduction_plan.execution_steps` 中——**零条命令含 `cd` 进 `workspace/repos/**`**；**零条命令命中内联写码谓词**；`pip install -e <repo_path>` 形态（若出现）以**路径参数**出现而非 `cd`
-- [ ] CP-6.9-2 **DA-S7-10-8（本批主断言：孤儿消失）**：`<code_output_dir>` 下出现复现产物目录（`outputs/` 或同类）**且** `<code_output_dir>/run_*.py` 的内容与编码环节 `files_written` 一致、**未被 execution 改写**（比对 mtime / 内容哈希，execution 期间不变）
-- [ ] CP-6.9-3 **DA-S7-10-6（仓库不接收复现代码与产物）**：跑完后用 T-6-7 的 helper 判仓库 untracked——过滤构建残留白名单后**为空**，**特别地无 `repro_outputs/` / 无 `run_*.py` / 无 `summary.json`**
-- [ ] CP-6.9-4 **失败路径判读留档**：若首轮 execution 失败，须逐条记录①失败是否为编码产物自身 bug（对照 CP-6.1-4 的 6 处 `%` 行号）②是否正确走 NO_METRICS 回修复循环③修复轮 coder 是否拿到真 stderr——**这三条全对即判本批达标**，不得因"没跑出指标"判本批失败；同时**明确记录 `metrics_groups` 是否仍为空**（若 T-6-3 第 4 条被砍则预期仍空）
-- [ ] CP-6.9-5 handoff 归档：本报告 + T-6-8 覆盖矩阵 + 四道命门验红证据 + 已知限制（含 R-S7-49 / R-S7-54 两条）+ 未跑项（对照篇）显式登记
+- [x] CP-6.9-1 **DA-S7-10-7（约束 A/B 真值）**：落盘的 `reproduction_plan.execution_steps` 中——**零条命令含 `cd` 进 `workspace/repos/**`**；**零条命令命中内联写码谓词**；`pip install -e <repo_path>` 形态（若出现）以**路径参数**出现而非 `cd` ⟦补勾 2026-08-06 @主控（上真跑现场核实，非采信 commit 自述）：✅ **17 条实际执行命令逐条核过**（现场 `workspace/1802.03426_archive_run3_20260801/code/` 的 `exec_logs/round_0.log` + `round_1.log`，格式 `[step#N exit=X cmd=...]`）：①**零条 `cd`**——全部在 `code_output_dir` 下以该目录的 `.venv/bin/python` + 相对路径（`scripts/…` / `outputs/…`）执行；②**零条内联写码**——5 条 `python -c` 全是只读探测（`import umap; print(...)` / `os.listdir('.')` / `os.path.exists('repro_umap/__init__.py')` / `sys.path[0]` / `import repro_umap`），无一条把文件内容当字面量写盘；③**`pip install -e` 正是本条描述的合规形态**——`step#0 cmd=.venv/bin/python -m pip install -e /data/…/workspace/repos/lmcinnes__umap`，仓库**以路径参数出现、不 cd 进去**。⚠ 口径如实说明：本条原文要求验的是**落盘 `execution_steps` 原文**（R-S7-49 明令不得引步骤对账作证），而此处证据是**执行侧日志**——它比自报对账硬（记的是真 argv），但严格说是强旁证不是计划原文⟧
+- [x] CP-6.9-2 **DA-S7-10-8（本批主断言：孤儿消失）**：`<code_output_dir>` 下出现复现产物目录（`outputs/` 或同类）**且** `<code_output_dir>/run_*.py` 的内容与编码环节 `files_written` 一致、**未被 execution 改写**（比对 mtime / 内容哈希，execution 期间不变） ⟦补勾 2026-08-06 @主控（上真跑现场核实，非采信 commit 自述）：✅ **主断言「孤儿消失」有物证**：`code/outputs/` 下真的长出复现产物——`coil20/` `mnist/` `pendigits/`（各含 umap / tsne / pca / isomap / laplacian_eigenmaps 五份 `*_embedding.npz` + `results.json`）+ `knn_eval/` `runtime/` `visualization/` `summary/` + `summary.json`；`scripts/` 五个脚本在 exec_logs 中**逐条被执行**（`prepare_datasets` / `run_visualization_benchmarks` / `run_knn_evaluation` / `run_runtime_benchmarks` / `summarize_results`）⇒ 编码产物不再是孤儿。**印证 commit `c480990` 所述「五方法横向对比」确有其事**。⚠ **本条后半截今日已验不了**：「`run_*.py` 内容与 `files_written` 一致、execution 期间未被改写（比对 mtime / 哈希）」——现场 `scripts/` 四个脚本 mtime 为 `Aug 1 03:11`，**晚于** `outputs/` 产物的 `Jul 31 03:27-03:28`，说明**同一个目录先后承载了两拨运行**，当时那次比对已无法复原⟧
+- [x] CP-6.9-3 **DA-S7-10-6（仓库不接收复现代码与产物）**：跑完后用 T-6-7 的 helper 判仓库 untracked——过滤构建残留白名单后**为空**，**特别地无 `repro_outputs/` / 无 `run_*.py` / 无 `summary.json`** ⟦补勾 2026-08-06 @主控（上真跑现场核实，非采信 commit 自述）：✅ **2026-08-06 实测**：`workspace/repos/lmcinnes__umap` 的 `git status --porcelain` **输出为空**（零 untracked），且本条点名的三样 `repro_outputs/` / `run_*.py` / `summary.json` 连同 `eval_knn_on_embeddings.py` **四项实测均不存在**。⚠ 如实标注时点：这是**今日**状态，其间隔着 2026-08-01 那次授权清理（见 TODO 不符 2）与 S7-11 / S7-13 两轮后续真跑 ⇒ 它证明的是「仓库现在干净」，**不完全等于「c480990 那次跑完当场就干净」**⟧
+- [x] CP-6.9-4 **失败路径判读留档**：若首轮 execution 失败，须逐条记录①失败是否为编码产物自身 bug（对照 CP-6.1-4 的 6 处 `%` 行号）②是否正确走 NO_METRICS 回修复循环③修复轮 coder 是否拿到真 stderr——**这三条全对即判本批达标**，不得因"没跑出指标"判本批失败；同时**明确记录 `metrics_groups` 是否仍为空**（若 T-6-3 第 4 条被砍则预期仍空） ⟦补勾 2026-08-06 @主控（上真跑现场核实，非采信 commit 自述）：✅ **前置条件确实成立（首轮真的失败了），四条今日逐条重建**：①**失败不是编码产物自身 bug**——`round_0.log` 错误摘要区前置的真 stderr 是 `ModuleNotFoundError: No module named 'repro_umap'`（step#3 / #9 / #11 / #13 / #15），属**包导入路径形态问题**（`python scripts/x.py` 跑不到包），**不是 CP-6.1-4 记的那 6 处 `%` 优先级 bug**；★ 顺带坐实一条既有欠账：现场 step#11/#13/#15 报错 → step#12/#14/#16 改用 `python -m scripts.x` 即成功，**正是 TODO `:719③` / `:658`「计划命令形态与编码产出包结构无契约」的实证现场**。②**NO_METRICS 正确回了修复循环**——`round_1.log` 存在即证进了第二轮；③**修复轮 coder 拿到了真 stderr**——round_0 的错误优先编排把真报错放在文件头（S7-02 机制生效）；④**指标非空**——`round_1` step#0 输出 `<METRICS>{"best_knn_accuracy": 0.8302…, "fastest_runtime_sec": 0.0727…, "visualization_runs": 20}`，且 step#4~#7 可见 agent **自己探测目录 / sys.path / 试 import 后改形态**的自愈过程。⚠ **留档动作本身是 2026-08-06 补做的**，当时并未逐条留档⟧
+- [ ] CP-6.9-5 handoff 归档：本报告 + T-6-8 覆盖矩阵 + 四道命门验红证据 + 已知限制（含 R-S7-49 / R-S7-54 两条）+ 未跑项（对照篇）显式登记 ⟦补勾 2026-08-06 @主控（上真跑现场核实，非采信 commit 自述）：🔴 **留空——归档物不存在**：`docs/sprint7/test-reports/` 下 S7-10 只有 `2026-07-31_s710-independent-acceptance.md`，而**那份自己白纸黑字写着**「**未做**：任何 e2e / 真跑」「AC-S7-54 真跑 A/B 真值 **未验证（延后）**」「AC-S7-55 真跑主断言孤儿消失 **未验证（延后）**」——它是**真跑之前**的离线验收，**不能拿来当真跑报告**。⇒ 与批次 3 的 CP-3.7-3 同病：**做了但没归档**。本条要求的「本报告 + 覆盖矩阵 + 四道命门验红证据 + 已知限制 + 未跑项登记」整包缺失，按纪律不勾⟧
 
 ---
 
@@ -2947,7 +2947,7 @@ graph TD
 | **Q-S7-23 语料完整性** | CP-6.5-1 / CP-6.1-1 | `tests/test_sprint7_s710_gap_audit.py::test_q_s7_23_predicate_hits_the_two_omitted_corpus_entries`（510 / 1304 逐字语料）/ `::test_q_s7_23_must_hit_ground_truth_is_complete`（**集合相等**守门，禁 `issubset`） |
 | **AC-S7-53** | CP-6.8-5 / 6.8-6 | `::test_ac_s7_53_coding_write_boundary_untouched` / `::test_ac_s7_53_no_repo_path_is_undisturbed` / `::test_ac_s7_53_plan_structure_and_context_untouched` |
 | **Q-S7-21 阈值护栏** | CP-6.1-1 / 6.5-1 | `::test_q_s7_21_threshold_is_inside_the_calibrated_window` / `::test_q_s7_21_single_rule_no_verb_or_suffix_enumeration`（**禁动词枚举的机制化守门**） |
-| **AC-S7-54 / 55** | CP-6.9-1~5 | ⚠ **真跑项，须 Maria 单独授权，本次未跑** |
+| **AC-S7-54 / 55** | CP-6.9-1~5 | ~~⚠ 真跑项，须 Maria 单独授权，本次未跑~~ ⟦订正 2026-08-06 @主控：**已跑，且主判据达成** —— Maria 授权后于 2026-07-31 / 08-01 执行，实证段见 commit `c480990` 正文；现场 `workspace/1802.03426_archive_run3_20260801/code/` 至今留存。本行原文「本次未跑」是**落盘当时的状态，跑完之后没有人回来改它**，以致 2026-08-04 清账时从这里读到的答案是错的（TODO 不符 1）。逐条补证结果：**CP-6.9-1~4 达成（勾）/ CP-6.9-5 归档缺失（留空）**⟧ |
 
 ### 48.4 交接要点（CP-6.8-8）
 
