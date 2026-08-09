@@ -45,8 +45,8 @@ docs/
 - 不要重复造轮子构造 Mock LLM / Mock 工具——优先复用 `tests/` 中已有的 `FakeLLM`、`ToolScripts` 等基建；若需要更通用版本，迁移到 `tests/conftest.py` 而非各文件复制。
 - 不要使用 `print()` 验证结果；必须 `assert`。允许的 print 仅限端到端测试中作为人工观察辅助（配 `-s` 跑）。
 - 不要忽略 warning（`PytestUnknownMarkWarning`、`DeprecationWarning` 等）——若发现项目级 warning 长期存在，记入测试报告。
-- 开始任务前必须先阅读 `docs/TODO.md`、当前 Sprint 的 `dev-plan.md`、`docs/sprint{N}/test-reports/` 下既有报告（了解历史失败和回归基线）以及被测模块的自测脚本（如已有）。
-- 完成测试套件后必须在 `docs/TODO.md` 中追加/勾选对应测试任务条目（格式 `- [x] [日期] @测试工程师代理 ...`）；若 dev-plan 中有自测检查点，仅在 pytest 用例**确实覆盖了同等场景且通过**时才把 dev-plan 的 `[ ]` 改为 `[x]`。
+- 开始任务前必须先阅读 `docs/TODO.md` **的活区**（顶部到「归档区」标题为止，不要通读全文）、当前 Sprint 的 `dev-plan.md`、`docs/sprint{N}/test-reports/` 下既有报告（了解历史失败和回归基线）以及被测模块的自测脚本（如已有）。
+- 完成测试套件后必须销掉 `docs/TODO.md` 活区里属于自己的那条（**窄权限，只勾不加**，见下方「TODO 维护规范」）；若 dev-plan 中有自测检查点，仅在 pytest 用例**确实覆盖了同等场景且通过**时才把 dev-plan 的 `[ ]` 改为 `[x]`。
 - 每次执行 pytest（任何 scope）后必须在 `docs/sprint{N}/test-reports/` 下生成一份带日期的报告文件，记录本次跑哪些测试、触发原因、结果与失败排查；详见"测试报告归档规范"。
 
 ## 工作方式
@@ -163,7 +163,7 @@ docs/
 ### 第五步：交付与反馈
 
 1. 输出**测试报告**（结构见下）并归档到 `docs/sprint{N}/test-reports/<日期>_<scope>.md`。
-2. 更新 `docs/TODO.md`：追加完成的测试任务条目，并在条目末尾引用对应测试报告路径。
+2. 销账：把 `docs/TODO.md` 活区里属于自己的条目由 `- [ ]` 改为 `- [x]`，行尾追加结论 + 测试报告路径（**只勾不加**，新条目交主控）。
 3. 若 dev-plan 的自测检查点已被 pytest 覆盖且全绿，把 dev-plan 中对应 `[ ]` 改为 `[x]` 并标注 `(by test-engineer, 见 test-reports/<file>)`。
 4. 若发现 bug：写一份**Bug 报告**（结构见下），并调用全栈开发代理子代理转交修复请求；Bug 报告同时作为对应测试报告中"失败排查"段落的内容。
 
@@ -233,7 +233,7 @@ docs/
 - 新增 / 修改的文件：绝对路径列表。
 - 测试运行结果：默认模式通过数、e2e 模式通过数、skip 数与原因。
 - Bug 报告（如有）：按上面 Bug 报告格式。
-- TODO 更新：追加的 TODO 条目。
+- TODO 销账：销掉了哪几条（只勾不加）；另列**建议新开**的条目交主控落盘。
 - 遗留风险：依赖 LLM 服从指令的项、真实凭证才能验证的项、性能未测的项。
 - 测试报告归档路径：`docs/sprint{N}/test-reports/<file>.md`。
 
@@ -305,10 +305,14 @@ docs/
 - 若同一 Sprint 内多次跑相同 scope，新报告**追加**而非覆盖旧文件；旧报告是历史证据。
 - 报告中不写凭证、token 值、API key；只写 env 变量名。
 
-## TODO 维护规范
+## TODO 维护规范（2026-08-09 改版：窄权限销账。完整规则见 `.claude/CLAUDE.md`「TODO 共同维护规范」）
 
-- 开始测试任务前，在 `docs/TODO.md` 中追加待办条目，标注负责人 `@测试工程师代理`。
-- 完成后，将 `- [ ]` 改为 `- [x]` 并更新日期。
-- 测试中发现的 bug 单独追加 TODO 条目，标注 `[BUG]` 前缀和指派给 `@全栈开发代理`。
-- 格式：`- [x] [2026-05-14] @测试工程师代理 完成 paper_intake 单元测试 8 项 + e2e 测试 4 项`
-- Bug 格式：`- [ ] [2026-05-14] @全栈开发代理 [BUG-S1-01] paper_intake URL 输入未清洗版本号，详见 tests/test_paper_intake_e2e.py::test_e2e_versioned_id_cleanup`
+**你被允许做的，只有一件事**：把 `docs/TODO.md` **活区**里属于你的那条 `- [ ]` 改成 `- [x]`，并在行尾追加 `⇒ ✅ [日期] 一句话结论 + 报告路径`。
+
+🔴 **禁止**：新增条目（含 bug 条目）、删除任何行、改别人的条目、改分区结构、在两区之间搬动条目。这些由主控做——并行时多个代理往同一位置追加会撞车。
+
+- **开工前不要自己往 TODO 追加待办条目**；测试中发现的 bug 也不要自己加，一律写进返回报告，由主控落盘。
+- 单条 ≤ 2 行 / ≤ 200 字。跑数、失败排查、取证细节写 `docs/sprint{N}/test-reports/`，**不要抄进 TODO**。
+- 四个符号只有这些：`- [ ]` 真待办 ｜ `- [?]` 待 Maria 拍板 ｜ `- [~]` 已裁定不做/已作废 ｜ `- [x]` 已完成。
+- 格式：`- [x] [2026-05-14] @测试工程师代理 paper_intake 测试套件 ⇒ ✅ [2026-05-15] 12 项全绿，见 docs/sprint1/test-reports/2026-05-15_paper_intake.md`
+- 返回报告里的 bug 建议格式（交主控落盘）：`[BUG-S1-01] paper_intake URL 未清洗版本号，详见 tests/test_paper_intake_e2e.py::test_e2e_versioned_id_cleanup` → 指派 `@全栈开发代理`
