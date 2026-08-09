@@ -1,9 +1,9 @@
 # 论文自动复现系统 -- 技术架构文档
 
 **产品名称**：Auto-Reproduction
-**版本**：v1.6
+**版本**：v1.7
 **日期**：2026-05-06
-**最后更新**：2026-08-07
+**最后更新**：2026-08-09
 **状态**：正式定稿（当前权威活文档，随代码演进持续更新）
 
 ---
@@ -179,8 +179,8 @@ class ReActState(TypedDict):
 |------|-----------|---------|---------|
 | paper_intake | 10 | 2-3 | get_paper_brief, get_paper_head, search_papers |
 | paper_analysis | 24 | 6-10 | get_paper_structure, read_section, get_full_paper, search_papers |
-| resource_scout | 30（REACT_MAX_ROUNDS_RESOURCE_SCOUT，S7-07 由 20 上调） | 4-8 | web_search, search_papers, get_paper_brief, git_clone_and_analyze, check_url_reachable, **probe_environment**（共 6 工具；Sprint 6 MF-5 摘除 PwC 通道后已无 `search_pwc`；S7-06 新增只读环境探测，装配处 `core/nodes/resource_scout.py:758-765` 的 6 项 lambda，末项 `make_probe_environment_tool` 在 `:764`） |
-| planning | 16 | 3-5 | read_section, get_paper_structure, web_search, check_url_reachable, git_clone_and_analyze |
+| resource_scout | 30（REACT_MAX_ROUNDS_RESOURCE_SCOUT，S7-07 由 20 上调） | 4-8 | web_search, search_papers, get_paper_brief, git_clone_and_analyze, **`check_url_reachable_tool`**（⟦2026-08-09 订正：原写 `check_url_reachable`，那是模块内的纯函数名；**agent 眼里的运行期工具名是 `check_url_reachable_tool`**，见下方裁定 AR-GLOBAL-02⟧）, **probe_environment**（共 6 工具；Sprint 6 MF-5 摘除 PwC 通道后已无 `search_pwc`；S7-06 新增只读环境探测，装配处 `core/nodes/resource_scout.py:758-765` 的 6 项 lambda，末项 `make_probe_environment_tool` 在 `:764`） |
+| planning | 16 | 3-5 | read_section, get_paper_structure, web_search, **`check_url_reachable_tool`**（⟦2026-08-09 订正，同上行⟧）, git_clone_and_analyze |
 | coding | 24（REACT_MAX_ROUNDS_CODING） | 视修复轮次 | write_code_file, read_code_file, list_dir, read_section, web_search, run_command, request_user_input（共 7 工具） |
 | execution（内嵌子图） | 20（REACT_MAX_ROUNDS_EXECUTION，FLOOR） | 视执行步骤 | prepare_environment, run_in_sandbox, request_user_input, **read_code_file, list_dir**（共 **5** 工具；装配处 `core/nodes/execution.py:1582-1605`。⚠ 后两项由 sp8 批次 1a 挂入，该改动**截至 2026-08-07 仍在工作区、未提交**。**本行只照实记录现状数字**；其设计说明（为何接入、边界如何划）待 sp8 收口后按回填制补入 §3.2.2，届时删除本句） |
 
@@ -426,9 +426,17 @@ class ReproductionPlan(TypedDict):
                                          #   ⚠ 它是**模型自报的判断结果**，不是系统算出的"计划与实测偏离"标记
     local_fit_note: str                  # 给用户看的一段通俗中文：本机够不够、缺口是什么、按什么方式缩的、
                                          #   本次预计占用。缺省 ""、**缺键 ≡ ""**
-    # 两键**不进** planning 输出契约的 required——缺省已是安全值，进 required 会触发
-    # react_base finalize 多烧一次 LLM 调用。三方键集合（TypedDict / _build_reproduction_plan /
-    # _minimal_plan）有相等断言守门，"加键只改一处"当场红。
+    # 上述**两键**（scale_reduced / local_fit_note）**不进** planning 输出契约的 required——缺省已是
+    # 安全值，进 required 会触发 react_base finalize 多烧一次 LLM 调用。三方键集合（TypedDict /
+    # _build_reproduction_plan / _minimal_plan）有相等断言守门，"加键只改一处"当场红。
+    # --- Sprint 8 新增（S8-01 扩围，core/state.py:175）---
+    success_criteria: str                # 对这篇论文而言，"论文核心结论得到印证"具体指什么（单个字符串，
+                                         #   **不是"档位→达标线"的字典**——四档名因此不出现在计划里，
+                                         #   两层分离由结构本身守住）。缺省 ""、**缺键 ≡ ""**。
+                                         #   ⚠ 它**进** planning 输出契约的 required（与上面两键相反）：
+                                         #   缺省 "" 在这里不是安全值，等于这篇论文没有判定依据、整条判定链
+                                         #   当场断，故"缺失时多烧一次 schema 重生成"的代价正当
+                                         #   （core/nodes/planning.py:133）
 
 
 # ========== 执行结果 ==========
@@ -576,7 +584,24 @@ class GlobalState(TypedDict):
     # --- Sprint 4 用户交互通道（interrupt#3，单点写，无 reducer）---
     pending_user_input: Optional[Dict]          # 当前待回答请求快照（question/is_sensitive/purpose_key），绝不存答案；resume 后清 None
     collected_inputs: Dict[str, str]            # 本任务内已收集的非敏感项（purpose_key → value）；敏感项绝不进 state，跨任务复用只靠 .secrets
+
+    # --- Sprint 5 诚实性治理三通道（⚠ 2026-08-09 补：sp5 即已落地，本镜像自 sp5 起一直漏记）---
+    # 三键均为单值通道，last-write-wins 正确，**绝不加 reducer**（must-fix-1）；必须显式声明为
+    # GlobalState 通道 + create_initial_state 给默认值（core/state.py:451-453），否则节点写入被
+    # LangGraph 静默丢弃；下游消费一律 .get() 防御读（R-5/R-6）。权威源 core/state.py:304-318。
+    credential_degradations: Dict[str, str]  # coding 前置门单点整 dict 回写 {purpose_key: 降级说明}；
+                                             #   coding 上下文 / execution 收尾 / reporting 标注消费
+    simulation_notice: Optional[str]         # coding _map_coding_result 单点写（LLM 自述模拟声明，缺失
+                                             #   回填 None 属诚实语义）；reporting 标注 + 强制声明节消费
+                                             #   （core/nodes/reporting.py:279 / :622）
+    honesty_audit: Optional[Dict]            # reporting 单点写（audit_code_dir 返回契约，见 §7.3 /
+                                             #   core/honesty_audit.py:531）；UI 报告页
+                                             #   （ui/pages/result_report.py:132）+ 测试断言消费
 ```
+
+> ⚠ **本次补录的成因值得就地记一笔（2026-08-09 @架构师代理）**：这三键**不是新交付**，sp5 就已落地。**而 v1.4 那次大清账专门补过本节**（见上方 `ExecutionResult` 的「2026-08-04 补：以下 4 键 sp5 即已落地，v1.3 之前本镜像一直漏记」与 `local_env_facts` 的「v1.3 回填 §7.5 时漏了本镜像」两条），**补漏时又漏了这一批** ⇒ **"补一次漏账"和"把这一节补齐"是两件事**：上一轮是拿着 `ExecutionResult` / `local_env_facts` 两条线索去补，补完就收工，**没有拿 `core/state.py` 的键集合与本镜像做一次逐键对平**。⇒ 纪律：**镜像类章节的补漏，判据必须是"两侧键集合相等"，不是"点名的那几条已补"**（同 MEMORY §3.8「清账必须双向」，此处是它在同一节内的第二次发作）。
+>
+> ✅ **本次即按上述判据做了一次全节逐键对平**（2026-08-09，对 `core/state.py`）：`GlobalState` 两侧现各 **37 键**、`ExecutionResult` 各 **11 键**、`ReproductionPlan` 各 **14 键**。**对平过程中另挖出一处**：`ReproductionPlan` 镜像缺 `success_criteria`（sp8 批次 1b 已交付，`core/state.py:175`），已同批补入上方。⚠ **该键的改动截至 2026-08-09 仍在工作区、未提交**；按 MEMORY §3.7，**本节只照实记录现状键与缺省语义**，其设计说明（两层分离为何要靠单字符串守）待 sp8 收口后按回填制补入，届时删除本句。
 
 ---
 
@@ -655,11 +680,38 @@ auto_reproduction/
 | `core/nodes/*` | 各步骤的节点逻辑实现；ReAct 节点通过 `_make_react_wrapper()` 生成 wrapper 接入主图；planning 手写复合 + 内嵌 ReAct + interrupt#1；execution 手写编排 + 内嵌 ReAct 子图 + interrupt#2；reporting 纯函数 | wrapper 函数签名 `def node_fn(state: GlobalState) -> dict` |
 | `core/nodes/execution.py` | 执行与验证复合节点：`_run_execution_agent` 内嵌 ReAct 子图（prepare_environment / run_in_sandbox / request_user_input）+ 编排层收尾（错误分类 `ErrorCategory` / 指标解析 / B 档判定 / 修复循环边界 / interrupt#2） | `execution`, `_run_execution_agent`, `_classify_execution`, `_maybe_interrupt_or_return`（节点本地） |
 | `core/plan_checks.py` | 计划期确定性交叉检查（零 LLM，只产 warning 不阻断审批）+ 承载两条**同一不变量在计划期与执行期各查一次**的共用纯谓词 | `check_plan(plan, resource_info) -> List[warning]`；`is_inline_code_write(command) -> bool`（S7-10）；`has_unsupported_shell_syntax(command) -> bool` + `UNSUPPORTED_SHELL_SYNTAX_MESSAGE`（S7-12）。位于 `core/` 顶层、零项目内依赖，被 `core.nodes.execution` import 不成环；**反向 import 明令禁止** |
-| `core/secrets_store.py` | 凭证存取与全链路脱敏：`.secrets`（0600 + gitignore）读写、敏感值登记/掩码、git/HF 凭证 env 构造 | `lookup_secret`, `remember_secret`, `load_all_secrets`, `register_sensitive_value`, `iter_sensitive_values`, `mask_value`, `build_credential_env` |
+| `core/secrets_store.py` | 凭证存取与全链路脱敏：`.secrets`（0600 + gitignore）读写、敏感值登记/掩码、git/HF 凭证 env 构造 | `lookup_secret`, `remember_secret`, `load_all_secrets`, `register_sensitive_value`, `iter_sensitive_values`, `mask_value`, **`stash_session_secret`**（⟦2026-08-09 补：接口 7，S5-01 进程内会话覆盖层，`:391`；本行与 §7.4 那份清单同源，同批订正⟧）, `build_credential_env` |
 | `core/tools/*` | 外部服务调用的工具封装，同时提供 LangChain `@tool` 工厂函数供 ReAct agent 使用 | 各工具函数 + `BaseTool` 工厂函数，与 `bind_tools()` 兼容 |
 | `sandbox/local_venv.py` | 本地 venv 沙箱的创建、依赖安装、命令执行（子进程护栏：禁 shell=True / 进程组隔离 / 超时杀子树 / 输出截断 / cwd 限定 WORKSPACE_DIR；`prepare_venv` / `run_in_venv` 均支持 `extra_env` 注入） | `prepare_venv()`, `run_in_venv()`, `collect_artifacts()` |
 | `ui/pages/*` | Streamlit 各页面的 UI 逻辑 | 每个模块为独立的 Streamlit 页面 |
 | `ui/components/*` | 可复用的 UI 组件 | Streamlit 组件函数 |
+
+### 5.1 三条"死契约"的裁定（`AR-GLOBAL-01 ~ 03`，2026-08-09 @架构师代理）
+
+> **背景**：清账时挖出三处「文档/代码里立着、但生产链路上没有任何一端在用」的契约。它们不属任何 Sprint 射程，长期无人裁 ⇒ 本节一次性裁完并留档。
+> 🔴 **本节只出裁定与落点，本轮零生产改动**；代码动作的排期交主控。
+> **共同判据**：一个没有消费方的契约**不是中性的**——它会让读文档/读 `config.py` 的人据以做出错误推断，代价在下一次有人"照着它去做"时才结算。这与反过度工程（MEMORY §4.1）是同一条：**最小抽象不只是"别新建"，也包括"把已经死掉的收掉"。**
+
+> 🔴 **执行状态（2026-08-08，Maria 授权「那就删掉吧，确保删掉不影响」后由主控落盘）**：`AR-GLOBAL-01` / `AR-GLOBAL-03` **均已删除完毕**，`AR-GLOBAL-02` 此前已改完文档。
+> **删除后验证**：全量回归 **2671 passed / 0 failed（与删前逐数守恒）**、`rm -rf .mypy_cache && mypy` 零错误、全仓残留引用仅剩说明性注释。
+> **两处"不影响"的实质保证**（不只是回归绿）：
+> - ①`make_git_clone_tool` 依赖的 `_repo_slug` / `git_clone` / `WORKSPACE_REPOS_DIR` **均另有消费者**（`git_tools.py:227`/`:228`/`:425`/`:426`）⇒ 删它**没有造出新的死代码**；
+> - ②`tests/test_sprint2_a5.py` 里那段"失败路径输出仍是合法 JSON"（**BUG-S1-02 防线**）**不是删掉而是平移**到 `make_git_clone_and_analyze_tool` 的同一条失败路径——两者失败分支都返回含 `success`/`error` 的 JSON，断言一字未减；
+> - ③两处各**补了一条负向断言**守"不得复活"（`not hasattr(git_tools, "make_git_clone_tool")` / `not hasattr(config, "LOG_DIR")`）⇒ `test_sprint2_a4.py` 那条删掉的 `LOG_DIR.is_dir()` 属**断言对象随所在物一起消失**，不是弱化。
+> ✅ **磁盘遗留亦已清理（2026-08-08，Maria 授权后）**：`workspace/logs/` 空目录已删（创建于 2026-05-07，至今零文件——正是"生产零写入"最直接的实证）。用 `rmdir` 而非 `rm -rf`，非空即报错、不强删。
+> 🔴 **删后另做了一次"契约确已断开"的验证**：实跑 `config.ensure_directories()` ⇒ `workspace/logs` **未被重建**、`workspace` 与 `workspace/repos` 仍正常建出、`hasattr(config, "LOG_DIR")` 为 False。**这一步不能省** —— 只删磁盘目录而契约还在，下次启动它就长回来了；本验证证明删掉的是契约本身。
+
+| 编号 | 对象 | 磁盘实测（2026-08-09） | 裁定 | 落点（~~交主控排期，本轮不动~~ ⇒ ✅ **2026-08-08 已执行**） |
+|---|---|---|---|---|
+| **AR-GLOBAL-01** | `make_git_clone_tool`（`core/tools/git_tools.py:462`） | **零生产消费点**：全仓 `make_git_clone_tool` 仅命中自身定义 + `tests/test_sprint2_a5.py:275` / `:309`。挂载它的节点**一个都没有**——`core/nodes/planning.py:51-52` 与 `resource_scout` 装配的是 `make_check_url_reachable_tool` / `make_git_clone_and_analyze_tool` | 🔴 **删除，不接入** | `core/tools/git_tools.py` 删工厂 + `tests/test_sprint2_a5.py:273-275`（三工厂身份断言）与 `:309` 同批换发 |
+| **AR-GLOBAL-02** | 文档写 `check_url_reachable`，运行期真名 `check_url_reachable_tool` | `git_tools.py:382` 是**纯函数** `check_url_reachable`；`:440` 工厂内的 `@tool` 函数名为 **`check_url_reachable_tool`**（`:444`），LangChain 以函数名作工具名 ⇒ **agent 眼里就叫 `check_url_reachable_tool`**。测试侧断言的也是带 `_tool` 的名（`tests/test_sprint2_b2.py:468`/`:486`、`tests/test_sprint7_s706_env_facts.py:229`/`:245`） | 🔴 **改文档，不改代码**（本节上方两处工具表已就地订正） | 已改完（§3.2.1 两行）。**不改代码的理由见下方"为什么这条不是二选一"** |
+| **AR-GLOBAL-03** | `config.LOG_DIR`（`config.py:11`，`ensure_directories` 于 `:182` 创建） | **生产零写入**：全仓 `LOG_DIR` 仅命中 `:11` 定义与 `:182` `mkdir`；`core/` `ui/` `sandbox/` `app.py` 无任何 `FileHandler` / `logging.basicConfig`（仅 `scripts/spike_*.py` 三个一次性脚本用 `basicConfig`，输出到 stderr）。**真实落盘的执行日志根本不在这里**，而在 `<code_output_dir>/exec_logs/round_{n}.log`（`core/nodes/coding.py:323`） | 🔴 **删除**（连同 `:182` 的 `mkdir`） | `config.py:11` + `:182`；若有断言引用 `LOG_DIR` 同批处置 |
+
+**AR-GLOBAL-01 为什么是"删"而不是"接入"**：它与 `git_clone_and_analyze` 的差别只是"不做分析"。而本项目里**没有任何一个节点需要只 clone 不分析**——resource_scout 要的是仓库质量评分（必须分析），planning 要的是可达性与内容（同上）。给 agent 多挂一个功能重叠的工具，**换来的不是能力而是选择成本**（多一个可选项 = 多一条选错的路，且它的返回结构与另一个不同，下游回读逻辑要多认一种）。⇒ 接入是净负收益。
+
+**AR-GLOBAL-02 为什么这条不是二选一**：改代码（把工具函数改名成 `check_url_reachable`）看起来更"整齐"，但它**改的是送进 LLM 的工具 schema 字节** ⇒ ①`bind_tools` 前缀变化，牵动 prompt cache 与 `resource_scout` / `planning` 两侧的提示词字节门；②它与模块内同名纯函数**在同一文件里撞名**（`:382` 已占用该名），改名需要连带改纯函数名或加前缀，波及 4 处测试断言 + 4 处调用；③收益为零——agent 从不读我们的文档。⇒ **失真在文档一侧，就在文档一侧修**。
+
+**AR-GLOBAL-03 为什么"空目录"也算错，而不是无害**：`config.py` 里写着 `LOG_DIR = WORKSPACE_DIR / "logs"` 且每次启动都真把它建出来，读的人会得出"日志落在 `workspace/logs/`"这个结论 —— **而那里永远是空的，真日志在别处**。⇒ **一个指错方向的路径比没有路径更贵**（人会先去空目录里找，找不到才怀疑文档）。⚠ **不要用"下个 Sprint 的可观测性可能要用"来保留它**：那正是 `R-S8-42`「声明必须与其真实写入点原子同批」的推广形态 —— 届时随真实写入方一次建立即可，**提前三个 Sprint 建一个空壳换不来任何东西**。
 
 ---
 
@@ -796,7 +848,9 @@ v2 版本将支持 Docker 容器作为远程执行沙箱，提供更强的隔离
 
 ### 7.4 凭证注入（Sprint 4 已落地）
 
-凭证以环境变量经 sandbox `extra_env` 注入执行子进程（`_run_subprocess` 的 `env = {**os.environ, **(extra_env or {})}`）。`run_in_venv` 与 `prepare_venv` 均带 `extra_env` 形参并透传给内部子进程（含 pip install，sp4 D1 落地）。git 认证失败经 `GIT_TERMINAL_PROMPT=0` 让子进程立即返回而非挂起等 stdin。敏感值**完全不进 GlobalState / checkpoint**，勾"记住"时写入独立 `.secrets`（0600 + gitignore，MVP 不加密）；全链路（生成代码 / 日志 / 报告）脱敏。`.secrets` 路径与凭证映射已于 sp4 A3 定案：文件名 `config.SECRETS_FILE_NAME=".secrets"`，实际路径 = `Path(workspace_dir) / SECRETS_FILE_NAME`（运行期 state 优先，回退 `config.WORKSPACE_DIR`）；`core/secrets_store.py` 提供 `lookup_secret` / `remember_secret` / `load_all_secrets` / `register_sensitive_value` / `iter_sensitive_values` / `mask_value` 六接口，另有 `build_credential_env` 完成 `purpose_key → env var` 映射（GIT_ASKPASS 脚本 + `GIT_TERMINAL_PROMPT=0` + HF token 等）。
+凭证以环境变量经 sandbox `extra_env` 注入执行子进程（`_run_subprocess` 的 `env = {**os.environ, **(extra_env or {})}`）。`run_in_venv` 与 `prepare_venv` 均带 `extra_env` 形参并透传给内部子进程（含 pip install，sp4 D1 落地）。git 认证失败经 `GIT_TERMINAL_PROMPT=0` 让子进程立即返回而非挂起等 stdin。敏感值**完全不进 GlobalState / checkpoint**，勾"记住"时写入独立 `.secrets`（0600 + gitignore，MVP 不加密）；全链路（生成代码 / 日志 / 报告）脱敏。`.secrets` 路径与凭证映射已于 sp4 A3 定案：文件名 `config.SECRETS_FILE_NAME=".secrets"`，实际路径 = `Path(workspace_dir) / SECRETS_FILE_NAME`（运行期 state 优先，回退 `config.WORKSPACE_DIR`）；`core/secrets_store.py` 提供 ~~`lookup_secret` / `remember_secret` / `load_all_secrets` / `register_sensitive_value` / `iter_sensitive_values` / `mask_value` 六接口~~ ⇒ ⟦**2026-08-09 订正：漏登记一个，实为七接口**⟧ `lookup_secret`（`:164`）/ `remember_secret`（`:191`）/ `load_all_secrets`（`:213`）/ `register_sensitive_value`（`:242`）/ `iter_sensitive_values`（`:252`）/ `mask_value`（`:261`）/ **`stash_session_secret`（`:391`，源码内自标"接口 7"）** 七接口，另有 `build_credential_env`（`:322`）完成 `purpose_key → env var` 映射（GIT_ASKPASS 脚本 + `GIT_TERMINAL_PROMPT=0` + HF token 等）。
+
+> ⟦**2026-08-09 补录 @架构师代理**⟧ **`stash_session_secret`（接口 7，S5-01）**：把本次会话内用户填入的敏感值放进**进程内会话覆盖层**，供后续查找命中，而**不写 `.secrets` 磁盘**——即"这次用、但不记住"这条路径的落点（用户没勾"记住"时）。它与 `remember_secret`（写盘持久化）是同一件事的两个档，**漏登记它会让人以为"不勾记住 = 这个值无处可去"**。⚠ 漏登记的成因与 §4 状态镜像那批同源：**清单立在 sp4（当时确为六个），S5-01 扩接了第七个却没回头改这份清单**；且**同一份清单在本文档里有两处**（本节与 §5「各模块职责说明」表 `core/secrets_store.py` 行），上一轮若只改一处仍是失真 ⇒ **本次两处同批订正**。
 
 
 ### 7.5 只读环境探测边界（S7-06 / S7-07 已交付）
@@ -1422,7 +1476,7 @@ prepare_venv() 失败
 | 通用 ReAct 子图基础设施 | `core/react_base.py` | ReActState 定义、create_react_subgraph()、_make_react_wrapper() 工厂函数 |
 | 构建 LangGraph 主图骨架 | `core/graph.py` | 7 节点注册、顺序边 + coding↔execution 修复循环条件边、interrupt 占位 |
 | SqliteSaver 初始化 | `core/checkpointer.py` | checkpoint 管理基础设施 |
-| LLM 客户端封装 | `core/llm_client.py` | OpenAI 兼容 API 调用封装，含指数退避重试、structured output、token 估算 |
+| LLM 客户端封装 | `core/llm_client.py` | OpenAI 兼容 API 调用封装，含指数退避重试、structured output、token 估算（⚠ **`estimate_tokens` / `check_context_limit` 两个函数已实现，但生产链路零消费点** —— 预算按 LLM「调用次数」计，与 token 无关。详见 §12「LLM 上下文窗口溢出应对」块后标注） |
 | deepxiv_tools 封装 | `core/tools/deepxiv_tools.py` | Reader 薄封装 + LangChain @tool 工厂函数 |
 | paper_intake 节点 | `core/nodes/paper_intake.py` | 论文输入与解析（ReAct agent，max_rounds=10） |
 | paper_analysis 节点 | `core/nodes/paper_analysis.py` | 深度论文分析（ReAct agent，max_rounds=24） |
@@ -1506,3 +1560,10 @@ prepare_venv() 失败
 ***三、⟦同日追加·Maria 2026-08-07 拍板⟧ §3.2.1 execution 行工具集 3 → 5 的现状数字订正，并同批改准「不含 sp8 回填」的口径。** 磁盘落点 `core/nodes/execution.py:1582-1605`（新增 `read_code_file` / `list_dir`，sp8 批次 1a 挂入）。**⚠ 该代码改动截至本次落盘仍在工作区、未提交**，Maria 知情并据此拍板。**唯一改动是把 3 写成 5 并附装配处行号**——**刻意不写**接入理由、不写两个闸的边界、不写任何 S8-03 设计内容，那些等 sp8 收口后按既有回填制补入 §3.2.2（表内已留删除标记，届时一并摘除）。*
 ***为什么推翻同日早些时候（v1.5 / v1.6 开头）"本次不含任何 Sprint 8 回填"那个判断**：把「现状数字」与「设计说明」笼统打包成一句"时机未到"，会让 §3.2.1 这张**读者拿来判断"现在是什么"的现状表**停在一个错的数字上——那与 §7.5 曾经白纸黑字写着"该文件当前尚不存在"而文件已在磁盘上，是**完全同族、方向相反**的同一种失真。Maria 的原话是根因：**这两天挖出的问题追到底都是"文档上的数字跟磁盘对不上"，而这些几乎全是"等一等再改"等出来的——「本次未跑」「待交付后回填」「待确认 4 项」，写的时候都想着回头再改，然后就没有然后了。** ⇒ **确立口径：「代码交付后回填」制约束的是"要不要写这个功能的设计说明"，从不允许"让现状表停在错的数字上"。数字与磁盘不符属事实错误，任何时候都即时订正，不受批次边界与提交状态约束。***
 ***版本号处理**：**维持 v1.6，不另起 v1.7**——本次与 v1.6 同日、同一轮工作、同一份文档，v1.6 尚未被任何外部引用固化；沿 2026-07-28 那次「本次不升版本号的理由」先例（版本号绑"一批同步"而非"一次编辑"），避免版本号通胀。故本条并入 v1.6 日志，以⟦同日追加⟧标出批次边界，不掩盖它是拍板后补的这一事实。*
+
+*2026-08-09 更新（v1.7，架构侧文档失真一次性收口 · 「读代码 → 查文档」方向的整批回填 + 三条死契约裁定；Maria 授权架构师代理直接落盘）。**本次全部为「代码做了、文档没写 / 文档写错」的订正，零生产改动。** 逐条判定均上磁盘核实、附 文件:行号，不采信任何文档自述。*
+*​**一、§4 状态镜像的 sp5/sp6 治理层整批回填**：`GlobalState` 补 **sp5 诚实性治理三键** `credential_degradations` / `simulation_notice` / `honesty_audit`（`core/state.py:304-318` 声明、`:451-453` 初始化，消费点 `core/nodes/reporting.py:279`/`:622`/`ui/pages/result_report.py:132`）——**三键 sp5 即已落地，本镜像自 sp5 起一直漏记**。⚠ **成因已就地记档**：v1.4 那次大清账**专门补过本节**（补了 `ExecutionResult` 四键与 `local_env_facts`），**补漏时又漏了这一批**，因为它是拿着两条线索去补、没做键集合对平 ⇒ 立纪律「**镜像类章节的补漏，判据必须是"两侧键集合相等"**」。**本次即按该判据做了全节逐键对平**（`GlobalState` 各 37 键 / `ExecutionResult` 各 11 键 / `ReproductionPlan` 各 14 键），**并由此另挖出一处**：`ReproductionPlan` 镜像缺 `success_criteria`（sp8 批次 1b 已交付、`core/state.py:175`，改动仍在工作区未提交）——按 v1.6 确立的口径**只补现状键与缺省语义、不写设计说明**，并留到期标记。*
+*​**二、凭证接口清单由六补到七**：新增 `stash_session_secret`（`core/secrets_store.py:391`，源码内自标"接口 7"，S5-01 进程内会话覆盖层 = "这次用、但不记住"那条路径的落点）。⚠ 同一份清单在本文档里**有两处**（§7.4 正文 + §5「各模块职责说明」表），**本次两处同批订正**——只改一处仍是失真。原"六接口"表述按项目纪律**划删留痕、不洗白**。*
+*​**三、新增 §5.1「三条死契约的裁定」（`AR-GLOBAL-01 ~ 03`）**：①`make_git_clone_tool`（`core/tools/git_tools.py:462`）**零生产消费点**（仅 `tests/test_sprint2_a5.py:275`/`:309`）⇒ **裁：删除，不接入**（与 `git_clone_and_analyze` 功能重叠，多挂一个工具换来的不是能力而是选择成本）；②文档写 `check_url_reachable`、运行期真名 `check_url_reachable_tool`（`git_tools.py:382` 是纯函数、`:444` 才是 `@tool` 函数名）⇒ **裁：改文档不改代码**（改代码等于改送进 LLM 的工具 schema 字节，牵动两侧提示词字节门与 4 处断言，收益为零），§3.2.1 两处工具表已就地订正；③`config.LOG_DIR`（`config.py:11`，`:182` 创建）**生产零写入**（全仓无 `FileHandler`，真日志在 `<code_output_dir>/exec_logs/round_{n}.log`）⇒ **裁：删除**（指错方向的路径比没有路径更贵；不得用"下个 sp 可观测性可能要用"保留，那正违反 `R-S8-42`「声明与其真实写入点原子同批」）。**三条的代码动作均交主控排期，本轮不动。***
+*​**四、一处顺带订正**：§13 实现优先级表 `core/llm_client.py` 行的"token 估算"读起来像已接入 ⇒ 补一句"两函数已实现但生产链路零消费点、预算按调用次数计"，并指向 §12 那条完整标注（**同源处不能只标一处**）。*
+*​**五、本次复核后判定"无须改动"的两项，如实登记不虚报**：①**pip 降级版本回退**的超前承诺 —— §12.10「依赖安装阶段」**已于 2026-07-29 改写为如实描述**（全仓 `downgrade` 零命中，本次复核仍成立）；②**LLM 调用前 token 估算** —— §12「上下文窗口溢出应对」**已于 v1.5（2026-08-07）加行内提示 + 块后完整标注**。**两项此前的欠账登记（`docs/TODO.md:1084-1086` / `:1230` 称"至今无标注 / 漏做"）是过期账**，请主控销账。*
