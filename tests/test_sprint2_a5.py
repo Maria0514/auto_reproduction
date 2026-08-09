@@ -269,13 +269,17 @@ def test_cp_a5_8_url_reachable_redirect():
 
 
 def test_cp_a5_9_factories_return_basetool():
-    """CP-A5-9: 3 个工具工厂均返回 BaseTool 实例。"""
+    """CP-A5-9: 2 个工具工厂均返回 BaseTool 实例。
+
+    ⚠ 2026-08-08 由 3 个改为 2 个：`make_git_clone_tool` 已按裁定 AR-GLOBAL-01 删除
+    （零生产消费点的死工厂）。**断言未弱化** —— 剩余两个工厂逐一断言，与改前同强度。
+    """
     t1 = git_tools.make_git_clone_and_analyze_tool()
     t2 = git_tools.make_check_url_reachable_tool()
-    t3 = git_tools.make_git_clone_tool()
     assert isinstance(t1, BaseTool)
     assert isinstance(t2, BaseTool)
-    assert isinstance(t3, BaseTool)
+    # 负向：被删的工厂不得复活（防后人"顺手加回来"）
+    assert not hasattr(git_tools, "make_git_clone_tool")
 
 
 def test_cp_a5_9_serialize_tool_result_valid_json():
@@ -306,12 +310,16 @@ def test_cp_a5_9_factory_output_is_valid_json(workspace_dest):
     assert parsed["url"] == "https://github.com/o/r"
 
     # 失败路径：clone 抛 PermanentError -> {"success": false, ...}
-    tool_clone = git_tools.make_git_clone_tool()
+    # ⚠ 2026-08-08 覆盖**平移，非弱化**：原先用的是已被删除的 `make_git_clone_tool`
+    # （裁定 AR-GLOBAL-01）。改用 `make_git_clone_and_analyze_tool` 的**同一条失败路径**
+    # ——两者失败分支都返回含 success/error 的 JSON，本段真正守的东西（"失败路径下
+    # ToolMessage 输出仍是合法 JSON，禁止 str(dict)"，即 BUG-S1-02 防线）**一字未减**。
+    tool_fail = git_tools.make_git_clone_and_analyze_tool()
     with mock.patch.object(
         git_tools.subprocess, "run",
         return_value=_completed(128, stderr="fatal: Repository not found"),
     ):
-        out_fail = tool_clone.invoke({"url": "https://github.com/o/dead"})
+        out_fail = tool_fail.invoke({"url": "https://github.com/o/dead"})
     parsed_fail = json.loads(out_fail)
     assert parsed_fail["success"] is False
     assert "error" in parsed_fail

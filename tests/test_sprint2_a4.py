@@ -232,4 +232,7 @@ def test_aux_6_ensure_directories_idempotent() -> None:
     config.ensure_directories()  # 再调一次不应因目录已存在报错
     assert config.WORKSPACE_REPOS_DIR.is_dir()
     assert config.WORKSPACE_DIR.is_dir()
-    assert config.LOG_DIR.is_dir()
+    # ⚠ 2026-08-08：原有第三条 `assert config.LOG_DIR.is_dir()` 已删除 —— 不是弱化，
+    # 是**断言对象随所在物一起消失**（`LOG_DIR` 按裁定 AR-GLOBAL-03 删除）。
+    # 补一条负向断言，守住"它不得复活"：
+    assert not hasattr(config, "LOG_DIR")

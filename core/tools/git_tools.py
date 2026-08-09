@@ -459,32 +459,8 @@ def make_check_url_reachable_tool() -> BaseTool:
     return check_url_reachable_tool  # type: ignore[return-value]
 
 
-def make_git_clone_tool() -> BaseTool:
-    """工具工厂：单独的 git_clone（高级 agent 路径，不做本地分析）。"""
-
-    @tool
-    def git_clone_tool(url: str) -> str:
-        """Clone a git repository (shallow, depth 1) into the workspace.
-
-        Returns a JSON object {"success": bool, "local_path": str,
-        "duration_seconds": float, "error": Optional[str]}. Does NOT analyze
-        the repository (use git_clone_and_analyze for clone + analysis).
-
-        Args:
-            url: Git repository URL, e.g. "https://github.com/owner/repo".
-        """
-        try:
-            slug = _repo_slug(url)
-            dest = str(WORKSPACE_REPOS_DIR / slug)
-            result = git_clone(url, dest)
-            return _serialize_tool_result(result)
-        except (TransientError, PermanentError) as exc:
-            return _serialize_tool_result(
-                {"success": False, "local_path": "", "duration_seconds": 0.0, "error": str(exc)}
-            )
-        except Exception as exc:  # noqa: BLE001 — 兜底，不打断 ReAct 子图
-            return _serialize_tool_result(
-                {"success": False, "local_path": "", "duration_seconds": 0.0, "error": str(exc)}
-            )
-
-    return git_clone_tool  # type: ignore[return-value]
+# 注：`make_git_clone_tool`（单独的 git_clone 工具工厂，不做本地分析）已于 2026-08-08 删除。
+# 裁定 AR-GLOBAL-01（docs/technical-architecture.md §5.1，Maria 授权）：它与
+# `make_git_clone_and_analyze_tool` 功能重叠，且自 Sprint 2 落盘起**生产侧零消费点**
+# （规划节点装配的是另两个工厂）——多挂一个工具换来的不是能力而是选择成本。
+# 其依赖的 `_repo_slug` / `git_clone` / `WORKSPACE_REPOS_DIR` 均另有消费者，未受影响。

@@ -8,7 +8,12 @@ from typing import Optional
 PROJECT_ROOT: Path = Path(__file__).parent.resolve()
 CHECKPOINT_DB_PATH: Path = PROJECT_ROOT / "checkpoints.db"
 WORKSPACE_DIR: Path = PROJECT_ROOT / "workspace"
-LOG_DIR: Path = WORKSPACE_DIR / "logs"
+# 注：`LOG_DIR`（workspace/logs）已于 2026-08-08 删除。裁定 AR-GLOBAL-03
+# （docs/technical-architecture.md §5.1，Maria 授权）：它每次启动都被 mkdir 建出来，
+# 却**生产侧零写入**（全仓无 FileHandler / basicConfig）——真正的执行日志落在
+# `<code_output_dir>/exec_logs/round_{n}.log`。一个指错方向的空目录比没有目录更贵：
+# 排查时人会先去那儿找日志。⚠ 明确否掉"留给日后可观测性用"——那违反 R-S8-42
+# （声明必须与其真实写入点原子同批），提前建空壳换不来任何东西。
 # Sprint 2：resource_scout git clone 落盘目录（加入 ensure_directories 自动创建）
 WORKSPACE_REPOS_DIR: Path = WORKSPACE_DIR / "repos"
 
@@ -179,6 +184,5 @@ def get_llm_model() -> str:
 
 def ensure_directories() -> None:
     WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
     WORKSPACE_REPOS_DIR.mkdir(parents=True, exist_ok=True)
     SANDBOX_PIP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
