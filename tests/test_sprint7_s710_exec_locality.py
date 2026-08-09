@@ -793,11 +793,29 @@ def test_cp_6_5_4_w5_shares_one_predicate_with_tool_layer(
 
 
 def test_cp_6_5_5_check_plan_contract_unbroken() -> None:
-    """CP-6.5-5：`check_plan` 契约一字不破 —— 签名 / 返回项结构 / 不阻断审批。"""
+    """CP-6.5-5：`check_plan` 契约一字不破 —— 签名 / 返回项结构 / 不阻断审批。
+
+    ⚠ **sp8 T-S8-1b-3 换发（2026-08-08，`P-S8-24`）**：S8-11 护栏 3 按架构 sp8 §15.2
+    方案 A 给 `check_plan` **追加第三个带默认值的关键字形参** `paper_analysis`
+    （默认 `None` ⇒ W6 不触发）。⇒ 本条的"一字不破"须读作架构 §15.2 已登记的精确表述：
+    「**向后兼容、既有调用零改动、既有五条警示行为一字不变**」，**而不是**「函数签名
+    一字不变」——PRD sp8 §8 那句在实现上不成立。
+
+    🔴 **只换不弱化**：仍是 `==` 精确列表相等（**禁止改成 `>=` / `issubset` / 只切前两个**），
+    形参名与顺序逐个钉死；"再加第四个形参"这类退化照样必红，射程未减。
+    本条**不是** `check_plan` 的调用点，因而不在任何调用点预清点表内——`P-S8-24` 记的
+    正是这一点：加形参 / 加键 / 加工具时，**精确集合断言要单独 grep 一遍**。
+    """
     import inspect
 
     sig = inspect.signature(plan_checks.check_plan)
-    assert list(sig.parameters) == ["plan", "resource_info"], "check_plan 签名被改了"
+    assert list(sig.parameters) == ["plan", "resource_info", "paper_analysis"], (
+        "check_plan 签名被改了"
+    )
+    # 向后兼容的命门：第三个形参必须**带默认值 None**，既有两参调用才不改也能跑。
+    assert sig.parameters["paper_analysis"].default is None, (
+        "paper_analysis 必须带默认值 None，否则既有 36 处两参调用当场全红"
+    )
 
     plan = _plan([{"command": ORIGINAL_PLACEHOLDER_WRITE_COMMAND}])
     warnings = plan_checks.check_plan(plan, _RESOURCE_WITH_REPO)
@@ -978,12 +996,22 @@ def test_ac_s7_53_no_repo_path_is_undisturbed() -> None:
 
 
 def test_ac_s7_53_plan_structure_and_context_untouched() -> None:
-    """AC-S7-53③：计划结构 / 上下文组装 **一字不动**（本批不给计划加字段）。"""
+    """AC-S7-53③：计划结构 / 上下文组装 **一字不动**（**sp7 那一批**不给计划加字段）。
+
+    ⚠ **sp8 T-S8-1b-2 换发（2026-08-08）**：`required` 名单由 3 项换发为 **4 项**
+    —— sp8 S8-01 扩围新增 `success_criteria` 并**有意让它进 required**（架构 sp8
+    §2.5.5 已留档背离理由）。本条守的是"**S7-10 那批**不得借机改计划结构"，其反面
+    样本 `code_output_dir`（S7-10 期间被否决的落点字段）断言**一字未动**；
+    仍是 `==` 精确相等，**未改成 `>=` / 子集判定**，`_format_planning_context`
+    的 6 形参断言同样一字未动。
+    """
     import inspect
 
     schema = planning_module.REPRODUCTION_PLAN_SCHEMA
-    assert set(schema["required"]) == {"plan_summary", "code_strategy", "deliverables"}
-    assert "code_output_dir" not in schema["properties"], "本批不得给计划加字段"
+    assert set(schema["required"]) == {
+        "plan_summary", "code_strategy", "deliverables", "success_criteria",
+    }
+    assert "code_output_dir" not in schema["properties"], "S7-10 那批不得给计划加字段"
     params = list(inspect.signature(planning_module._format_planning_context).parameters)
     assert len(params) == 6, f"_format_planning_context 形参数被改了：{params}"
 

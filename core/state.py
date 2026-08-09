@@ -139,6 +139,22 @@ class ReproductionPlan(TypedDict):
         3. **scale_reduced 是模型自报的判断结果，不是系统算出的"计划与实测偏离"标记**
            （Maria 裁决 7：不留偏离痕）。系统不产出任何机器可读的偏离信号，
            两者语义不可混同。
+
+    Sprint 8 变更（S8-01 扩围，架构 sp8 §2.5 / AR-S8-15）：新增 1 个扁平顶层键，
+    承载"对这篇论文而言，论文核心结论得到印证具体指什么"这条判定依据：
+        - success_criteria: 由论文分析 + 规划针对**本篇论文**推导出来、经用户在计划
+          审核页审核批准的达标线。缺省 ""，**缺键 ≡ ""**（下游一律
+          ``.get("success_criteria") or ""`` 防御读，旧 checkpoint 不 KeyError）。
+    纪律三条：
+        1. 🔴 **它是单个字符串，不是"档位→达标线"的字典**（架构 §2.5.2 方案 A）。
+           结果分级的语义边界由系统统一定义、跨论文恒定，计划只填本篇达标线——
+           做成字典/列表会把分级名变成计划可写的键，等于**结构上给出越权入口**；
+           单个字符串则让计划**连能写越权内容的字段都没有**。任何"看起来更灵活"的
+           容器形态一律否决。
+        2. 它**进** planning 输出契约的 `required`——这是对 S7-08 纪律 2 的有意背离
+           （架构 §2.5.5 已留档）：缺省 "" 在这里**不是**安全值，等于这篇论文没有
+           判定依据、整条判定链当场断，故"缺失时多烧一次 schema 重生成"的代价正当。
+        3. 它是计划字段、随计划一次落盘，下游节点**只读不写**（零幂等风险）。
     """
     plan_summary: str
     environment: Dict[str, Any]
@@ -154,6 +170,9 @@ class ReproductionPlan(TypedDict):
     # === Sprint 7 新增（S7-08，架构 sp7 §18.1.2）===
     scale_reduced: bool
     local_fit_note: str
+    # === Sprint 8 新增（S8-01 扩围，架构 sp8 §2.5；AR-S8-15：与 planning.py 两处
+    # 构造点原子同批，R-S8-42）===
+    success_criteria: str
 
 
 class ExecutionResult(TypedDict):

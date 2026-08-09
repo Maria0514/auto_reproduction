@@ -112,6 +112,12 @@ _GUARDED_CONSTANTS: Tuple[Tuple[str, str], ...] = (
     # S7-11 / T-S7-7-6：步骤没跑完时的改判文案，经 fix_loop_history 进 UI 修复历程条。
     ("core.nodes.execution", "_INCOMPLETE_EXECUTION_SUMMARY_LEAD"),
     ("core.nodes.execution", "_INCOMPLETE_EXECUTION_FIX_HINT"),
+    # === Sprint 8 批次 1b 新增（S8-01 扩围 / S8-11 三道护栏）===
+    # S8-11 / T-S8-1b-3：护栏 3 第六条警示的文案，与 W4/W5 同一条通道直达用户。
+    ("core.plan_checks", "_W6_MESSAGE"),
+    # S8-01 / T-S8-1b-4：护栏 1 —— 计划审核页顶部只读展示的小节标题与兜底句。
+    ("ui.pages.plan_review", "_SUCCESS_CRITERIA_HEADING"),
+    ("ui.pages.plan_review", "_SUCCESS_CRITERIA_FALLBACK"),
 )
 
 # --------------------------------------------------------------------------- #
@@ -119,18 +125,25 @@ _GUARDED_CONSTANTS: Tuple[Tuple[str, str], ...] = (
 #   - ui/term_map.py::TERM_LABELS 全量值 …………………………… 43 条
 #     （dev-plan §32.4 事实 9 记 41 条为 T-5-9 加 `annotation:scale_reduced` 之前的值；
 #      S7-10 后为 42 条；S7-11 加 `error_category:incomplete_execution` 一条 ⇒ 43）
-#   - 上表具名常量 ………………………………………………………… 15 条
+#   - 上表具名常量 ………………………………………………………… 18 条
 #     （S7-08 收口时 10 条；S7-10 加 core.plan_checks 的 W4 / W5 两条 message ⇒ 12；
 #      S7-11 加 3 条：reporting._SUCCESS_CRITERIA_NOTE +
-#      execution._INCOMPLETE_EXECUTION_SUMMARY_LEAD / _INCOMPLETE_EXECUTION_FIX_HINT）
+#      execution._INCOMPLETE_EXECUTION_SUMMARY_LEAD / _INCOMPLETE_EXECUTION_FIX_HINT
+#      ⇒ 15；**sp8 批次 1b 加 3 条**：plan_checks._W6_MESSAGE（护栏 3 第六条警示文案，
+#      T-S8-1b-3）+ plan_review._SUCCESS_CRITERIA_HEADING / _SUCCESS_CRITERIA_FALLBACK
+#      （护栏 1 顶部只读展示的标题与兜底句，T-S8-1b-4）⇒ **18**）
 #                                                     ------
-#   合计 EXPECTED_N …………………………………………………… 58 条
+#   合计 EXPECTED_N …………………………………………………… 61 条
 #
 # ⚠ 三个数字必须 `==`，**禁止改成 `>=`**（理由见模块 docstring）。
+#   sp8 批次 1b 的这次 +3 走的正是 docstring 里那条维护语义（新增用户可见静态文案
+#   ⇒ 提为具名常量 ⇒ 加进本表 ⇒ 计数同步 +1），**不是放宽，是按机制走一遍守门评审**。
+#   ⚠ `EXPECTED_TERM_LABELS_N` 本批**零改动**（批次 1b 不碰 `ui/term_map.py`）；
+#   它的目标值由批次 3 的 T-S8-3-1 / T-S8-3-10 精确定档，**届时的现值是 18 不是 15**。
 # --------------------------------------------------------------------------- #
 EXPECTED_TERM_LABELS_N: int = 43
-EXPECTED_CONSTANTS_N: int = 15
-EXPECTED_N: int = EXPECTED_TERM_LABELS_N + EXPECTED_CONSTANTS_N  # == 58
+EXPECTED_CONSTANTS_N: int = 18
+EXPECTED_N: int = EXPECTED_TERM_LABELS_N + EXPECTED_CONSTANTS_N  # == 61
 
 # 既有守门黑名单的核心词（只做"没被掏空"的下界校验，
 # 不写成相等——日后清理那 16 处时 `_BLACKLIST` 可能合法扩充）。

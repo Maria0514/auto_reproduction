@@ -401,8 +401,12 @@ _AC_COVERAGE_MATRIX: Dict[str, List[tuple]] = {
     ],
     "AC-S7-35": [
         ("test_s708_plan_keys.py", "test_reproduction_plan_three_way_key_sets_are_equal"),
+        # ⚠ sp8 T-S8-1b-2 换发：该用例随 `ReproductionPlan` 加键（13 → 14）改名为
+        # `..._closed_at_fourteen`。本行是**这道矩阵守门自己抓出来的**——它正是为
+        # "矩阵写得很满、被映射的用例早已改名或删除"这种假 100% 覆盖而设（R-S7-46 同族），
+        # 加键那一刻当场打红。映射对象仍是同一条断言，覆盖面未减。
         ("test_sprint7_s708_plan_contract.py",
-         "test_cp_5_12_1_three_way_key_sets_closed_at_thirteen"),
+         "test_cp_5_12_1_three_way_key_sets_closed_at_fourteen"),
         ("test_sprint7_s708_plan_contract.py",
          "test_cp_5_12_1_new_keys_carry_safe_defaults_on_both_paths"),
         ("test_sprint7_s708_plan_contract.py",

@@ -109,8 +109,14 @@ REPRODUCTION_PLAN_SCHEMA: Dict[str, Any] = {
             },
         },
         "estimated_time": {"type": "string"},
-        # 最低交付基准线（PRD §2.3）：无论 execution_mode 都必填。
+        # S8-01 扩围（PRD sp8 §4.1.1）：语义由"最低交付基准线"扩为**本次复现应当落地的
+        # 产物**（含实验结果文件）；无论 execution_mode 都必填。
+        # 🔴 这份清单**不是**判定本次做得好不好的评分标准，只是"该拿出什么东西"的对照表。
         "deliverables": {"type": "array", "items": {"type": "string"}},
+        # S8-01 扩围（架构 sp8 §2.5.1）：本篇论文的达标线，**单个字符串**。
+        # 🔴 刻意不做 {分级名: 达标线} 的字典/列表——那会把结果分级的名字变成计划可写的
+        # 键，等于在结构上给计划开一个越权入口（架构 §2.5.2 方案 B/C 已否决）。
+        "success_criteria": {"type": "string"},
         # S7-08（架构 sp7 §18.1 裁决 2/3）：本机适配结论两键。判断的唯一持有者是模型
         # （无确定性提取通道）故必须进输出契约；但**刻意不进 required**——react_base
         # finalize 对 required 缺失会再跑一次 with_structured_output（多烧一次 LLM 调用），
@@ -119,7 +125,12 @@ REPRODUCTION_PLAN_SCHEMA: Dict[str, Any] = {
         "local_fit_note": {"type": "string"},
     },
     # approved / user_feedback 由 planning 节点根据 resume payload 写入，不强制 LLM 产出。
-    "required": ["plan_summary", "code_strategy", "deliverables"],
+    # 🔴 S8-01 扩围：success_criteria **进 required**，是对 S7-08 纪律 2（新键不进
+    # required，避免 react_base finalize 多烧一次 schema 重生成）的**有意背离**，已由
+    # 架构 §2.5.5 留档：纪律 2 的成立前提是"缺省已是安全值"，而这里缺省 "" 等于这篇
+    # 论文没有判定依据、整条判定链当场断 ⇒ 多烧一次调用的代价正当且可接受。
+    # 与 scale_reduced / local_fit_note 的情形**性质相反，不构成对该纪律的推翻**。
+    "required": ["plan_summary", "code_strategy", "deliverables", "success_criteria"],
     "additionalProperties": True,
 }
 
@@ -180,7 +191,13 @@ _PLANNING_SYSTEM_PROMPT_BODY = """你是论文复现规划专家。任务是综�
    - 仓库质量一般需大量适配 -> "hybrid"；
    - 无可用仓库 / resource_info 为空 -> "from_scratch"（从零实现）。
 5. execution_steps（step_name / command / expected_output 三元组列表）：可执行的步骤序列，
-   每步含命令与预期输出。命令约束（执行环境**不经 shell 解释**，仅安全解析少量 shell 语义）：
+   每步含命令与预期输出。
+   【expected_output 写法：会产出哪个文件，路径怎么写】
+   - 这一步若会写出文件（结果汇总、图、中间结果等），expected_output 要**写清文件的
+     相对路径**（相对下面说的代码目录，如 `outputs/main_result.json`）；这句是**写给
+     代码生成环节看的说明**——代码要落在哪、叫什么名字，由这里说了算；
+   - 这一步不产出文件的（如安装依赖），照实写预期看到的屏幕输出即可，不要编一个文件名。
+   命令约束（执行环境**不经 shell 解释**，仅安全解析少量 shell 语义）：
    - 优先输出**原子命令**：一个 step 尽量只放一条独立命令，少用 shell 复合语法；
    - venv 已由系统准备好且 python/pip 已指向 venv，**不要** `python -m venv` 自建、**不要** `source`/`.` 激活；
    - 直接用 `pip install ...`、`python xxx.py`（系统会自动改写到 venv 解释器）；
@@ -215,8 +232,13 @@ _PLANNING_SYSTEM_PROMPT_BODY = """你是论文复现规划专家。任务是综�
      - 只声明 purpose_key 与用途，**绝不要**在计划中写入任何凭证值本身；
      - 复现不依赖任何外部凭证时输出空列表 []，不要杜撰需求。
    - estimated_time：总预估耗时；
-   - deliverables（最低交付基准线，**必填，无论是否完整复现都要给**）：至少含
-     README.md / requirements.txt / 入口脚本 / 核心实现文件 / `py_compile` 通过。
+   - deliverables（**本次复现应当落地的产物**，必填，无论是否完整复现都要给）：
+     - 基础产物：README.md / requirements.txt / 入口脚本 / 核心实现文件 /
+       `py_compile` 通过；
+     - **本次实验应当写出来的结果文件**：按上面 execution_steps 里 expected_output
+       写明的相对路径逐条列出，别只写"有结果"；
+     - 这份清单是"该拿出什么东西"的对照表，**不是用来判定本次做得好不好的评分标准**
+       ——那件事由下面的 success_criteria 承担，两者不要混写。
 
 【本机适配结论：scale_reduced 与 local_fit_note 两个判断字段】
 资源探索阶段已在这台机器上实测过环境。你必须在计划里明确回答"这台机器跑不跑得动"，
@@ -240,6 +262,24 @@ _PLANNING_SYSTEM_PROMPT_BODY = """你是论文复现规划专家。任务是综�
 - 两个字段都是给用户看的判断结论，local_fit_note 一律用通俗中文，不要写内部字段名、
   不要自创英文缩写。
 
+【本篇论文的达标线：success_criteria 字段】
+这一项要回答的是：**对这篇论文而言，什么样的结果才说明论文的核心结论确实被印证了。**
+它是之后核对结果时唯一的判断依据，也会原样展示给用户审核，所以必须针对这篇论文来写。
+- 推导原料：上下文里论文分析已经给出的 metrics（论文用的指标名）、datasets（数据集名）、
+  baseline_results（论文自己报出来的结果）、method_summary（方法概述）。一律从这些
+  已有事实出发，**不要另去凭空发明一套指标，也不要编造论文没报过的数字**；
+  这几个是上下文里的字段名，**别把字段名本身写进正文**，写它们里面的内容。
+- **必须点名论文里的具体主张**：说清是哪个指标、在哪个数据集上、或者论文正文里的
+  哪一条结论。**"能跑起来就行""不报错就算数"这类空话不算数**——它对任何论文都成立，
+  等于什么都没写，会被判为不合格的达标线并提示用户重写。
+- 可以怎么表述（**举例，不是可选项清单**）：数值与论文报告的结果对得上；多组实验
+  之间的高低关系与论文说法一致；画出来的图或样例输出支持论文的说法。按这篇论文
+  自己的形态挑一种或几种写，**不要套模板、不要按论文类型套用固定写法**。
+- **只写本篇的达标线**：系统对结果好坏怎么分级、每一级各是什么含义，由系统统一定义、
+  对所有论文都一样，**不在这份计划的可填范围内**——不要在这里重述它、改写它、
+  或者另立一套说法。
+- 写成一段通俗中文即可，**不要写成表格，也不要拆成"某某级别对应某某条线"的对照结构**。
+
 【输出格式】
 - 完成规划后，必须在 <result>...</result> 标签内输出严格 JSON，字段如下：
   {
@@ -253,11 +293,14 @@ _PLANNING_SYSTEM_PROMPT_BODY = """你是论文复现规划专家。任务是综�
     "estimated_time": str,
     "deliverables": [str, ...],
     "scale_reduced": true | false,
-    "local_fit_note": str
+    "local_fit_note": str,
+    "success_criteria": str
   }
-- deliverables 字段无论 code_strategy 取值都必须填写（最低交付基准线）。
+- deliverables 字段无论 code_strategy 取值都必须填写（本次应当落地的产物）。
 - scale_reduced 与 local_fit_note 两个字段必须输出：漏写会被当作"没做过本机适配"，
   用户在审核页就看不到这台机器够不够、本次预计占用多少。
+- success_criteria 必须输出：漏写这一项，之后就没有任何依据判断论文的说法到底有没有
+  被验证到，用户在审核页也无从判断这条线画得合不合理。
 - 不要在 <result> 之外再夹杂任何其它 JSON 块。
 
 【用户提供的仓库（来自修改意见 / 切换仓库）】
@@ -481,6 +524,10 @@ def _build_reproduction_plan(
         # 模型漏写时回落缺省 False / ""——"没做本机适配"是安全默认。
         scale_reduced=_coerce_bool(result.get("scale_reduced")),
         local_fit_note=_coerce_str(result.get("local_fit_note")),
+        # S8-01 扩围（架构 sp8 §2.5.1 / §2.5.5）：本篇论文的达标线。进 schema required
+        # （缺省 "" 不是安全值），漏写时回落空串——语义由架构 §2.5.6 定义（没有可核验
+        # 的判据 ⇒ 落既有客观封顶），**此处不另写"为空则降档"的分支**。
+        success_criteria=_coerce_str(result.get("success_criteria")),
     )
 
 
@@ -695,6 +742,10 @@ def _minimal_plan(state: GlobalState, reason: str) -> ReproductionPlan:
         # 根本没读过本机实测事实，不得冒充"已按本机规模缩过"。
         scale_reduced=False,
         local_fit_note="",
+        # S8-01 扩围（架构 sp8 §2.5.6）：降级路径恒为空串。🔴 **不得在这里编一条达标线**
+        # ——最简版计划根本没读过论文分析，替用户批准一条没人看过的及格线比留空更危险。
+        # 留空是**已被架构定义过语义**的状态（无可核验判据 ⇒ 落既有客观封顶），编一条则不是。
+        success_criteria="",
     )
 
 

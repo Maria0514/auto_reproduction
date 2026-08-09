@@ -175,12 +175,22 @@ def test_cp_1_5_2_schema_required_credentials_two_keys():
 
 
 def test_cp_1_5_2_schema_top_level_required_unchanged():
-    """两新字段均不入 schema top-level required（required_credentials 可为空属合法；
-    expected_results 缺失走 map 回填）。"""
+    """sp5 两新字段均不入 schema top-level required（required_credentials 可为空属合法；
+    expected_results 缺失走 map 回填）。
+
+    ⚠ **sp8 T-S8-1b-2 换发（2026-08-08）**：`success_criteria` **进 required**——这是对
+    S7-08 纪律 2 的**有意背离**，架构 sp8 §2.5.5 已留档：纪律 2 的成立前提是"缺省已是
+    安全值"，而 `success_criteria` 缺省 `""` 等于这篇论文没有判定依据、整条判定链当场断。
+    ⇒ 本条断言的**语义没有被弱化**：它守的仍是"required 名单精确闭合、不许随手加键"，
+    只是名单由 3 项换发为 4 项（仍是 `==` 精确相等，**未改成 `>=` / 子集判定**）。
+    sp5 两新字段"不入 required"的原结论**一字未改**。
+    """
     assert "required_credentials" not in _SCHEMA["required"]
     assert "expected_results" not in _SCHEMA["required"]
-    # 既有必填三键不动。
-    assert _SCHEMA["required"] == ["plan_summary", "code_strategy", "deliverables"]
+    # sp5 既有必填三键 + sp8 新增 success_criteria，顺序与取值精确闭合。
+    assert _SCHEMA["required"] == [
+        "plan_summary", "code_strategy", "deliverables", "success_criteria",
+    ]
 
 
 # ===========================================================================

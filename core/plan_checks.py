@@ -1,14 +1,24 @@
-"""plan_checks.py — 计划自洽确定性交叉检查（S6-05，架构 §7.5；S7-10 扩两条 + 共用谓词）。
+"""plan_checks.py — 计划自洽确定性交叉检查（S6-05，架构 §7.5；S7-10 扩两条 + 共用谓词；
+S8-11 扩第六条）。
 
 零 LLM、零 state 写入的纯函数模块。
-调用 check_plan(plan, resource_info) 返回警示列表，由 UI 渲染消费（不阻断审批）。
+调用 check_plan(plan, resource_info[, paper_analysis]) 返回警示列表，
+由 UI 渲染消费（不阻断审批）。
 
-五条规则（rule 用字符串字面量，不建 Enum）：
+六条规则（rule 用字符串字面量，不建 Enum）：
   W1 数据步骤脱节 ── data_preparation 非空 ∧ 执行步骤无数据关键词
   W2 指标产出脱节 ── expected_results 非空 ∧ 执行步骤无实验/指标关键词
   W3 数据不可得   ── resource_info 无 dataset ∧ selected_repo=None ∧ data_preparation 非空
   W4 步骤进参考仓库目录 ── 任一步骤的顶层子命令 `cd` 到参考仓库（S7-10 约束 A 软防线）
   W5 步骤内联写代码     ── 任一步骤命中 is_inline_code_write（S7-10 约束 B/C 的计划期观测）
+  W6 达标线没引用论文主张 ── 本篇达标线未出现论文分析里的任何事实层名词
+                            （S8-11 护栏 3，架构 sp8 §15；只产警示、不阻断审批）
+
+S8-11（护栏 3 落点，架构 sp8 §15.1/§15.2）：**零改动红线本次再解锁，范围严格限于两项**
+——①新增 W6；②`check_plan` 加**一个带默认值的关键字形参** `paper_analysis`。其余一字
+不动。既有五条 W 的 rule 字符串、message、触发条件逐字节未改；既有调用点不改也能跑
+（默认 `None` ⇒ 候选集为空 ⇒ W6 不触发 ⇒ 既有行为字节级零扰动）。先例：S7-10 曾解锁过
+一次（W4/W5 就是那次加的）。
 
 S7-10（约束 A/B/C 落点对齐）新增职责：本模块额外承载 **`is_inline_code_write` 这条
 共用纯谓词**——同一条不变量在**计划期**（W5，本模块）与**执行期**（`run_in_sandbox`
@@ -376,6 +386,12 @@ _W5_MESSAGE: str = (
     "这类步骤在实际执行时会被拒绝。"
 )
 
+_W6_MESSAGE: str = (
+    "计划里那条「拿到什么结果才算把论文验证到了」的标准，没有点到论文里的任何一个"
+    "具体指标、数据集或结论。这样写出来的标准对任何一篇论文都成立，等于没有给出判断依据。"
+    "请在批准之前，把它改成能对着论文原文逐条核对的说法。"
+)
+
 #: W4 判定用的路径信号：克隆下来的参考仓库统一放在工作区的这个目录下。
 _REPO_DIR_MARKER: str = "/repos/"
 
@@ -480,12 +496,54 @@ def _has_dataset_resource(resource_info: Dict[str, Any]) -> bool:
     return False
 
 
-def check_plan(plan: Dict[str, Any], resource_info: Dict[str, Any]) -> List[Dict[str, str]]:
+def _paper_fact_terms(paper_analysis: Optional[Dict[str, Any]]) -> List[str]:
+    """取论文分析里的**事实层名词**候选集（W6 判据用；纯字符串、零 IO）。
+
+    三处来源（架构 sp8 §15.3 第 1 条）：
+      - ``metrics``：列表元素（论文用的指标名）
+      - ``datasets``：列表元素（数据集名）
+      - ``baseline_results``：**字典的键**（论文自己报出来的那些结果的名字）
+
+    去空白、去空串；**只取 str 元素**——非 str 是脏数据，转成字符串反而会造出
+    ``"42"`` 这类会命中任意文本的伪候选（宁窄勿宽：候选造多了只会让 W6 漏报，
+    但那属于本模块既有的误报防线取向 R-S6-A5，仍不如干脆不收）。
+    """
+    terms: List[str] = []
+    if not isinstance(paper_analysis, dict):
+        return terms
+
+    for key in ("metrics", "datasets"):
+        value = paper_analysis.get(key)
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, str) and item.strip():
+                    terms.append(item.strip())
+
+    baseline = paper_analysis.get("baseline_results")
+    if isinstance(baseline, dict):
+        for name in baseline.keys():
+            if isinstance(name, str) and name.strip():
+                terms.append(name.strip())
+
+    return terms
+
+
+def check_plan(
+    plan: Dict[str, Any],
+    resource_info: Dict[str, Any],
+    paper_analysis: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, str]]:
     """对复现计划做确定性交叉检查，返回警示列表。
 
     Args:
         plan: ReproductionPlan dict（来自 interrupt payload）。
         resource_info: ResourceInfo dict（来自 interrupt payload 或 state）。
+        paper_analysis: PaperAnalysis dict（来自 interrupt payload 的论文分析摘要）。
+            **S8-11 新增的第三个带默认值形参**（架构 sp8 §15.2 方案 A）：不传即 ``None``
+            ⇒ 候选集为空 ⇒ **W6 不触发** ⇒ 既有两参调用行为字节级零扰动。
+            🔴 精确表述是「**向后兼容、既有调用零改动、既有五条警示行为一字不变**」，
+            **不是**「函数签名一字不变」——PRD sp8 §8 那句在实现上不成立，架构 §15.2
+            已如实登记，交接时须逐字照抄这条更正。
 
     Returns:
         警示列表，每项为 {"rule": str, "message": str}。
@@ -562,5 +620,24 @@ def check_plan(plan: Dict[str, Any], resource_info: Dict[str, Any]) -> List[Dict
         if is_inline_code_write(command):
             warnings.append({"rule": "W5", "message": _W5_MESSAGE})
             break
+
+    # ── W6：本篇达标线没引用论文的任何具体主张（S8-11 护栏 3，架构 sp8 §15.3）──────
+    # 判定顺序是**被硬约束逼出来的，不能调**：候选集为空的早退必须在最前面。
+    # 既有 37 处两参调用一律拿不到 paper_analysis ⇒ 候选集恒空 ⇒ 必须在读 plan 之前
+    # 就 return，否则那些计划普遍没写达标线、会被"空串则报"这条规则集体打上 W6，
+    # 「既有五条 W 行为一字不变」的契约当场破（G5）。
+    #
+    # ⚠ **局限，必须如实登记、不得包装**（架构 sp8 §15.4 / R-S8-17）：
+    # **它挡的是空话，挡不住"具体但宽松"** —— 「knn_accuracy 大于 0 即算成功」引用了
+    # 具体指标名，照样过。**真正兜底的是计划审核页上的人眼**（护栏 1）。
+    # 🔴 **不得把 W6 说成"防止把标准画低"的保证**，它只是把最粗暴的那一档挡在门外。
+    fact_terms = _paper_fact_terms(paper_analysis)
+    if fact_terms:
+        raw_criteria = plan.get("success_criteria")
+        criteria = raw_criteria.strip() if isinstance(raw_criteria, str) else ""
+        # 空串照报：空标准是最该被用户看到的一种，不能因为"没内容所以没法判"就沉默。
+        lowered = criteria.lower()
+        if not criteria or not any(term.lower() in lowered for term in fact_terms):
+            warnings.append({"rule": "W6", "message": _W6_MESSAGE})
 
     return warnings

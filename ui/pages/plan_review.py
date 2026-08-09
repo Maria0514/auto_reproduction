@@ -104,6 +104,31 @@ _CODE_ONLY_SCALE_REDUCED_NOTE = (
     "不在这台机器上真跑，之后拿到合适的机器再跑完整规模。"
 )
 
+# =========================================================================== #
+# S8-01 / S8-11 护栏 1（T-S8-1b-4）：本篇成功标准的只读展示块文案
+#
+# 落点纪律（架构 sp8 §12 `ui/` 条目 + PRD sp8 §4.11.2 + Maria 2026-08-04 拍板 1）：
+#   - 在计划展示区**顶部**、**独立小节**只读展示，**不得埋在一堆字里**；
+#   - **只读**：不新增交互控件种类、不新增按钮、不新增中断种类、不新增流程分支。
+#     "可改"走既有的「讨论助手 → 修改方向纪要 → 重新规划」通道（AC-S8-14 按拍板 1
+#     的口径验收：「可编辑」读作「可经既有修订通道调整」）。
+#   - 文案红线同 S7-08 那批：一律通俗中文、零内部字段名、零英文缩写；提为**模块级
+#     具名常量**才扫得到（内联 st.markdown 字面量守门根本扫不到，§40 P-13 失效模式）。
+# =========================================================================== #
+
+_SUCCESS_CRITERIA_HEADING = (
+    "**这次要拿到什么结果，才算把这篇论文验证到了**"
+    "（下面这条标准是针对这篇论文写的，之后核对结果时就以它为准；"
+    "觉得写得太松或太严，可以在下方「修改计划」里和规划助手讨论后重新生成）"
+)
+
+# 计划没写这条标准时的静态兜底句（恒常展示，绝不留白块）。
+_SUCCESS_CRITERIA_FALLBACK = (
+    "这份计划没有写明：对这篇论文来说，拿到什么样的结果才算验证到了论文的说法。"
+    "缺了这条标准，之后就没有依据判断论文的结论到底有没有被印证出来。"
+    "建议先在下方「修改计划」里和规划助手讨论一轮，把它补上再批准。"
+)
+
 # 讨论助手的边界语补句（架构 sp7 §18.8 ③ 的缓解办法）：计划上下文是原样 JSON 注入的，
 # 里面全是英文键名，不加这句助手会在中文回复里直接复述字段名。
 _CHAT_NO_FIELD_NAME_RULE = (
@@ -320,11 +345,38 @@ def _init_page_state() -> None:
     st.session_state.setdefault(_KEY_CHAT_CALLS, 0)
 
 
+def _success_criteria_text(plan: Optional[Dict]) -> str:
+    """本篇成功标准的展示文本：计划里的原文优先，缺键 / 空串 / 空白 / 非 str 走静态兜底
+    常量（纯函数，沿 `_local_fit_note_text` 既有范式）。
+
+    **原文照登**：是字符串且非空白时**不摘要、不截断、不加省略号**，只去掉首尾空白
+    （避免渲染出前后带空行的块）。
+
+    🔴 **非 str 一律按"没写"处理，走兜底句——刻意不做 `str()` 强转**（与
+    `core.plan_checks.check_plan` 里 W6 的取值方式**同一条规则**）。理由是本项目已
+    两次栽在同一个坑上（BUG-S8-01 / `P-S8-21`）：`str({})` 得到 `"{}"`、`str(0)` 得到
+    `"0"`，**都是非空字符串**，真值判断放行后就把 Python 的对象写法直接印给了用户，
+    而"这条标准写了什么"恰恰是用户唯一能拿来把关的东西。⇒ **按类型判定（isinstance），
+    不靠真值、不靠 `str()`**。⚠ 同文件的 `_local_fit_note_text` 仍是旧的 `str(raw)`
+    写法（sp7 遗留，本批不在射程内，未改）。
+    """
+    raw = (plan or {}).get("success_criteria")
+    text = raw.strip() if isinstance(raw, str) else ""
+    return text or _SUCCESS_CRITERIA_FALLBACK
+
+
 def _render_plan(plan: Dict) -> None:
     """渲染复现计划全文（ReproductionPlan 各字段，防御式 .get）。"""
     plan = plan or {}
     with st.container(border=True):
         st.markdown("### 📋 复现计划")
+
+        # S8-01 / S8-11 护栏 1（T-S8-1b-4）：本篇成功标准置于计划展示区**最顶部**的
+        # 独立小节，紧接标题、先于计划概述与其余各块，**不与任何其它字段挤在一段**。
+        # 恒常展示、不折叠、不做条件隐藏——取不到就展示静态兜底句，绝不渲染空白块。
+        # 整块**只读**：无输入控件、无按钮（PRD sp8 非目标 8 + MEMORY §4.1）。
+        st.markdown(_SUCCESS_CRITERIA_HEADING)
+        st.info(_success_criteria_text(plan))
 
         summary = plan.get("plan_summary")
         if summary:
@@ -776,14 +828,22 @@ def _render_revise_chat(
                 st.rerun()
 
 
-def _render_plan_check_warnings(plan: Dict, resource_info: Dict) -> None:
-    """渲染计划自洽交叉检查警示（S6-05，T-S6-1-4）。
+def _render_plan_check_warnings(
+    plan: Dict, resource_info: Dict, paper_analysis: Optional[Dict] = None
+) -> None:
+    """渲染计划自洽交叉检查警示（S6-05，T-S6-1-4；S8-11 护栏 3 多传一参，T-S8-1b-4）。
 
     调用 check_plan 纯函数，将返回的警示逐条用 st.warning() 展示。
     零警示时不渲染任何内容（干净计划无噪声）。
     警示不阻断审批——approve 按钮仍正常可用，人在回路知情后自行决策。
+
+    paper_analysis：论文分析摘要，**本来就在 interrupt payload 里**（`payload
+    ["paper_analysis_summary"]`，本函数调用点上方就在读它）⇒ **零新 payload 键**。
+    W6 拿它取论文的事实层名词作候选集；不传即 None ⇒ 候选集为空 ⇒ W6 不触发。
+    🔴 **展示通道本身零改动**：下方渲染循环与"不阻断审批"契约一字未动，W6 与既有
+    五条走同一条 st.warning 卡片，**不新增展示通道、不新增交互种类**。
     """
-    warnings = check_plan(plan, resource_info)
+    warnings = check_plan(plan, resource_info, paper_analysis)
     if not warnings:
         return
     for w in warnings:
@@ -1012,9 +1072,12 @@ def render() -> None:
     # 调用纯函数 check_plan，零 state 变更、零 planning 节点变更。
     # 有警示时逐条 st.warning()；零警示时不渲染（干净计划无噪声）。
     # 警示不阻断审批——approve 按钮仍正常可用（人在回路本义）。
+    # S8-11 护栏 3（T-S8-1b-4）：多传一个**已在 payload 里**的 paper_analysis_summary
+    # （上方 `analysis` 变量就是从同一个键读的）⇒ 零新 payload 键、零新展示通道。
     _render_plan_check_warnings(
         plan=payload.get("reproduction_plan") or {},
         resource_info=payload.get("resource_info") or {},
+        paper_analysis=payload.get("paper_analysis_summary") or {},
     )
     st.divider()
     _render_decision_buttons(controller, thread_id, payload, llm_config_set)

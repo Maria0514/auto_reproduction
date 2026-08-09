@@ -153,18 +153,29 @@ def _run_planning_react(monkeypatch: pytest.MonkeyPatch, **state_overrides: Any)
 
 
 # =========================================================================== #
-# CP-5.12-1（§18.7(a)）：三方键集合相等 —— 收口复核（13 == 13 == 13）
+# CP-5.12-1（§18.7(a)）：三方键集合相等 —— 收口复核（14 == 14 == 14）
+#
+# ⚠ **sp8 T-S8-1b-2 换发（2026-08-08）**：键数由 13 → **14**（新增
+# `ReproductionPlan.success_criteria`，S8-01 扩围 / 架构 sp8 §2.5.1 / `AR-S8-15`）。
+# **只换数不弱化**：仍是 `==` 精确相等 + 新键名逐个钉死，本条守的两种退化
+# （"新键被后续批次顺手删掉" / "被改名成别的"）**射程未减**，且射程由 S7-08 两键
+# 扩到 S7-08 两键 + S8-01 一键。
 # =========================================================================== #
 _S708_NEW_PLAN_KEYS = {"scale_reduced", "local_fit_note"}
-_EXPECTED_PLAN_KEY_COUNT = 13
+#: sp8 S8-01 扩围新增的那一键（本篇论文的达标线）。
+_S801_NEW_PLAN_KEYS = {"success_criteria"}
+_EXPECTED_PLAN_KEY_COUNT = 14
 
 
-def test_cp_5_12_1_three_way_key_sets_closed_at_thirteen() -> None:
-    """收口复核：声明 / 正常构造 / 降级构造三方**都恰 13 键**，且新增的恰是那两个。
+def test_cp_5_12_1_three_way_key_sets_closed_at_fourteen() -> None:
+    """收口复核：声明 / 正常构造 / 降级构造三方**都恰 14 键**，且新增的恰是那三个。
 
     `tests/test_s708_plan_keys.py` 已断"三方相等"；相等断言有一个共同模式盲区——
     三方**一起**漏改（或一起改错名）时它仍然全绿。本条把数量与键名一并钉死，
-    使"S7-08 两键被后续批次顺手删掉""被改名成别的"这两种退化必红。
+    使"S7-08 / S8-01 新键被后续批次顺手删掉""被改名成别的"这两种退化必红。
+
+    ⚠ `success_criteria` 是 `R-S8-42` 的直接作用面：它的 TypedDict 声明与
+    `planning.py` 两处构造点**必须原子同批**，本条正是"只补了一处构造点"的红灯。
     """
     declared = set(ReproductionPlan.__annotations__)
     built = set(planning_module._build_reproduction_plan({}, {}).keys())
@@ -176,10 +187,12 @@ def test_cp_5_12_1_three_way_key_sets_closed_at_thirteen() -> None:
     )
     for name, keys in (("声明", declared), ("正常构造", built), ("降级构造", minimal)):
         assert len(keys) == _EXPECTED_PLAN_KEY_COUNT, (
-            f"{name}侧键数应为 {_EXPECTED_PLAN_KEY_COUNT}（sp5 的 11 键 + S7-08 两键），"
+            f"{name}侧键数应为 {_EXPECTED_PLAN_KEY_COUNT}"
+            "（sp5 的 11 键 + S7-08 两键 + S8-01 一键），"
             f"实得 {len(keys)}：{sorted(keys)}"
         )
         assert _S708_NEW_PLAN_KEYS <= keys, f"{name}侧缺 S7-08 新键：{sorted(_S708_NEW_PLAN_KEYS - keys)}"
+        assert _S801_NEW_PLAN_KEYS <= keys, f"{name}侧缺 S8-01 新键：{sorted(_S801_NEW_PLAN_KEYS - keys)}"
 
 
 def test_cp_5_12_1_new_keys_carry_safe_defaults_on_both_paths() -> None:
@@ -458,11 +471,21 @@ _LEGACY_11_KEY_PLAN: Dict[str, Any] = {
 
 
 def test_cp_5_12_9_legacy_plan_really_has_eleven_keys_and_neither_new_key() -> None:
-    """前提自证：夹具确实是"旧 11 键"形态，否则本组用例会退化成用新形态测兼容性。"""
+    """前提自证：夹具确实是"旧 11 键"形态，否则本组用例会退化成用新形态测兼容性。
+
+    ⚠ **sp8 T-S8-1b-2 换发（2026-08-08）**：末条"恰是当前声明减掉新键"的自证里，
+    被减掉的集合由 `S7-08 两键` 扩为 `S7-08 两键 ∪ S8-01 一键`。**只换不弱化**：
+    仍是 `==` 精确相等，"sp5 键被后续批次改名后本夹具悄悄失真"这条射程未减；
+    夹具本体（`_LEGACY_11_KEY_PLAN`，11 键）**一字未动**，它代表的旧 checkpoint
+    形态本来就不含任何新键，正是防御读要兼容的那一份。
+    """
     assert len(_LEGACY_11_KEY_PLAN) == 11, sorted(_LEGACY_11_KEY_PLAN)
     assert not (_S708_NEW_PLAN_KEYS & set(_LEGACY_11_KEY_PLAN)), "旧形态不得含 S7-08 两键"
-    # 且它恰是当前声明键集合减掉新两键（防 sp5 键被后续批次改名后本夹具悄悄失真）
-    assert set(_LEGACY_11_KEY_PLAN) == set(ReproductionPlan.__annotations__) - _S708_NEW_PLAN_KEYS
+    assert not (_S801_NEW_PLAN_KEYS & set(_LEGACY_11_KEY_PLAN)), "旧形态不得含 S8-01 新键"
+    # 且它恰是当前声明键集合减掉全部新键（防 sp5 键被后续批次改名后本夹具悄悄失真）
+    assert set(_LEGACY_11_KEY_PLAN) == (
+        set(ReproductionPlan.__annotations__) - _S708_NEW_PLAN_KEYS - _S801_NEW_PLAN_KEYS
+    )
 
 
 def _legacy_state() -> Dict[str, Any]:
