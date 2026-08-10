@@ -6,8 +6,13 @@ sp4 §3.4 步骤 1+2 换内嵌子图）：
          run_in_sandbox / request_user_input（interrupt#3）；收尾只认工具执行的真实
          sandbox 结果（收集器 + messages 回读），不认 agent 自述；
     3. _classify_execution 错误分类（节点本地 ExecutionFeedback，不污染 NodeError 三态）；
-    4. _parse_metrics 三档解析（结构化标签 → 正则 → LLM 抽取兜底）；
-    5. _build_execution_result B 档 success 判定（exit 0 且 ≥1 指标）；
+    4.〔S8-02 / T-S8-2-1，2026-08-10：**已退场**〕原「_parse_metrics 三档解析（结构化标签
+       → 正则 → LLM 抽取兜底）」**四个函数整体删除**，<METRICS> 通道废止（Maria 决策 3：
+       是废掉不是收窄）。metrics 现在的**唯一来源** = agent 经 <result>.metrics 自报，
+       由步骤 4.4 _split_reported_metrics 拆分；
+    5. _build_execution_result success 判定 —— ⚠ **判据正在换装**：T-S8-2-8 会把 success
+       改为由四档 level 派生，**在那之前 success 恒假**（`len(metrics) >= 1` 这个合取项的
+       分子已被步骤 4 撤走）。这是计划内的中间态，详见步骤 4 处的窗口告示；
     6. _map_execution_result 单点 read-modify-write（细分类进 error_message 前缀）；
     7. _maybe_interrupt_or_return 修复循环边界 + 可能的 interrupt#2。
 
@@ -23,8 +28,12 @@ interrupt#2 重跑幂等（S-1 spike CP-S-3 契约，架构 §4.3）：
 
 治理范式（must-fix-1 / must-fix-2 / BUG-S1-02/03）：
     - node_errors / degraded_nodes / fix_loop_history 全部单点 read-modify-write，**严禁 reducer**；
-    - execution 主体不调 LLM（零扣减）；仅 metrics 档 3 LLM 抽取兜底触发时按实际次数单点回写
-      retry_budget_remaining + 累加 _dev_loop_llm_calls；
+    - execution 主体不调 LLM（零扣减）—— 🔴 **S8-02 之后这是"结构上不可能"，不再只是"目前
+      恒成立"**：被删掉的 _llm_extract_metrics 是主体在 ReAct 子图**之外唯一的 LLM 调用入口**，
+      它随 <METRICS> 通道一并消失后，主体已无处产生子图之外的 LLM 调用 ⇒ 预算扣减恒等于
+      react_rounds_used（llm_calls_used 支路归零，见 _map_execution_result 调用点）。
+      ~~仅 metrics 档 3 LLM 抽取兜底触发时按实际次数单点回写 retry_budget_remaining +
+      累加 _dev_loop_llm_calls~~（该通道已不存在）；
     - ErrorCategory / ExecutionFeedback / AUTO_FIXABLE 是节点本地对象，**不进 core/state.py**；
       细分类写进 NodeError.error_message 的 [error_category=...] 前缀，error_type 严格保持三态；
     - fix_loop_count 单点自增（仅「回 coding」分支），interrupt/降级/成功分支绝不自增；
@@ -36,7 +45,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
@@ -388,167 +396,38 @@ def _classify_execution(
 
 
 # ---------------------------------------------------------------------------
-# 步骤 4：metrics 三档解析（架构 §2.3.3，缓解 R-S3-05）
+# 步骤 4：〔S8-02 / T-S8-2-1，2026-08-10〕**<METRICS> 通道整体退场** —— 此处原有代码已删除
 # ---------------------------------------------------------------------------
-
-# 档 1 结构化标签 <METRICS>...</METRICS>（类比 react_base 的 <result> 标签范式）。
-_METRICS_TAG_OPEN: str = "<METRICS>"
-_METRICS_TAG_CLOSE: str = "</METRICS>"
-_METRICS_TAG_PATTERN = re.compile(
-    re.escape(_METRICS_TAG_OPEN) + r"(.*?)" + re.escape(_METRICS_TAG_CLOSE),
-    re.DOTALL,
-)
-
-
-def _extract_metrics_block(stdout: str) -> Dict[str, Any]:
-    """档 1：解析 stdout 中最后一个 <METRICS>{...}</METRICS> 块（取最后一个，容忍中途打印）。"""
-    if not stdout:
-        return {}
-    matches = _METRICS_TAG_PATTERN.findall(stdout)
-    for raw in reversed(matches):
-        candidate = (raw or "").strip()
-        if not candidate:
-            continue
-        try:
-            parsed = json.loads(candidate)
-        except (ValueError, TypeError):
-            continue
-        if isinstance(parsed, dict) and parsed:
-            # 仅保留 value 为数值/字符串的扁平指标（防嵌套大对象污染对比表）。
-            out: Dict[str, Any] = {}
-            for k, v in parsed.items():
-                if isinstance(v, (int, float, str, bool)):
-                    out[str(k)] = v
-            if out:
-                return out
-    return {}
-
-
-def _regex_scan_metrics(stdout: str, metric_names: List[Any]) -> Dict[str, Any]:
-    """档 2：按 paper_analysis.metrics 英文事实字段做锚点，正则扫 "name: 0.91" / "Acc = 91.2%" 等。"""
-    if not stdout or not metric_names:
-        return {}
-    out: Dict[str, Any] = {}
-    for name in metric_names:
-        if not name or not isinstance(name, str):
-            continue
-        # 锚定指标名（大小写不敏感），允许 ": " / " = " / " " 分隔，值为数字（可带 %）。
-        pat = re.compile(
-            re.escape(name) + r"\s*[:=]?\s*([0-9]+(?:\.[0-9]+)?)\s*(%?)",
-            re.IGNORECASE,
-        )
-        m = pat.search(stdout)
-        if not m:
-            continue
-        try:
-            value = float(m.group(1))
-        except (ValueError, TypeError):
-            continue
-        if m.group(2) == "%":
-            value = value / 100.0
-        out[name] = value
-    return out
-
-
-def _llm_extract_metrics(
-    stdout: str,
-    metric_names: List[Any],
-    state: GlobalState,
-) -> Tuple[Dict[str, Any], int]:
-    """档 3：LLM 抽取兜底（仅 exit 0 且 stdout 非空时由调用方触发）。
-
-    返回 (metrics, calls_used)。calls_used 由 _parse_metrics 透传给 map_result 单点回写预算
-    （must-fix-2）。LLM 调用任何失败都降级为空 metrics（不抛异常打断节点）。
-    """
-    # 局部 import 避免模块加载期与 llm_client 的潜在循环依赖，且测试可 patch 此函数。
-    from core.llm_client import create_llm, resolve_llm_config
-
-    metric_hint = ", ".join([n for n in metric_names if isinstance(n, str)]) or "(论文指标名未知)"
-    snippet = stdout[-4000:] if len(stdout) > 4000 else stdout
-    system = (
-        "你是指标抽取器。从给定的程序标准输出中抽取数值型复现指标，"
-        f"严格只输出一个 JSON 对象（形如 {{\"accuracy\": 0.91}}），不要解释。"
-        "找不到任何指标时输出 {}。"
-    )
-    human = (
-        f"论文关注的指标名（锚点，可作为键参考）：{metric_hint}\n"
-        f"--- 程序标准输出（尾部）---\n{snippet}\n"
-        f"--- 结束 ---\n请输出抽取到的指标 JSON。"
-    )
-    config = None
-    try:
-        # execution 不在节点级覆写白名单内，resolve_llm_config 自然回退 default。
-        config = resolve_llm_config(state.get("llm_config_set"), "planning")
-    except Exception:  # noqa: BLE001 - 配置解析失败则不抽取
-        config = None
-    if config is None:
-        return {}, 0
-
-    try:
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        llm = create_llm(config)
-        resp = llm.invoke([SystemMessage(content=system), HumanMessage(content=human)])
-        content = getattr(resp, "content", "") or ""
-        if isinstance(content, list):
-            content = "".join(
-                c if isinstance(c, str) else (c.get("text") or "") if isinstance(c, dict) else ""
-                for c in content
-            )
-        content = content.strip()
-        # 容忍模型包 ```json fence```。
-        if content.startswith("```"):
-            content = content.strip("`")
-            if content.lower().startswith("json"):
-                content = content[4:]
-            content = content.strip()
-        parsed = json.loads(content) if content else {}
-    except Exception as exc:  # noqa: BLE001 - 抽取失败降级空，仍计 1 次调用消耗
-        logger.warning("[%s] metrics LLM 抽取兜底失败，降级空指标: %s", NODE_NAME, exc)
-        return {}, 1
-
-    out: Dict[str, Any] = {}
-    if isinstance(parsed, dict):
-        for k, v in parsed.items():
-            if isinstance(v, (int, float, str, bool)):
-                out[str(k)] = v
-    return out, 1
-
-
-def _parse_metrics(
-    run_results: List[SandboxRunResult],
-    plan: Optional[Dict[str, Any]],
-    state: GlobalState,
-) -> Tuple[Dict[str, Any], int]:
-    """三档降级解析（结构化约定优先 → 正则兜底 → LLM 抽取兜底）。
-
-    返回 (metrics, llm_calls_used)。llm_calls_used > 0 仅当档 3 LLM 抽取触发（must-fix-2）。
-
-    L-E4-01：metrics 来自 effective 序列（同命令最后一次）stdout 串接，
-    同时解锁档 3 的 all-exit-0 门（重试成功后不再被历史失败 run 卡住）。
-    """
-    run_results = _effective_runs(run_results)
-    stdout = "\n".join((r.stdout or "") for r in run_results)
-
-    # 档 1（首选）：结构化标签。
-    block = _extract_metrics_block(stdout)
-    if block:
-        return block, 0
-
-    # 档 2（兜底）：正则按 paper_analysis.metrics 英文事实字段扫描。
-    metric_names = (state.get("paper_analysis") or {}).get("metrics") or []
-    if not isinstance(metric_names, list):
-        metric_names = []
-    scanned = _regex_scan_metrics(stdout, metric_names)
-    if scanned:
-        return scanned, 0
-
-    # 档 3（最后兜底）：LLM 抽取 —— 仅当全部 exit 0（值得抽）且 stdout 非空时触发。
-    if run_results and all(r.exit_code == 0 for r in run_results) and stdout.strip():
-        metrics, calls = _llm_extract_metrics(stdout, metric_names, state)
-        return metrics, calls
-
-    return {}, 0
+#
+# 删掉的是（架构 v2.5 §7 / dev-plan §16.C，Maria 2026-08-04 已认）：
+#   - 三个标签常量 _METRICS_TAG_OPEN / _METRICS_TAG_CLOSE / _METRICS_TAG_PATTERN；
+#   - 档 1 _extract_metrics_block（结构化标签）
+#   - 档 2 _regex_scan_metrics（正则兜底）
+#   - 档 3 _llm_extract_metrics（LLM 抽取兜底）
+#   - 三档调度 _parse_metrics
+#
+# 🔴 **是废掉，不是收窄**（Maria 决策 3）。不要"为了兼容"把任何一档加回来 —— 加回来就等于
+# 把"分子由 agent 自己写"这条路重新打通，而本 Sprint 整件事就是为了堵它。
+#
+# **metrics 现在的唯一来源** = 执行 agent 经 <result>.metrics 自报，由步骤 4.4 的
+# _split_reported_metrics 拆成主实验 / 分组两份。**没有第二个来源。**
+#
+# ★★★ 给后人看的窗口告示（dev-plan §0.0，AR-S8-01）★★★
+# 从本次删除合入起，到 T-S8-2-8（success 由四档 level 派生）落地为止，
+# **本系统一律判失败** —— 因为 _build_execution_result 的成功判据里还留着
+# `len(metrics) >= 1` 这个合取项，而它的分子刚刚被撤走（步骤 4.4 的自律门控
+# 在主通道零指标时不采信 agent 自报，见那里的 elif 分支）。
+#
+# 🔴 **这不是 bug，不要来"修"它**：
+#   - 不要回滚本次删除来让回归变绿（dev-plan §0.0 第 4 条明令禁止）；
+#   - 不要顺手改 `len(metrics) >= 1` 那个合取项 —— 那是 T-S8-2-8 的射程；
+#   - 窗口期间**不得端到端真跑、不得对外演示**，也不得据此判断"哪里坏了"。
+# 恢复点 = T-S8-2-11（节点主体接线 + S7-13 自律门控废止）。窗口期间若真有跑通的需求，
+# **唯一正确的做法是把批次 2 做完**。
+#
+# ✨ 附带红利（dev-plan T-S8-2-1 第 3 条，须随交接文档一起抄走）：
+# _llm_extract_metrics 是 execution 主体在 ReAct 子图之外**唯一的 LLM 调用入口**。
+# 删掉它之后，「执行主体不调 LLM」这句话从"目前恒成立"升级为"**结构上不可能不成立**"。
 
 
 # ---------------------------------------------------------------------------
@@ -2895,8 +2774,9 @@ def execution(state: GlobalState) -> dict:
     """步骤 6：sandbox 执行 + 错误分类 + B 档判定 + 修复耗尽/不可修复时 interrupt#2。
 
     七步骨架（架构 §2.3.1 + sp4 §3.4）：_run_execution_agent（内嵌 ReAct 子图，步骤 1+2）→
-    _classify_execution → _parse_metrics → _build_execution_result → _map_execution_result →
-    _maybe_interrupt_or_return。
+    _classify_execution → ~~_parse_metrics~~（**T-S8-2-1 已删除，<METRICS> 通道退场**）→
+    _split_reported_metrics（步骤 4.4，metrics 的唯一来源）→ _build_execution_result →
+    _map_execution_result → _maybe_interrupt_or_return。
     """
     work_dir = state.get("code_output_dir")  # C1 集成约定：直接读，不自拼目录。
 
@@ -2951,8 +2831,11 @@ def execution(state: GlobalState) -> dict:
     # 步骤 3：错误分类。
     feedback = _classify_execution(prep, run_results)
 
-    # 步骤 4：metrics 三档解析（档 3 LLM 抽取按实际次数回写预算）。
-    metrics, llm_calls_used = _parse_metrics(run_results, plan, state)
+    # 步骤 4：〔T-S8-2-1，2026-08-10〕**<METRICS> 三档解析已整体删除**（模块顶部有完整告示）。
+    # metrics 从这里起是空字典，唯一来源是下面步骤 4.4 的 agent 自报；而步骤 4.4 的自律门控
+    # 在主通道零指标时**不采信**自报 ⇒ **在 T-S8-2-8 换上新判据之前 metrics 恒空、success 恒假**。
+    # 🔴 这是计划内的不可用中间态（AR-S8-01），不是回归。
+    metrics: Dict[str, Any] = {}
 
     # 步骤 4.4（sp7 S7-13，T-S7-9-1）：agent 自报指标拆分。
     reported_main, reported_groups = _split_reported_metrics(agent_out.reported_metrics)
@@ -3029,11 +2912,16 @@ def execution(state: GlobalState) -> dict:
         work_dir, state.get("fix_loop_count", 0) or 0, prep, run_results
     )
 
-    # 步骤 6：单点 read-modify-write 写 state（落点 B 唯一扣减点：子图 rounds + metrics 抽取，§4.4；
+    # 步骤 6：单点 read-modify-write 写 state（落点 B 唯一扣减点：**现在只剩子图 rounds**，§4.4；
     # 降级路径 rounds_used=0 → 零扣减，与 guard 命中同口径）。
+    # 〔T-S8-2-1，2026-08-10〕**不再传 llm_calls_used** —— 该支路的唯一来源 _llm_extract_metrics
+    # 已随 <METRICS> 通道删除。两种写法（不传 / 显式传 0）等价，**选"不传"**：形参 `llm_calls_used:
+    # int = 0` 的默认值本身就是这条支路归零后的正确取值，显式传 0 反而会让人以为"这里还有个会
+    # 变的量"。🔴 _map_execution_result 的**签名一字未动**（形参保留、默认值保留），预算扣减公式
+    # `total_calls = react_rounds_used + llm_calls_used` 也**一字未动**（那是另一件事，本 Sprint 非目标）
+    # ⇒ 效果 = total_calls 恒等于 react_rounds_used。
     updates = _map_execution_result(
         exec_result, feedback, state,
-        llm_calls_used=llm_calls_used,
         react_rounds_used=agent_out.rounds_used,
     )
 

@@ -49,9 +49,7 @@ from core.nodes.execution import (  # noqa: E402
     ErrorCategory,
     _ROUTE_AWAIT_INTERRUPT,
     _ROUTE_RETRY_CODING,
-    _extract_metrics_block,
     _has_committed_result_for_round,
-    _regex_scan_metrics,
     _step_to_command,
     execution,
 )

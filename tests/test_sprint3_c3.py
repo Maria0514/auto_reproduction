@@ -44,11 +44,8 @@ from core.nodes.execution import (  # noqa: E402
     ExecutionFeedback,
     _build_execution_result,
     _classify_execution,
-    _extract_metrics_block,
     _map_category_to_error_type,
     _map_execution_result,
-    _parse_metrics,
-    _regex_scan_metrics,
     execution,
 )
 from core.state import ExecutionMode  # noqa: E402
