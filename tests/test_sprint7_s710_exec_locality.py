@@ -813,8 +813,16 @@ def test_cp_6_5_5_check_plan_contract_unbroken() -> None:
         "check_plan 签名被改了"
     )
     # 向后兼容的命门：第三个形参必须**带默认值 None**，既有两参调用才不改也能跑。
+    # ⚠ 2026-08-09 订正：原文写死「既有 **36 处**两参调用」。该数字取自 sp8 批次 1b 的
+    # AST 静态清点（`P-S8-23`，当时 = 生产 1 + 测试 36），`tests/test_sprint8_s811_w6_
+    # criteria_guard.py` 补 133 条之后已失准。⇒ 此处**不再写死处数**：
+    #   ① 静态口径会**低估**参数化用例（新文件里有 `check_plan(*case.args)` 这类星号解包，
+    #      AST 数不出实参个数，而它运行期展开成几十次两参调用）；
+    #   ② 运行期口径要靠 pytest 拦截观测才拿得到。两个口径**不许混在一句话里**，
+    #      要引数字请注明口径与取值时刻（`P-S8-23` 落档的是 82 次调用 / 37 调用点）。
     assert sig.parameters["paper_analysis"].default is None, (
-        "paper_analysis 必须带默认值 None，否则既有 36 处两参调用当场全红"
+        "paper_analysis 必须带默认值 None，否则既有全部两参调用 check_plan(plan, resource_info) "
+        "当场全红（生产侧 ui/pages/plan_review.py 1 处 + 测试侧多个文件）"
     )
 
     plan = _plan([{"command": ORIGINAL_PLACEHOLDER_WRITE_COMMAND}])

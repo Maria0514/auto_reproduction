@@ -621,7 +621,7 @@ auto_reproduction/
 │   ├── llm_client.py             # OpenAI 兼容 LLM 客户端封装（create_llm + resolve_llm_config 节点级路由）
 │   ├── react_base.py             # 通用 ReAct 子图基础设施（ReActState, create_react_subgraph, _make_react_wrapper）
 │   ├── secrets_store.py          # 凭证存取（.secrets 0600）+ 敏感值登记/脱敏 + GIT_ASKPASS 凭证 env 构造（sp4）
-│   ├── plan_checks.py             # 计划期确定性交叉检查 check_plan（W1~W5 只产警示不阻断）+ 两条**计划期/执行期共用的纯谓词**：
+│   ├── plan_checks.py             # 计划期确定性交叉检查 check_plan（W1~W6 只产警示不阻断）+ 两条**计划期/执行期共用的纯谓词**：
 │   │                              #   is_inline_code_write（S7-10 约束 C）、has_unsupported_shell_syntax（S7-12）。见 §7.6
 │   ├── honesty_audit.py           # 代码目录诚实性审计（audit_code_dir，reporting 消费；sp5）
 │   ├── activity_stream.py         # 运行期活动流（UI 进度呈现）
@@ -679,7 +679,7 @@ auto_reproduction/
 | `core/react_base.py` | 通用 ReAct 子图基础设施，供所有非 dev_loop 节点复用 | `ReActState`, `create_react_subgraph()`, `_make_react_wrapper()` |
 | `core/nodes/*` | 各步骤的节点逻辑实现；ReAct 节点通过 `_make_react_wrapper()` 生成 wrapper 接入主图；planning 手写复合 + 内嵌 ReAct + interrupt#1；execution 手写编排 + 内嵌 ReAct 子图 + interrupt#2；reporting 纯函数 | wrapper 函数签名 `def node_fn(state: GlobalState) -> dict` |
 | `core/nodes/execution.py` | 执行与验证复合节点：`_run_execution_agent` 内嵌 ReAct 子图（prepare_environment / run_in_sandbox / request_user_input）+ 编排层收尾（错误分类 `ErrorCategory` / 指标解析 / B 档判定 / 修复循环边界 / interrupt#2） | `execution`, `_run_execution_agent`, `_classify_execution`, `_maybe_interrupt_or_return`（节点本地） |
-| `core/plan_checks.py` | 计划期确定性交叉检查（零 LLM，只产 warning 不阻断审批）+ 承载两条**同一不变量在计划期与执行期各查一次**的共用纯谓词 | `check_plan(plan, resource_info) -> List[warning]`；`is_inline_code_write(command) -> bool`（S7-10）；`has_unsupported_shell_syntax(command) -> bool` + `UNSUPPORTED_SHELL_SYNTAX_MESSAGE`（S7-12）。位于 `core/` 顶层、零项目内依赖，被 `core.nodes.execution` import 不成环；**反向 import 明令禁止** |
+| `core/plan_checks.py` | 计划期确定性交叉检查（零 LLM，只产 warning 不阻断审批）+ 承载两条**同一不变量在计划期与执行期各查一次**的共用纯谓词 | `check_plan(plan, resource_info, paper_analysis=None) -> List[warning]`（🔴 **2026-08-09 现状订正，`MEMORY` §3.7**：第三形参与 W6 由 sp8 批次 1b 交付于 `89c5ad8`，本表此前仍写两参签名 / 上方目录树此前仍写"W1~W5"。**本次只订正现状、不写设计** —— W6 的设计说明待 Sprint 8 全局回填时补，届时删除本括号）；`is_inline_code_write(command) -> bool`（S7-10）；`has_unsupported_shell_syntax(command) -> bool` + `UNSUPPORTED_SHELL_SYNTAX_MESSAGE`（S7-12）。位于 `core/` 顶层、零项目内依赖，被 `core.nodes.execution` import 不成环；**反向 import 明令禁止** |
 | `core/secrets_store.py` | 凭证存取与全链路脱敏：`.secrets`（0600 + gitignore）读写、敏感值登记/掩码、git/HF 凭证 env 构造 | `lookup_secret`, `remember_secret`, `load_all_secrets`, `register_sensitive_value`, `iter_sensitive_values`, `mask_value`, **`stash_session_secret`**（⟦2026-08-09 补：接口 7，S5-01 进程内会话覆盖层，`:391`；本行与 §7.4 那份清单同源，同批订正⟧）, `build_credential_env` |
 | `core/tools/*` | 外部服务调用的工具封装，同时提供 LangChain `@tool` 工厂函数供 ReAct agent 使用 | 各工具函数 + `BaseTool` 工厂函数，与 `bind_tools()` 兼容 |
 | `sandbox/local_venv.py` | 本地 venv 沙箱的创建、依赖安装、命令执行（子进程护栏：禁 shell=True / 进程组隔离 / 超时杀子树 / 输出截断 / cwd 限定 WORKSPACE_DIR；`prepare_venv` / `run_in_venv` 均支持 `extra_env` 注入） | `prepare_venv()`, `run_in_venv()`, `collect_artifacts()` |

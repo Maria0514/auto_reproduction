@@ -893,6 +893,7 @@ def _digest_paper_analysis(paper_analysis: Optional[Dict[str, Any]]) -> Dict[str
         "datasets": paper_analysis.get("datasets") or [],
         "metrics": paper_analysis.get("metrics") or [],
         "framework": paper_analysis.get("framework"),
+        "baseline_results": paper_analysis.get("baseline_results") or {},
     }
 
 
