@@ -589,16 +589,26 @@ def test_reinforce_must_fix_1_multi_round_no_duplicate_degraded(
     assert upstream_err in u2["node_errors"]
 
 
-# ---- 补强5：<METRICS> 约定 + 修复回合模式 prompt 入口 ----
+# ---- 补强5：结果文件产出约定 + 修复回合模式 prompt 入口 ----
 
 
-def test_reinforce_metrics_convention_in_system_prompt() -> None:
-    """system prompt 主体含 <METRICS>{...}</METRICS> 入口脚本指标约定（R-S3-05 缓解，
-    C3 解析依赖此约定）。"""
+def test_reinforce_result_file_convention_in_system_prompt() -> None:
+    """system prompt 主体含结果文件产出约定 + 修复回合模式入口。
+
+    🔴 S8-02 换发（T-S8-2-1b，2026-08-11）：原名 test_reinforce_metrics_convention_
+    in_system_prompt，断言主体含 <METRICS>{...}</METRICS> 入口脚本指标约定。该通道本
+    Sprint **整体退场**（判定链路已由 T-S8-2-1 解绑），主体改为教 summary.json 结果文件
+    约定，故本用例按"只换不弱化"换发：**旧 3 条正向断言 → 新 3 条正向 + 1 条负向**，
+    强度不降。修复回合那半段本次未改动，原样保留。
+    """
     body = _CODING_SYSTEM_PROMPT_BODY
-    assert "<METRICS>" in body and "</METRICS>" in body
-    assert "<METRICS>{}</METRICS>" in body, "应含空指标兜底约定"
-    # 修复回合模式入口（HumanMessage 出现 fix_round/last_error_summary 时生效）
+    # 产出约定三要素（对应 AC-S8-04 提示词面；下游 execution 验钞依赖此约定）
+    assert "summary.json" in body, "应含结果文件名字面量"
+    assert "合法 JSON" in body and "顶层" in body, "应含『合法 JSON + 顶层是对象』的格式约束"
+    assert "不要写空文件" in body, "应含无结果时不写的兜底约定（承接原 <METRICS>{} 空兜底位）"
+    # 负向：旧通道必须已整体退场，主体不得再教任何标签写法
+    assert "METRICS" not in body, "S8-02：<METRICS> 通道整体退场，主体不得残留标签教学"
+    # 修复回合模式入口（HumanMessage 出现 fix_round/last_error_summary 时生效）—— 未改动
     assert "修复回合模式" in body
     assert "fix_round" in body and "last_error_summary" in body
     assert "不要从头重新生成全部代码" in body

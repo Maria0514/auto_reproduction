@@ -77,13 +77,32 @@ coding_module = importlib.import_module("core.nodes.coding")
 # ──────────────────────────────────────────────────────────────────────────────
 
 # _CODING_SYSTEM_PROMPT_BODY 单体（本 Sprint S8-02 要改的就是它，红得精准）
-EXPECTED_BODY_HASH = "37ec6ee2b1606715"
-EXPECTED_BODY_LEN = 3052
+# 🔴 T-S8-2-1b 换发（2026-08-11）：<METRICS> 通道整体退场，主体四处改动 ——
+#   ①第 5 条"并打印关键指标"→"按下面的产出约定把结果落盘"；②"入口脚本指标输出约定"
+#   整段 6 行 → "实验结果产出约定"（summary.json / 顶层对象 / 例子 / 落点 / 无结果不写）；
+#   ③修复回合"保持入口脚本的 <METRICS> 输出约定不变"→"保持…结果文件产出约定不变"。
+#   （第四处 :113 在 CODING_OUTPUT_SCHEMA 里，不进主体，故不影响本哈希。）
+# 换发前基线：37ec6ee2b1606715 / 3052 字符（T-S8-1a-1 于 HEAD=0e250fb 现算）。
+# 换发时的验红实证（CP-2.1b-7，"门有牙"活体证明）：改完主体后本门当场变红，
+#   报 “当前：ff741c03002db5f8，基线：37ec6ee2b1606715；当前长度 3112，基线长度 3052”。
+# ⚠ 上面那个 ff741c03002db5f8 是**初版文案**的哈希，**不是最终基线**：初版产出约定的
+#   JSON 例子写成 {"dataset": "CIFAR-10", ...}，被既有防线 test_sprint3_f3.py::
+#   test_cp_f3_1_body_constant_carries_no_paper_level_variable 判红（该防线禁止主体
+#   常量出现任何论文级字面量，"CIFAR-10" 正是它的禁词之一）⇒ 例子改为不含数据集名的
+#   {"accuracy": 0.873, "f1": 0.81, "epochs": 20} 后重算，得下方最终值。
+#   🔴 留痕理由：这一红说明「例子要具体才有效」与「主体禁含论文级字面量」两条约束会
+#   互相拉扯，后续改本段文案的人容易再踩一次。
+EXPECTED_BODY_HASH = "92362448116543e2"
+EXPECTED_BODY_LEN = 3101
 
 # 稳定前缀 = 主体 + 诚实红线段（R-PC4，口径沿 test_sprint5_t13_coding_prompt.py:167）。
 # 单守主体会漏掉「诚实红线段被改」的情形，故并建一条。
-EXPECTED_PREFIX_HASH = "2973ea0f0ad17502"
-EXPECTED_PREFIX_LEN = 3485
+# 🔴 T-S8-2-1b 同批换发：诚实红线段**一字未动**，本条变动全部来自主体（3534-3101=433
+#    = 红线段长度，与换发前 3485-3052=433 逐字相等 ⇒ 反证红线段未被误改）。
+# 换发前基线：2973ea0f0ad17502 / 3485 字符；验红实测 3c65d42c2a38a873 / 3545（初版文案，
+#   同上被 CP-F3-1 判红而作废）⇒ 最终值如下。
+EXPECTED_PREFIX_HASH = "3d9391e7b6b337ed"
+EXPECTED_PREFIX_LEN = 3534
 
 
 def _sha16(text: str) -> str:

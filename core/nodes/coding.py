@@ -110,7 +110,7 @@ CODING_OUTPUT_SCHEMA: Dict[str, Any] = {
         },
         "entry_script": {
             "type": ["string", "null"],
-            "description": "复现入口脚本相对/绝对路径（运行后末尾打印 <METRICS>{...}</METRICS>）。",
+            "description": "复现入口脚本相对/绝对路径。",
         },
         "summary": {
             "type": "string",
@@ -175,20 +175,20 @@ request_user_input 使用纪律（强约束）：
 2. 若提供了 selected_repo_local_path，先用 list_dir / read_code_file 探查参考仓库，优先复用其已有实现，避免从零造轮子。
 3. 需要核对论文方法细节 / 超参 / 数据集时调用 read_section；需要查依赖版本或 API 用法时调用 web_search。
 4. 用 write_code_file 把代码逐文件写入 code_output_dir（绝对路径以 HumanMessage 给定的目录为准）。每个文件写完整内容，不要写片段。
-5. 至少产出一个复现入口脚本（如 run.py / main.py / reproduce.py），它应能按 execution_steps 串起数据准备 → 训练/推理 → 评估，并打印关键指标。
+5. 至少产出一个复现入口脚本（如 run.py / main.py / reproduce.py），它应能按 execution_steps 串起数据准备 → 训练/推理 → 评估，并按下面的产出约定把结果落盘。
 6. 预算意识：max_rounds=12；不要重复调用同一 (tool, args)；优先把工作做扎实而非反复试探。
 
-入口脚本指标输出约定（强约束，下游执行节点依赖）：
-- 复现入口脚本运行结束时，必须在标准输出的**最后**以单独一行打印关键指标 JSON，格式严格为：
-  <METRICS>{"metric_name": value, ...}</METRICS>
-- 例如：<METRICS>{"accuracy": 0.873, "f1": 0.81}</METRICS>
-- 指标键名尽量对齐论文 metrics 字段；无可计算指标时打印 <METRICS>{}</METRICS>，不要省略该行。
-- 这是把异构输出解析难题前移到代码生成阶段的关键约定，请务必在入口脚本中实现。
+实验结果产出约定（强约束，下游执行节点依赖）：
+- 每组实验跑完后，把这组的关键结果写成一个 JSON 结果文件（建议命名 summary.json）。
+- 文件内容必须是合法 JSON，且顶层是一个对象；至于对象里放哪些键，由你按这次实验真实产出了什么来定，不必迎合任何预设字段名。
+- 例如（仅示例，键名不作要求）：{"accuracy": 0.873, "f1": 0.81, "epochs": 20}
+- 落盘位置以 execution_steps 里该步骤的 expected_output 声明为准；计划没声明位置时，写到 code_output_dir 下能一眼找到的地方。
+- 没有真实结果可写时就不要写这个文件——不要写空文件，也不要填占位值或估计值。
 
 修复回合模式（HumanMessage 中出现 fix_round / last_error_summary 时生效）：
 - 此时表示上一轮执行失败，进入修复回合。**不要从头重新生成全部代码**。
 - 先 read_code_file / list_dir 读出 code_output_dir 下的现有代码，定位 last_error_summary 指向的错误（含 error_category / stderr 尾部）。
-- 仅对出错处做有针对性的最小修改，用 write_code_file 覆盖被修改的文件；保持入口脚本的 <METRICS> 输出约定不变。
+- 仅对出错处做有针对性的最小修改，用 write_code_file 覆盖被修改的文件；保持入口脚本的结果文件产出约定不变。
 - 若 HumanMessage 中出现 fix_history_digest（历次修复轨迹），先读它了解你前几轮试过什么、结果如何，做增量修复决策，避免反复套已被证明无效的改法。
 - 在 <result> 中额外输出 fix_note 字段：用一两句话说明"本轮问题定位+修复逻辑"（定位到什么错、打算怎么改），供后续修复回合参考你之前的尝试。首轮生成可留空/省略。
 
@@ -457,6 +457,25 @@ def _build_coding_context(state: GlobalState) -> Dict[str, Any]:
     # plan 取自本函数开头同一处 state.get("reproduction_plan")，不新增读取。
     if isinstance(plan, dict) and plan.get("scale_reduced") is True:
         payload["scale_reduced_directive"] = _SCALE_REDUCED_DIRECTIVE
+
+    # S8-10 / AC-S8-04（T-S8-2-1b，架构 §2.5.5 + §12）：把"这次要拿出什么证据 / 拿出
+    # 什么才算成功"送进编码环节——在此之前 coding.py 对两者均零命中（本计划 §1.5 事实 3）：
+    #   - expected_results：定性物证的生产者。不注入则编码环节根本不知道这次要拿出什么
+    #     证据，写出来的结果文件与计划声明的预期对不上，下游验钞无从比对；
+    #   - success_criteria：本篇论文的达标线，让编码环节知道拿出什么才算成功。
+    # 沿 credential_degradations / scale_reduced_directive 同款"非空才注入"范式
+    # （execution.py 的 expected_results 注入亦同）⇒ 两键均缺 / 均空 / 一有一无 三种
+    # 形态下 payload 与改前基线**逐字节相同**（CP-2.1b-5）。
+    # ⚠ success_criteria 的生产者在批次 1b 的 planning 侧，旧 checkpoint 里可能整键
+    # 缺失 ⇒ 用 `.get(...) or ""` 防御读（与 core/state.py:147 同款），缺键按空处理、
+    # 不 KeyError（CP-2.1b-11）。
+    if isinstance(plan, dict):
+        expected_results = plan.get("expected_results")
+        if expected_results:
+            payload["expected_results"] = expected_results
+        success_criteria = plan.get("success_criteria") or ""
+        if success_criteria:
+            payload["success_criteria"] = success_criteria
 
     # === 修复回合：只保留反馈裁剪（code_output_dir 已上移无条件注入）===
     exec_result = state.get("execution_result")
