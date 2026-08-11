@@ -122,9 +122,14 @@ _GUARDED_CONSTANTS: Tuple[Tuple[str, str], ...] = (
 
 # --------------------------------------------------------------------------- #
 # EXPECTED_N 对账（2026-08-01 上磁盘实测，S7-11 / T-S7-7-7 后）：
-#   - ui/term_map.py::TERM_LABELS 全量值 …………………………… 43 条
+#   - ui/term_map.py::TERM_LABELS 全量值 …………………………… ~~43~~ 44 条
 #     （dev-plan §32.4 事实 9 记 41 条为 T-5-9 加 `annotation:scale_reduced` 之前的值；
-#      S7-10 后为 42 条；S7-11 加 `error_category:incomplete_execution` 一条 ⇒ 43）
+#      S7-10 后为 42 条；S7-11 加 `error_category:incomplete_execution` 一条 ⇒ 43；
+#      **S8-05 加 `error_category:no_verifiable_output` 一条（T-S8-2-3，2026-08-11）⇒ 44**）
+#     🔴 这一条不是"顺手加的文案"，是**被防线逼出来的**：
+#     tests/test_sprint5_t35_term_map.py 断言 term_map 的 error_category 域必须与
+#     ErrorCategory 全部取值**相等** ⇒ 新增枚举成员而不补文案，UI 会把内部值
+#     `no_verifiable_output` 原样印给用户（撞 MEMORY §4.2）。登记见 dev-plan P-S8-49。
 #   - 上表具名常量 ………………………………………………………… 18 条
 #     （S7-08 收口时 10 条；S7-10 加 core.plan_checks 的 W4 / W5 两条 message ⇒ 12；
 #      S7-11 加 3 条：reporting._SUCCESS_CRITERIA_NOTE +
@@ -133,7 +138,7 @@ _GUARDED_CONSTANTS: Tuple[Tuple[str, str], ...] = (
 #      T-S8-1b-3）+ plan_review._SUCCESS_CRITERIA_HEADING / _SUCCESS_CRITERIA_FALLBACK
 #      （护栏 1 顶部只读展示的标题与兜底句，T-S8-1b-4）⇒ **18**）
 #                                                     ------
-#   合计 EXPECTED_N …………………………………………………… 61 条
+#   合计 EXPECTED_N …………………………………………………… ~~61~~ 62 条
 #
 # ⚠ 三个数字必须 `==`，**禁止改成 `>=`**（理由见模块 docstring）。
 #   sp8 批次 1b 的这次 +3 走的正是 docstring 里那条维护语义（新增用户可见静态文案
@@ -141,9 +146,9 @@ _GUARDED_CONSTANTS: Tuple[Tuple[str, str], ...] = (
 #   ⚠ `EXPECTED_TERM_LABELS_N` 本批**零改动**（批次 1b 不碰 `ui/term_map.py`）；
 #   它的目标值由批次 3 的 T-S8-3-1 / T-S8-3-10 精确定档，**届时的现值是 18 不是 15**。
 # --------------------------------------------------------------------------- #
-EXPECTED_TERM_LABELS_N: int = 43
+EXPECTED_TERM_LABELS_N: int = 44
 EXPECTED_CONSTANTS_N: int = 18
-EXPECTED_N: int = EXPECTED_TERM_LABELS_N + EXPECTED_CONSTANTS_N  # == 61
+EXPECTED_N: int = EXPECTED_TERM_LABELS_N + EXPECTED_CONSTANTS_N  # == 62
 
 # 既有守门黑名单的核心词（只做"没被掏空"的下界校验，
 # 不写成相等——日后清理那 16 处时 `_BLACKLIST` 可能合法扩充）。

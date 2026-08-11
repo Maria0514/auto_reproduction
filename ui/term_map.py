@@ -13,8 +13,11 @@
 
     - code_strategy / resource_strategy ← planning.py / resource_scout.py
       ``_VALID_STRATEGIES = ("use_repo", "hybrid", "from_scratch")``；
-    - error_category ← core/nodes/execution.py::ErrorCategory（11 值）+
-      execution.py L1820 降级路径写入的 ``degraded`` 字面量；
+    - error_category ← core/nodes/execution.py::ErrorCategory（~~11~~ **14** 值，
+      2026-08-11 现查订正：该数在 no_metrics / incomplete_execution /
+      no_verifiable_output 三次扩枚举中一直没跟改，属 MEMORY §3.7「现状数字」类
+      失真，即时订正不受批次边界约束）+ execution.py 降级路径写入的
+      ``degraded`` 字面量；
     - node（节点名）← core/graph.py 七节点（中文名与 analysis_progress
       ``_NODE_DISPLAY`` / execution_monitor ``_STEP_DISPLAY`` 既有口径对齐）；
     - report_form（报告三形态）← reporting.py::_determine_report_form；
@@ -66,6 +69,9 @@ TERM_LABELS: Dict[str, str] = {
     # S7-11：⚠ 刻意与 annotation:incomplete_execution 的"执行不完整"用不同的词——
     # 同词会让用户分不清"标注"和"错误分类"。
     "error_category:incomplete_execution": "执行步骤未跑完",
+    # S8-05（T-S8-2-3）：跑通了但计划里说好要产出的东西没落地。
+    # ⚠ 与上面的"未产出指标"（no_metrics，S8 起无生产者）是两回事，别合并。
+    "error_category:no_verifiable_output": "产出结果没落地",
     "error_category:degraded": "已降级",
     # --- node（graph.py 七节点，中文名与既有页面显示表口径对齐）---
     "node:paper_intake": "解析论文",

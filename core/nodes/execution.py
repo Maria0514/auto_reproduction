@@ -157,7 +157,21 @@ class ErrorCategory(str, Enum):
     UNRESOLVED_RESOURCE = "unresolved_resource"
     NONE = "none"  # 执行成功，无错误
     # S6-B2（T-S6-2-4）：代码跑通但未产出指标——可自动修复（送回 coding 检查入口脚本）。
+    # 🔴 S8-05（T-S8-2-3，架构 Q-S8-07）：**Sprint 8 起本成员无生产者，但必须保留。**
+    # 理由不是"留着以防万一"，是硬约束：_feedback_from_committed_result 会从已落盘的
+    # ExecutionResult.errors[0] 里 "[error_category=xxx]" 前缀**反序列化**重建本枚举，
+    # 而旧 checkpoint 里存着 error_category=no_metrics 的字符串 ⇒ **删成员会让旧任务
+    # resume 当场炸**。AUTO_FIXABLE 中的归属同样不动；ui/term_map.py 的对应文案亦保留
+    # （旧报告仍要能渲染）。
+    # ⚠ 与 AC-S8-18「_apply_no_metrics 已删除且无残留引用」的边界：那条清零的对象是
+    # **函数与其调用点**，**不是本枚举成员**——把成员一并清零会当场打掉旧快照兼容。
     NO_METRICS = "no_metrics"
+    # 🔴 S8-05（T-S8-2-3，Q-S8-04）：跑通了、但计划里说好要产出的东西没落地——可自动
+    # 修复（送回 coding 补产出）。**不复用 NO_METRICS**，理由与下方 INCOMPLETE_EXECUTION
+    # 那三条同源：①会被无进展早停误伤；②fix_hint 指错方向；③fix_loop_history 里的
+    # error_category 是面向用户的修复历程标题，复用会让界面印"未产出指标"而真相是
+    # "产出没落地"——**对用户撒谎比技术债更贵**。
+    NO_VERIFIABLE_OUTPUT = "no_verifiable_output"
     # S7-11（T-S7-7-6）：命令都跑通了、但计划步骤没跑完——可自动修复（送回 coding
     # 继续补跑）。不复用 NO_METRICS 的三条理由（架构 Q-S7-29）：①会被
     # _no_metrics_stalled 的"无进展早停"误伤成提前打断；②fix_hint 指错方向；
@@ -173,9 +187,36 @@ AUTO_FIXABLE = {
     ErrorCategory.DEPENDENCY,
     ErrorCategory.PATH,
     ErrorCategory.RUNTIME,
-    ErrorCategory.NO_METRICS,  # S6-B2（T-S6-2-4）：零指标可修复
+    ErrorCategory.NO_METRICS,  # S6-B2（T-S6-2-4）：零指标可修复（S8 起无生产者，归属不动）
     ErrorCategory.INCOMPLETE_EXECUTION,  # S7-11（T-S7-7-6）：步骤没跑完可修复
+    ErrorCategory.NO_VERIFIABLE_OUTPUT,  # S8-05（T-S8-2-3）：产出没落地可修复
 }
+
+
+# ---------------------------------------------------------------------------
+# S8-05（T-S8-2-3，架构 §2.3）：四档结论的档名 —— **一套值，没有第二套**
+# ---------------------------------------------------------------------------
+# 🔴 落盘的字面量就是下面四个中文串本身：**不引入 ConclusionLevel Enum，也不引入
+# "success" / "partial" / "code_only" 之类的英文内部值**（A-S8-05 / 反过度工程）。
+# 理由：档名同时就是**用户可见文案**，多一套英文内部值就多一处要 humanize 的地方、
+# 也多一处两套值走散的可能（sprint7 术语泄漏的成因正是此类"内部值 + 展示值"双轨）。
+_LEVEL_SUCCESS: str = "复现成功"
+_LEVEL_PARTIAL: str = "部分复现"
+_LEVEL_CODE_ONLY: str = "仅代码跑通"
+_LEVEL_FAILED: str = "失败"
+
+# 档位顺序元组，**从高到低**（下标越大、档位越低）。
+# 🔴 封顶一律写成"按本元组下标取更低档"，**不要写 if 链**（架构 §2.3）：
+#       capped = _LEVELS[max(_LEVELS.index(a), _LEVELS.index(b))]
+# 取 max(下标) 天然满足 AC-S8-09④「只压低、不抬高」——**这是结构性保证，不是靠测试
+# 逐条覆盖出来的**；而 if 链每加一条封顶规则都要重新证明一次"没有哪条路径会抬高"。
+# ⚠ 这是全 Sprint 最容易被"顺手优化"成 if 链的地方，动它之前先读 AC-S8-09④。
+_LEVELS: Tuple[str, ...] = (
+    _LEVEL_SUCCESS,
+    _LEVEL_PARTIAL,
+    _LEVEL_CODE_ONLY,
+    _LEVEL_FAILED,
+)
 
 
 @dataclass
@@ -2083,6 +2124,17 @@ _INCOMPLETE_EXECUTION_FIX_HINT: str = (
 )
 # 未跑完步骤清单在文案里最多列几条（防长清单撑爆 UI 折叠条）。
 _INCOMPLETE_STEPS_TEXT_MAX: int = 5
+
+# 🔴 S8-05（T-S8-2-3，Q-S8-04 / 架构 §4.1）：NO_VERIFIABLE_OUTPUT 的改判文案。
+# 与上方两条同款——**用户可见**（经 _append_fix_record 进 fix_loop_history，由 UI 的
+# "修复历程"折叠条直接展示）⇒ 通俗中文、零内部标识符、零字段名，并提为模块级具名
+# 常量以进术语守门扫描面（账目交 T-S8-3-10）。
+# ⚠ 消费方 _apply_no_verifiable_output 落在 T-S8-2-7，本任务只立常量、不接线。
+_NO_VERIFIABLE_OUTPUT_SUMMARY_LEAD: str = "跑通了，但计划里说好要产出的东西没落地"
+_NO_VERIFIABLE_OUTPUT_FIX_HINT: str = (
+    "请检查入口脚本有没有真的把结果写成文件、写到了计划声明的位置；"
+    "若确实没有可写的结果，先排查实验本身为什么没产出结果，不要补一个空文件了事。"
+)
 
 
 def _apply_incomplete_execution(

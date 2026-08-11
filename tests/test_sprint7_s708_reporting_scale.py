@@ -375,7 +375,10 @@ def test_cp_5_9_5_term_map_has_new_entry_and_expected_total():
 
     assert TERM_LABELS["annotation:scale_reduced"] == "缩小规模复现"
     assert humanize("annotation", "scale_reduced") == "缩小规模复现"
-    assert len(TERM_LABELS) == 43, (
+    # S8-05（T-S8-2-3，2026-08-11）：43 → 44，新增 error_category:no_verifiable_output
+    # （新增 ErrorCategory 成员必须同批补 term_map 文案，否则 UI 会印内部值给用户；
+    #  详见 dev-plan P-S8-49）。⚠ 保持 `==`，禁止放宽为 `>=`。
+    assert len(TERM_LABELS) == 44, (
         "term_map 条数变了：T-5-11 的 EXPECTED_N 与本断言须同步更新"
     )
 

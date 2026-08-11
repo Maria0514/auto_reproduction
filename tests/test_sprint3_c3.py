@@ -174,7 +174,11 @@ def test_cp_c3_1_importable_and_local_objects():
     assert not hasattr(st, "AUTO_FIXABLE"), "AUTO_FIXABLE 不应出现在 core/state.py"
     # AUTO_FIXABLE 集合内容正确（S6-B2 新增 NO_METRICS，T-S6-2-4；
     # S7-11 新增 INCOMPLETE_EXECUTION，T-S7-7-6——"计划步骤没跑完"须回 coding 补跑，
-    # 不进 AUTO_FIXABLE 就会落到 interrupt#2 直接打断用户，设计意图落反）。
+    # 不进 AUTO_FIXABLE 就会落到 interrupt#2 直接打断用户，设计意图落反；
+    # S8-05 新增 NO_VERIFIABLE_OUTPUT，T-S8-2-3——"产出没落地"同理须回 coding 补产出）。
+    # ⚠ 本条是**集合型精确断言**：每新增一个可修复类别都要在此同批补一行，否则会红。
+    # 这是有意为之——它逼着新增者回答"这个类别到底该不该回 coding"（P-S8-18⑤ 记的
+    # 那次红也是同款机制），**不要为图省事改成 `>=` 或子集断言而弱化它**。
     assert AUTO_FIXABLE == {
         ErrorCategory.SYNTAX,
         ErrorCategory.IMPORT,
@@ -183,6 +187,7 @@ def test_cp_c3_1_importable_and_local_objects():
         ErrorCategory.RUNTIME,
         ErrorCategory.NO_METRICS,
         ErrorCategory.INCOMPLETE_EXECUTION,
+        ErrorCategory.NO_VERIFIABLE_OUTPUT,
     }
 
 
