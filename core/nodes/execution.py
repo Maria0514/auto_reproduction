@@ -45,13 +45,20 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional, Tuple
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.tools import tool
 from langgraph.errors import GraphBubbleUp
 from langgraph.types import interrupt
@@ -65,6 +72,8 @@ from config import (
     REACT_EXECUTION_ROUNDS_MARGIN,
     REACT_MAX_ROUNDS_EXECUTION,
     REACT_MAX_ROUNDS_EXECUTION_CAP,
+    REACT_RESULT_TAG_CLOSE,
+    REACT_RESULT_TAG_OPEN,
 )
 from core.errors import SandboxCreationError, make_node_error
 from core.llm_client import create_llm, resolve_llm_config
@@ -1128,6 +1137,13 @@ class ExecAgentOutput:
       `exit_ok` 任何一处（R-S4-01 红线），且主实验指标合并受"三档主通道非空"门控
       （见 execution() 步骤 4.4 注释）——`len(metrics) >= 1` 这个成功合取项的
       **分子来源不因本批变化**。带默认值 []：降级路径与既有构造点天然为空。
+    - report（sp8 Q-S8-01，T-S8-2-4）：agent 收尾汇报的**整份原样透传**，由
+      `_resolve_agent_report` 单点产出（result 通道优先 + messages 末条 <result> 回读
+      兜底）。档位 / 逐条结论 / 物证清单**全部从这里取**，不再各自去读 final_state。
+      ⚠ 它同样是**自报**通道，R-S4-01 红线照旧：绝不进 _reconcile_steps /
+      _completion_insufficient / exit_ok。`reported_metrics` 已改为它的派生量
+      （report.get("metrics")）⇒ 两个取数口径合并为一个。带默认值 {}：降级路径
+      （子图抛非 GraphBubbleUp 异常）与既有构造点天然为空。
     """
 
     prep: Optional[SandboxPrepareResult]
@@ -1137,6 +1153,7 @@ class ExecAgentOutput:
     step_ledger: List[Tuple[int, List[str], int]] = field(default_factory=list)
     budget_truncated: bool = False
     reported_metrics: List[Any] = field(default_factory=list)
+    report: Dict[str, Any] = field(default_factory=dict)
 
 
 def _format_execution_task_context() -> str:
@@ -1469,6 +1486,110 @@ def _merge_with_collector(
     return list(rebuilt[: len(rebuilt) - k]) + list(collected)
 
 
+# sp8 T-S8-2-4（Q-S8-01，架构 §1.3）：agent 收尾汇报的回读通道。
+# 🔴 **零新依赖、不 import 私有符号**：正则按 config 的同一对常量在本模块自建，
+# **不 import react_base 的 `_RESULT_TAG_PATTERN`**（它是私有的；与
+# reporting._resolve_report_path 自写边界判定同一取向）—— 跨模块借私有符号会把两个
+# 模块焊死在一起，而这里要的只是"同一对标签常量"，config 已经是那个单一真源。
+# ⚠ 故意取名 _RESULT_TAG_RE 而非同名：两个模块里出现同名私有量，正是本条要防的
+# 那种混淆。CP-2.4-9 的"零命中"判在 **import 层 + 属性访问层**（R-S8-44：零命中型
+# 断言必须写明在哪一层零）——本行为把理由留痕，字符串层必然点名它一次。
+_RESULT_TAG_RE = re.compile(
+    re.escape(REACT_RESULT_TAG_OPEN) + r"(.*?)" + re.escape(REACT_RESULT_TAG_CLOSE),
+    re.DOTALL,
+)
+
+
+def _ai_message_text(msg: BaseMessage) -> str:
+    """提取 AIMessage 文本内容（兼容 content 为 list[parts] 的情况）。
+
+    与同文件 _tool_message_text 同款、只是消息类型不同（本文件内既有范式）。
+    """
+    content = getattr(msg, "content", "")
+    if isinstance(content, list):
+        content = "".join(
+            c if isinstance(c, str) else (c.get("text") or "") if isinstance(c, dict) else ""
+            for c in content
+        )
+    return content if isinstance(content, str) else str(content)
+
+
+def _resolve_agent_report(
+    final_state: Any,
+    final_messages: Optional[List[BaseMessage]],
+) -> Dict[str, Any]:
+    """agent 收尾汇报的取数单点（Q-S8-01）。
+
+    与 _merge_with_collector 同一范式家族、方向镜像：
+      - _merge_with_collector 治的是"保真度差"（收集器全文 > 回读尾部）⇒ 收集器优先；
+      - 本函数治的是"存在性差"（两边字节同源、无截断差）⇒ 子图 result 优先，
+        缺失 / 为空时用 messages 末条 <result> 回读补位。
+    两条都拿不到 → 返回 {}，由调用方走封顶（**绝不因此判失败**，架构 §1.4）。
+
+    🔴 为什么档位不进 _SandboxRunCollector（架构 §1.1 裁定 1，落地时最容易做反的一件事）：
+    收集器治的是累积型数据在 resume 后被重建导致的前半段丢失；判定是 finalize 终态
+    **一次性**写出的，压根没有"前半段"。塞进收集器不但拿不到额外保真度，反而把一个
+    "一次写"的数据主动降级成累积型 —— 那正是 Q-S8-01 要避免的结果。
+
+    🔴 回读只治"在不在"、不治"全不全"：两条通道读的是同一份 JSON 的同一份字节。
+    故 result 非空时**一律不回读**——架构 §1.3 docstring 原文里的"必填不全时回读补位"
+    在 react_base 现状下是**反向操作**：finalize_node 对必填不全的情形已经先 schema
+    重生成、再与标签解析结果 merge（react_base.py:745-751），落进 result 的必然是
+    末条 <result> 的**超集**；此时改用回读只会把超集换成子集。登记见 dev-plan §15.0e。
+    """
+    result = final_state.get("result") if isinstance(final_state, dict) else None
+    if isinstance(result, dict) and result:
+        return dict(result)
+
+    # 🔴 三条写死的防"假绿通道"纪律（AR-S8-02），一条都不许放宽：
+    #   ① 只认 <result> 标签包裹 —— 不采信"任意 AIMessage 里的 JSON 块"（agent 的
+    #      中间推理里经常带 JSON，采信它等于让没收尾的回合伪装成有汇报）；
+    #   ② 只取最后一条 —— 逆序扫到的首条命中即全局末条，同一条消息内也取末块；
+    #   ③ 解析失败即空 —— 不回头去试更早的标签，也不返回部分结果。
+    tag_text: Optional[str] = None
+    for msg in reversed(list(final_messages or [])):
+        if not isinstance(msg, AIMessage):
+            continue
+        blocks = _RESULT_TAG_RE.findall(_ai_message_text(msg))
+        if blocks:
+            tag_text = blocks[-1]
+            break
+
+    # 🔴 禁静默吞错（陷阱 3）。⚠ 这里与 reported_metrics 的"零指标不打 WARNING"
+    # **故意相反**：零指标是合法常态（跑失败、只跑了 prepare），而**档位缺失不是**
+    # —— 两条通道都没交出汇报意味着子图没能正常收尾，必须留痕。后人若照
+    # reported_metrics 的先例把这里"统一"成不打日志，就把唯一的现场线索抹掉了。
+    if tag_text is None:
+        logger.warning(
+            "[%s] agent 收尾汇报两条通道皆空（final_state.result 缺失/为空，且 messages 末尾"
+            "无 %s 标签），本回合按「无可核验产出」走封顶，不因此判失败（架构 §1.4）",
+            NODE_NAME, REACT_RESULT_TAG_OPEN,
+        )
+        return {}
+
+    try:
+        parsed = json.loads(tag_text)
+    except (TypeError, ValueError) as exc:
+        logger.warning(
+            "[%s] messages 末条 %s 标签存在但内容非法 JSON，汇报按缺失处理: %s",
+            NODE_NAME, REACT_RESULT_TAG_OPEN, exc,
+        )
+        return {}
+    if not isinstance(parsed, dict) or not parsed:
+        logger.warning(
+            "[%s] messages 末条 %s 标签解析出的不是非空对象（%s），汇报按缺失处理",
+            NODE_NAME, REACT_RESULT_TAG_OPEN, type(parsed).__name__,
+        )
+        return {}
+
+    logger.info(
+        "[%s] agent 收尾汇报由 messages 末条 %s 回读补位（子图 result 通道为空，"
+        "架构 §1.2 路径 (b)/(c)）",
+        NODE_NAME, REACT_RESULT_TAG_OPEN,
+    )
+    return parsed
+
+
 def _run_execution_agent(
     state: GlobalState,
     work_dir: str,
@@ -1612,12 +1733,17 @@ def _run_execution_agent(
     )
     prep = prep_results[-1] if prep_results else None
 
-    # S7-13（T-S7-9-1）：取 agent 自报的指标数组（schema 通道，原样透传不清洗）。
-    # `final_state["result"]` 由 react_base finalize_node / force_finish_node 写入
-    # （schema 优先，标签解析兜底）。非 dict / 非 list 一律降级空数组——**不打
-    # WARNING**：零指标回合是合法常态（跑失败、只跑了 prepare），打了就是噪声。
-    agent_result = final_state.get("result") if isinstance(final_state, dict) else None
-    raw_reported = agent_result.get("metrics") if isinstance(agent_result, dict) else None
+    # sp8 T-S8-2-4（Q-S8-01）：agent 收尾汇报的**单一取数口**。此前本处直接读
+    # `final_state["result"]`，那是架构 §1.2 三条缺失路径里 (b)(c) 的正面暴露——
+    # result 为空时整份汇报就没了，而同一份字节其实还躺在 messages 末条 <result> 里。
+    report = _resolve_agent_report(final_state, final_messages)
+
+    # S7-13（T-S7-9-1）：取 agent 自报的指标数组（原样透传不清洗）。改为 report 的
+    # 派生量，**不再单独读 final_state["result"]** ⇒ 消除两个取数口径（架构 §1.3）。
+    # 非 dict / 非 list 一律降级空数组——**不打 WARNING**：零指标回合是合法常态
+    # （跑失败、只跑了 prepare），打了就是噪声。⚠ 这与 _resolve_agent_report 里
+    # "两通道皆空必打 WARNING" 的反差是**有意的**，理由见该函数注释，勿"统一"。
+    raw_reported = report.get("metrics")
     reported_metrics: List[Any] = list(raw_reported) if isinstance(raw_reported, list) else []
 
     logger.info(
@@ -1635,6 +1761,7 @@ def _run_execution_agent(
         step_ledger=list(collector.step_ledger),
         budget_truncated=budget_truncated,
         reported_metrics=reported_metrics,
+        report=report,
     )
 
 
