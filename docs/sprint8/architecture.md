@@ -435,9 +435,14 @@ _verify_evidence(evidence_item, code_output_dir, extra_commands, baseline_result
 第④重的实现 = **4 行自写**，与 `reporting._resolve_report_path`（`reporting.py:371-372`）、`code_fs_tools._is_within_base`（`:82-91`）**同一判定路径**（`resolve()` 后 `== base or is_relative_to(base)`）：
 
 ```
-resolved = Path(candidate).resolve(); base = Path(code_output_dir).resolve()
+~~resolved = Path(candidate).resolve(); base = Path(code_output_dir).resolve()~~   ← 见下方订正
+base = Path(code_output_dir).resolve()
+raw = Path(candidate)
+resolved = (raw if raw.is_absolute() else base / raw).resolve()   # 🔴 相对路径先锚到 base
 ok = (resolved == base or resolved.is_relative_to(base))
 ```
+
+> 🔴 **2026-08-11 主控订正（`P-S8-55`，`T-S8-2-5` 落地时撞出，原行划删保留）**：上面第一行原文**漏了"相对路径先锚到 `code_output_dir`"这一步**。而 agent 汇报的 `path` **就是相对路径** —— §16.2 的 schema 逐字写「产物物证：本次产出文件**相对路径**」，§2 的形态示例也是 `"outputs/umap/summary.json"`。⇒ 照原文直写，`Path("outputs/umap/summary.json").resolve()` **锚到的是进程 cwd**（实测 `/data/myproj/auto_reproduction/outputs/umap/summary.json`），既不在本次代码目录之下、也根本不存在 ⇒ **每一条正当的产物物证都会同时判越界（第④重）+ 判不存在（第①重）**，七重验钞退化成"什么都不认"，档位的支撑物证全不成立 ⇒ 恒走封顶 3「仅代码跑通」。**这不是风格问题，是会让整台验钞机静默失效的一条。** 判定路径本身（`resolve()` 后 `== base or is_relative_to(base)`）**一字未变**，"两个闸不合并"的裁定也**完全不受影响**。
 
 ### 3.2 备选对比
 
@@ -795,6 +800,11 @@ A-S8-08（支撑物证一条都不成立 → 封顶「仅代码跑通」）PM �
   - `_collect_grouped_metrics`（`:1709-1756`，含调用点 `:2961`）：**整体删除**。⚠ **这推翻了本文档 §13 v2.1 的「不删、不改」**，留痕与理由见 §16.6 与 §13。
   - `_GROUP_METRIC_STR_MAX_LEN`（`:1706`）：**随之删除**（两个消费者 `:1752` / `:1774` 都没了）；其取值 **120 由新的 `_BLOCK_CELL_MAX_LEN` 继承**（§16.5）——**是改名继任，不是新造第二个常量**。
 - **新增（🔴 v2.2 由四个改为五个纯函数，紧邻既有同族函数放置）**：`_resolve_agent_report`（放 `_merge_with_collector` 之后，共用范式注释）、`_verify_evidence`（🔴 **v2.3：形参多一个 `baseline_results`；按 `path` / `metric` 二选一走两套核验**，§16.3.2。⚠ 调用方须从 `state["paper_analysis"]` 取该值传入 —— 这是 execution 侧对 `paper_analysis` 的**第二个**消费点，第一个是 §6 的上下文注入，**两处取的是同一个字段，不新增状态读取面**）、**`_collect_result_blocks`（v2.2 新增，放已删的 `_split_reported_metrics` 原位——那一段的模块注释「步骤 4.4：agent 自报指标拆分」同批改写为「步骤 4.75：agent 汇报的结果块收编」。🔴 **v2.6 补一条实现纪律**：`title` / `note` / `cell` 的非 str 处置**必须按 `isinstance` 判定，不得依赖 `mask_value` 抛不抛异常** —— `mask_value` 对非 str 有**三种**行为、其中两种静默漏过脱敏，全裁见 §16.5①）**、`_decide_conclusion`、`_apply_no_verifiable_output`（放 `_apply_incomplete_execution` 之后）。
+  - 🔴 **2026-08-11 主控订正：五个 ⇒ `八` 个（`P-S8-56`，`T-S8-2-5` 落地时撞出，上面五个原文一字不改）**。本清单写于 v2.2，而 §16.3.1（同为 v2.2）已裁定"**系统在 `_verify_evidence` 里按 `(path, value)` 去重成台账、生成 `E1`/`E2`… 序号 id、逐条验钞一次**"——**建账这件事从来没有落点**：`_verify_evidence` 的签名（§3.1 逐字）是 `(evidence_item, …)`，**单条目入参在结构上不可能去重**，而 `CP-2.5-13` 又明写"验钞只跑一次（**调用计数断言**）"⇒ 去重与计数必须由**另一个**函数完成。⇒ 补齐三个，均随 `T-S8-2-5` 同批交付、紧邻 `_verify_evidence` 放置：
+    - **`_build_evidence_ledger(report, code_output_dir, extra_commands, baseline_results)`** —— 建账单点，返回 `(台账, 去重键 → id 的索引)`；索引供 `_collect_result_blocks` 与 goal_checks 收编回填 `evidence_ids`（§16.3.1 方案 A 那句"收编时把各处的 `{path, value}` 回填成 `evidence_ids`"**查的就是这份索引**）；
+    - **`_evidence_key(evidence_item)`** —— 去重键单点（`(("P", path) 或 ("B", metric), value)` 的三元展开）。**独立成函数是必须的**：建账方与收编方必须用**同一份**键推导，各写一遍就是"引用不漂移"这条原则的反面；
+    - **`_evidence_text(value)`** —— 标量归一（缺失 / 空白一律归 `None`）。⚠ **不是可有可无的小工具**：空 `value` 会让第⑦重的双向前缀匹配**无条件通过**（任何串都以空串开头），归一即封掉这条假绿通道。
+    ⇒ **本条不改任何裁定，只是把一个从未被写下落点的动作补上。** 同族（"加了东西 / 改了判子，同源的另一处没跟改"）第 N 次发作，登记见 `dev-plan.md` §15.0e。
 - **新增四个模块常量**（块展示上限，`_collect_result_blocks` 附近，§16.5）：`_BLOCK_MAX=12` / `_BLOCK_COL_MAX=12` / `_BLOCK_ROW_MAX=50` / `_BLOCK_CELL_MAX_LEN=120`。**不进 `config.py`**（PRD 非目标 10）。
 - **删除**：`_apply_no_metrics`（`:2242-2271`，零改动红线已由 Maria 解锁，留档在 PRD §4.5.4 第 4 条）。
 - `_no_metrics_stalled`（`:2729`）→ `_no_progress_stalled`；`_NO_METRICS_EARLY_STOP_SUMMARY`（`:2715`）文案换发。
@@ -1395,6 +1405,7 @@ A-S8-08（支撑物证一条都不成立 → 封顶「仅代码跑通」）PM �
 
 1. **台账键 = `(path 原样串, value 原样串或 None)`**；`source_note` **不进键**（同一条物证不同措辞不该拆成两条）；同键的第一个 `source_note` 胜出（**首见优先**，与 `_flatten_mapping:484` 已有的"重复标签首见优先（确定性）"同款取向）。
 2. **id 按台账**首次出现顺序**分配 `E1`、`E2`…**；台账顺序 = agent 汇报里的出现顺序（先逐条结论、后结果块，固定遍历序），**不排序**。
+   > 🔴 **2026-08-11 主控订正（`P-S8-57`，`T-S8-2-5` 落地时撞出，本条原文一字不改，只补第三处）**：上面只点了**两处**物证来源，而 schema 有**三处** —— §12 逐字写「`EXECUTION_OUTPUT_SCHEMA` 新增 `conclusion_level` / `goal_checks` / **`evidence`** / `result_blocks`」，那个**顶层 `evidence`** 就是本节形态图里 `level_evidence_ids`（支撑档位本身的物证）的来源。**它的遍历位置从来没被规定过**，而"不排序 + 按首次出现顺序分配 id"这条确定性口径**必须把三处都覆盖**，否则同一份汇报换个实现就换一套 id。⇒ **定死：顶层 `evidence` 排在最后**（逐条结论 → 结果块 → 档位物证）。**选"追加在末尾"而不是"插在前面"是有理由的**：追加**不改动**上面这句已明文规定的两处相对次序，插在前面会让所有既定 id 整体位移。
 3. 🔴 **`value` 为 `None` 时，验钞第③重（数值前缀匹配）不适用，其余四重照跑。** 这是**定性物证的正路**——"图产出了、文件存在且可读"本来就没有数值可查（AC-S8-12 的构造前提）。**不是漏洞**：无数值的物证支撑不了数值主张，而它能支撑的定性主张正是本 Sprint 要让它支撑的。**这条必须写进代码注释**，否则开发要么让它崩、要么让它无条件通过。
 
 #### 16.3.2 🔴 v2.3 新增：**两种出处，两套验法** —— 论文报告值按 `baseline_results` 核验

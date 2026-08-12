@@ -2350,6 +2350,314 @@ def _apply_no_metrics(
 
 
 # ---------------------------------------------------------------------------
+# 步骤 4.75（sp8 S8-04，T-S8-2-5）：证据台账建账 + 七重验钞
+# ---------------------------------------------------------------------------
+# ⚠ 上一节的横幅写的**也是**"步骤 4.75"（S6-B2 的 NO_METRICS 合流）。不是笔误，
+#   也不在本任务射程内：sp8 的步骤骨架（架构 §1.5）把 4.75 给了本节，NO_METRICS
+#   合流那一节随 _apply_no_metrics 由 T-S8-2-7 整体删除，届时重号自然消失。
+#   批次 2 内部串行改同一文件，**本任务只加不改**（T-S8-2-2 已声明该纪律）。
+#
+# 🔴 本节只立函数，**不接线**：调用点在 T-S8-2-11 的步骤 4.75。在那之前它零消费者。
+
+# 单份物证文件为查数值而读入的字节上限；超出部分不参与第③重匹配 ⇒ 查不到即
+# **不成立**（保守方向，与 AR-S8-03 对 IO 异常的处置同向，不是"放行"）。
+# 🔴 设这个上限不是洁癖：path 完全由 agent 汇报，指向一个几 GB 的 checkpoint
+# 是**合法**的（它确实在本次代码目录下、确实可读），全量读进内存会把工作站打爆。
+# 2 MB 对 summary.json / metrics.csv / 训练日志这类真物证绰绰有余。
+_EVIDENCE_READ_MAX_BYTES: int = 2_000_000
+
+# 🔴 验钞不通过时给出的原因（**用户可见**：随证据台账落盘，报告的逐条回验小节会把
+# 引用到未过验证据的条目显著标注出来，T-S8-3-6）⇒ 通俗中文、零内部标识符、零字段名
+# （MEMORY §4.2），并提为模块级具名常量以进术语守门扫描面（账目交 T-S8-3-10，沿
+# _NO_VERIFIABLE_OUTPUT_SUMMARY_LEAD 同款范式）。
+# 🔴 措辞一律**中性**：不成立说的是"无从核对"，**不是"你在造假"**（架构 §16.3.2 第 3 条
+# 明令，取向与 §5.6 审计文案的中性要求同源）。核验保证的是"agent 没有二次编造"，
+# **不保证"论文值本身是对的"** —— 对外不得说成"论文值已核实"（R-S8-01）。
+_EV_REASON_SOURCE_MISSING: str = "这条证据既没写产出文件的位置，也没写论文里的指标名，无从核对"
+_EV_REASON_SOURCE_AMBIGUOUS: str = "这条证据同时写了产出文件的位置和论文里的指标名，看不出它到底出自哪一边"
+_EV_REASON_OUT_OF_SCOPE: str = "这个位置不在本次复现产出的目录里，不能当作本次跑出来的证据"
+_EV_REASON_IN_EXTRA_COMMAND: str = "这个位置出现在计划之外临时敲的命令里，不能当作本次复现的证据"
+_EV_REASON_NOT_FOUND: str = "按这个位置找不到文件"
+_EV_REASON_UNREADABLE: str = "这个位置不是一个能读的文件（可能是一个目录，或者没有读取权限）"
+_EV_REASON_READ_ERROR: str = "读这个文件的时候出错了，无从核对"
+_EV_REASON_VALUE_NOT_IN_FILE: str = "在这个文件里没找到它写的那个数"
+_EV_REASON_NO_BASELINE: str = "这次没有从论文里读到任何报告值，无从核对"
+_EV_REASON_METRIC_MISSING: str = "论文分析里没有这个指标的报告值"
+_EV_REASON_METRIC_AMBIGUOUS: str = "论文分析里有几个只差大小写或空格的指标名，认不准说的是哪一个"
+_EV_REASON_NO_VALUE: str = "这条证据没写它对应的数值，无从核对"
+_EV_REASON_VALUE_MISMATCH: str = "它写的数值和论文分析里记下的这个指标对不上"
+
+
+def _evidence_text(value: Any) -> Optional[str]:
+    """物证里的标量 → 用于匹配的字符串；缺失 / 空白一律归 ``None``。
+
+    🔴 **空白必须归 None，不能当成"写了一个空值"**：论文值侧第⑦重是双向前缀匹配，
+    而任何串都以空串开头 ⇒ 空 value 会**无条件通过**第⑦重，是一条不打自招的假绿
+    通道。归 None 之后它走"没写数值"那条出口（不成立），语义正确。
+    （产物侧第③重同理：``"" in text`` 恒真；只是那一侧"通过"本就是无数值物证的
+    正路，所以那边归 None 只是把台账键写干净，不改判定。）
+    """
+    if value is None:
+        return None
+    text = value if isinstance(value, str) else str(value)
+    text = text.strip()
+    return text or None
+
+
+def _verify_evidence(
+    evidence_item: Any,
+    code_output_dir: str,
+    extra_commands: Optional[List[str]],
+    baseline_results: Optional[Dict[str, Any]],
+) -> Tuple[bool, str]:
+    """七重验钞：产物侧五重 + 论文值侧两重，**该出处对应的各重全过才采信**。
+
+    🔴 **能力边界不许对外含糊**（PRD §4.4 第 5 条 / R-S8-01）：本函数能验的是
+    **物证真伪** —— 位置是不是真的、文件读不读得出来、那个数是不是真在里面、
+    这份东西算不算本次跑出来的。它**验不了"这些结果够不够格叫复现成功"**，
+    那一步由 agent 照计划里写的那条本篇达标线自己判。两者不得混为一谈。
+
+    🔴 **按「出处」二选一，各走各的核验**（``path`` 与 ``metric`` 互斥且必居其一）：
+      - **本次跑出来的**（带 path）→ ④落在本次代码目录之下 ⑤未在计划外命令参数里
+        字面出现 ①位置真实存在 ②文件可读 ③数值能在该文件里前缀匹配查到；
+      - **论文报告的**（带 metric）→ ⑥指标名能在送进来的那份论文报告值里查到
+        ⑦数值与该指标的记录双向前缀匹配。
+    两者都有 / 都无 ⇒ 不成立 + WARNING（**畸形不静默吞**，已知 bug 模式 #3）。
+
+    ⚠ **这不是"按证据形态分支"，不违反 AC-S8-08②**（PRD v4.1 边界澄清）：禁的是按
+    证据的**内容形态**（数值 / 趋势 / 定性）把判定岔开——那是病③的根因；这里分的是
+    **出处**，出处决定的是"拿什么去核对它"，不是"这篇论文属于哪一类"，两种出处对
+    **所有**论文同时存在。且它**只落在本函数里**：_decide_conclusion 的红线一字不动。
+
+    🔴 **对不上时只是这一条不成立，本函数不降档、不封顶**（架构 §16.3.2 第 2 条）：
+    ok=false 自动落进两个既有出口（引用它的逐条结论落「无法核实」/ 档位的支撑物证
+    全不成立则走既有封顶 3）。**不得另写一条"论文值对不上则降档"的分支**——既有
+    两个出口已完全覆盖，写第二处必然与第一处打架。
+
+    🔴 **七重写在同一个函数体里是刻意的**：CP-2.5-7（不读本篇达标线）与 CP-2.5-12③
+    （不得出现归一化模糊匹配）都是**对本函数体的静态审查**；拆成小函数会让静态断言
+    的射程漏掉被拆出去的那部分，等于给自己留一条审查看不见的后门。
+
+    ⚠ **局限如实登记，不得包装成"杜绝编造"**（架构 §16.3.2）：论文值侧挡的是
+    "把 0.95 编成 0.61"这一档量级的改动，**挡不住"把 0.62 报成 0.6"**——后者仍能
+    通过前缀匹配。且**论文分析自己抽错了值**的情形本函数一概发现不了。
+    """
+    item = evidence_item if isinstance(evidence_item, dict) else {}
+    path = _evidence_text(item.get("path"))
+    metric = _evidence_text(item.get("metric"))
+    value = _evidence_text(item.get("value"))
+
+    # ── 畸形：path 与 metric 互斥且必居其一（架构 §16.3.2）。**不静默吞**。
+    if (path is None) == (metric is None):
+        both = path is not None
+        logger.warning(
+            "[%s] 物证记录畸形（%s产出位置与论文指标名），该条判不成立: %s",
+            NODE_NAME, "同时写了" if both else "既没写",
+            mask_value(json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)),
+        )
+        return False, _EV_REASON_SOURCE_AMBIGUOUS if both else _EV_REASON_SOURCE_MISSING
+
+    # ── 论文值物证：第⑥⑦重（架构 §16.3.2，AR-S8-14 的唯一挡板）
+    if metric is not None:
+        # 🔴 baseline_results 为空 ⇒ 一律不成立，且**这条零误伤，理由是结构性的**：
+        # _build_execution_agent_context 只注入这一份论文报告值，**不注入整个论文分析、
+        # 更没有论文原文**（A-S8-07）⇒ agent 手上唯一的合法论文值来源就是那份注入；
+        # 注入为空时它**没有任何合法途径**知道论文报了什么 ⇒ 报出来的只可能是编的。
+        # ✨ 附带收获：A-S8-07 那条"只送这一份"从"反过度工程"升级成了**一条防线** ——
+        # 🔴 **日后若有人为了"让 agent 看得更全"把整份论文分析塞进上下文，会在毫无
+        # 察觉的情况下把本重核验掏空。** 改注入面之前先回来读这段。
+        if not isinstance(baseline_results, dict) or not baseline_results:
+            return False, _EV_REASON_NO_BASELINE
+        # 🔴 第⑥重 = **精确匹配，仅大小写与首尾空白不敏感，此外一字不差**。
+        # **绝不做归一化模糊匹配**：reporting 的 _normalize_group_key（把非字母数字
+        # 一律 re.sub 成下划线）+ _match_metrics_group 那套正是 S7-13 真跑挖出的歧义源，
+        # 本 Sprint 正在删它们 —— **不能在隔壁重建一个同型物**。不做模糊匹配零成本：
+        # 原键名已经整份摆在 agent 眼前（提示词写死"用原键名"）。
+        wanted = metric.lower()
+        hits = [k for k in baseline_results if str(k).strip().lower() == wanted]
+        if len(hits) > 1:
+            # 归一后多个候选同时命中 ⇒ 判歧义、不成立 + WARNING、**不做任何 tie-break**
+            # （沿 _match_metrics_group 当年"命中 2 条判歧义返 None"的保守取向——
+            # 那条取向本身是对的，被删的是它的模糊匹配前提，不是它的保守出口）。
+            logger.warning(
+                "[%s] 论文报告值里有 %d 个键归一后同名（%s），判歧义、该条不成立，不做取舍",
+                NODE_NAME, len(hits), mask_value(", ".join(str(k) for k in hits)),
+            )
+            return False, _EV_REASON_METRIC_AMBIGUOUS
+        if not hits:
+            return False, _EV_REASON_METRIC_MISSING
+        if value is None:
+            return False, _EV_REASON_NO_VALUE
+        recorded = _evidence_text(baseline_results[hits[0]])
+        if recorded is None:
+            return False, _EV_REASON_METRIC_MISSING
+        # 🔴 第⑦重 = **双向**前缀匹配（"0.62" 与 0.6201 互相成立）。严格相等不可取：
+        # 浮点字符串化（0.62 vs 0.6200000000000001）会造成大面积误伤。
+        if not (value.startswith(recorded) or recorded.startswith(value)):
+            return False, _EV_REASON_VALUE_MISMATCH
+        return True, ""
+
+    # ── 产物物证：第①~⑤重。判序 = 先判"这算不算本次的东西"（④⑤，纯字符串、零 IO、
+    #    且是安全面），再判"东西在不在、读不读得出、数对不对"（①②③）。
+    # 走到这里 metric 必为 None ⇒ 由上面的互斥判据，path 必非 None；显式取出一份
+    # 非可选的局部量，让类型检查看得见这个不变量（而不是靠 assert 在运行期兜）。
+    artifact_path: str = path or ""
+    base_raw = (code_output_dir or "").strip()
+    if not base_raw:
+        logger.warning(
+            "[%s] 本次代码目录为空，任何产出位置都无从判定归属，该条不成立（保守方向）",
+            NODE_NAME,
+        )
+        return False, _EV_REASON_OUT_OF_SCOPE
+
+    # 🔴 第④重 = **自写内联判断**，与 reporting._resolve_report_path、
+    # code_fs_tools._is_within_base **同一判定路径**（resolve() 后 == base 或
+    # is_relative_to(base)）。**明确否决 `from core.tools.code_fs_tools import
+    # _is_within_base`**：跨模块 import 私有符号，且会造成"改工具层边界会连带改判定"
+    # 的隐性耦合——恰恰是本项最要提防的事。
+    # 🔴 **两个闸物理分处两文件、不可能被合成一个**（架构 §3.3，须逐字进交接文档）：
+    #   工具边界管"agent 能读什么" = 整个工作区（含参考仓库），本次一字不改；
+    #   证据边界管"什么能当判定物证" = 仅本次代码目录之下。
+    #   ⇒ agent 读参考仓库里的结果表**不被拒绝**，但拿它当物证**一律不成立**
+    #     （R-S8-03：堵的是"从官方仓库抄一个对得上的数"）。
+    # ⚠ 相对路径**先锚到本次代码目录再 resolve**：agent 汇报的就是相对位置，
+    #   直接 Path(相对串).resolve() 会锚到进程 cwd 上 —— 那样所有正当物证都会
+    #   同时判越界 + 判不存在，验钞会退化成"什么都不认"。
+    try:
+        base = Path(base_raw).resolve()
+        raw_path = Path(artifact_path)
+        target = (raw_path if raw_path.is_absolute() else base / raw_path).resolve()
+    except (OSError, ValueError) as exc:
+        logger.warning("[%s] 物证位置无法解析，该条不成立: %s (%s)", NODE_NAME, artifact_path, exc)
+        return False, _EV_REASON_READ_ERROR
+    if not (target == base or target.is_relative_to(base)):
+        return False, _EV_REASON_OUT_OF_SCOPE
+
+    # 🔴 第⑤重 = **只查计划外命令**（PRD §4.9.5 措施 3）：计划步骤写出的文件完全不受
+    # 影响 ⇒ 正常复现零误伤。口径 = **字面子串包含**（原样串出现在任一条计划外命令的
+    # 任一参数里即判不成立）。数据源是对账产出的计划外命令清单。
+    for cmd in extra_commands or []:
+        if isinstance(cmd, str) and artifact_path in cmd:
+            return False, _EV_REASON_IN_EXTRA_COMMAND
+
+    if not target.exists():                      # 第①重
+        return False, _EV_REASON_NOT_FOUND
+    if not target.is_file():                     # 第②重（目录 / 非常规文件）
+        return False, _EV_REASON_UNREADABLE
+    try:                                         # 第②重（权限 / 其它 IO 异常）
+        # 🔴 按**字节**读，不按 utf-8 解码判可读：图产物（png/pdf）解不出 utf-8，
+        # 按解码判会把"图产出了、文件在且能读"这条**定性物证的正路**误判成不可读。
+        with target.open("rb") as fh:
+            raw_bytes = fh.read(_EVIDENCE_READ_MAX_BYTES)
+    except OSError as exc:
+        # 🔴 IO 异常 ⇒ 该条判**不成立**（保守方向，**不是"放行"**）+ WARNING（AR-S8-03）。
+        logger.warning("[%s] 物证文件读取失败，该条不成立: %s (%s)", NODE_NAME, artifact_path, exc)
+        return False, _EV_REASON_READ_ERROR
+
+    # 🔴 第③重：value 为 None ⇒ **本重不适用，其余四重照跑**（架构 §16.3 第 3 条）。
+    # 这是**定性物证的正路** —— "图产出了、文件存在且可读"本来就没有数值可查。
+    # **不是漏洞**：无数值的物证支撑不了数值主张，而它能支撑的定性主张正是本 Sprint
+    # 要让它支撑的。⚠ 这条必须留在注释里，否则后人要么让它崩、要么让它无条件通过。
+    if value is None:
+        return True, ""
+    text = raw_bytes.decode("utf-8", errors="replace")
+    # 🔴 **前缀匹配是单向的**（复裁 8）：0.6201 能匹配文件里的 0.62014732，反过来不行。
+    # 实现 = 子串搜索 + "前面不能紧挨数字或小数点"的左边界 ⇒ 命中的必须是某个数的
+    # **开头**。⚠ 光写 `value in text` 会连"数中间那一截"也认（1473 命中 0.62014732），
+    # 那是**放宽**方向；这个左边界就是为堵它加的，别当成可有可无的修饰。
+    if not re.search(r"(?<![0-9.])" + re.escape(value), text):
+        return False, _EV_REASON_VALUE_NOT_IN_FILE
+    return True, ""
+
+
+def _evidence_key(evidence_item: Any) -> Tuple[str, str, str]:
+    """物证去重键：``(("P", path) 或 ("B", metric), value)`` 的三元展开（架构 §16.3.2）。
+
+    **两个命名空间分开**（``P`` = 本次跑出来的产物，``B`` = 论文报告的），防止某个
+    位置串恰好等于某个指标名而被并成一条。``source_note`` **不进键** —— 同一条物证
+    换个措辞不该拆成两条记录（同键**首见优先**，与 _flatten_mapping 的"重复标签首见
+    优先"同款确定性取向）。畸形记录（两者都有 / 都无）落第三个命名空间 ``X`` +
+    原始内容的确定性序列化：它们也各自成一条，且相同的畸形只占一条。
+
+    🔴 收编方（goal_checks / 结果块）拿各处就地写的 ``{path, value}`` /
+    ``{metric, value}`` 查同一份索引 ⇒ **三处引用必然指向同一个 id**，
+    "引用漂移"在结构上不可能发生。
+    """
+    item = evidence_item if isinstance(evidence_item, dict) else {}
+    path = _evidence_text(item.get("path"))
+    metric = _evidence_text(item.get("metric"))
+    value = _evidence_text(item.get("value")) or ""
+    if (path is None) == (metric is None):
+        return (
+            "X",
+            json.dumps(evidence_item, ensure_ascii=False, sort_keys=True, default=str),
+            value,
+        )
+    return ("P", path, value) if path is not None else ("B", metric or "", value)
+
+
+def _iter_reported_evidence(report: Optional[Dict[str, Any]]) -> List[Any]:
+    """按**固定遍历序**取出 agent 汇报里的全部物证条目，**不排序**（架构 §16.3.1 第 2 条）。
+
+    序 = **先逐条结论、后结果块**（架构原文），**最后**才是支撑档位本身的那一组。
+    ⚠ 架构原文只点了前两处（第三处是 v2.2 给 schema 加的顶层物证字段，遍历序那句
+    没跟改，已登记勘误）。**把它追加在末尾而不是插在前面**是刻意的：追加不改动
+    前两处已被明文规定的相对次序，插在前面会让所有既定 id 整体位移。
+    """
+    if not isinstance(report, dict):
+        return []
+    items: List[Any] = []
+    for holder_key in ("goal_checks", "result_blocks"):
+        for holder in report.get(holder_key) or []:
+            if isinstance(holder, dict):
+                items.extend(holder.get("evidence") or [])
+    items.extend(report.get("evidence") or [])
+    return items
+
+
+def _build_evidence_ledger(
+    report: Optional[Dict[str, Any]],
+    code_output_dir: str,
+    extra_commands: Optional[List[str]],
+    baseline_results: Optional[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], Dict[Tuple[str, str, str], str]]:
+    """建证据台账：去重 → **逐条只验钞一次** → 按首次出现顺序分配 ``E1``/``E2``…
+
+    返回 ``(台账, 去重键 → id 的索引)``；索引供收编方回填 ``evidence_ids``。
+
+    🔴 **id 由系统生成，agent 一个 id 都不写**（架构 §16.3.1 方案 A）⇒ 悬空 id 与
+    id 撞车**在结构上不可能发生** —— 不是"被缓解"，是"不存在"（R-S8-23 不适用）。
+    方案 B（agent 自造 id）被否决的理由值得留在这里：那等于引入一个 agent 自造的
+    命名空间，而"自造命名空间 + 撞名怎么办"正是本 Sprint 要拆掉的那套东西的同构物。
+
+    脱敏出口（架构 §9.3）：落台账的位置串 / 指标名 / 数值 / 来源自述一律过 mask_value
+    —— 它们全是 agent 自由书写、且会随报告展示出去的文本。⚠ **验钞用的是脱敏前的
+    原样串**（脱敏后的串拿去读盘必然读不到），台账里存的是脱敏后的串。
+    """
+    ledger: List[Dict[str, Any]] = []
+    index: Dict[Tuple[str, str, str], str] = {}
+    for item in _iter_reported_evidence(report):
+        key = _evidence_key(item)
+        if key in index:
+            continue  # 同键首见优先：source_note 不进键，重复引用不重复验钞
+        ok, reason = _verify_evidence(item, code_output_dir, extra_commands, baseline_results)
+        eid = f"E{len(ledger) + 1}"
+        index[key] = eid
+        record: Dict[str, Any] = {"id": eid}
+        if key[0] == "P":
+            record["path"] = mask_value(key[1]) or ""
+        elif key[0] == "B":
+            record["metric"] = mask_value(key[1]) or ""
+        record["value"] = (mask_value(key[2]) or "") if key[2] else None
+        note = _evidence_text(item.get("source_note")) if isinstance(item, dict) else None
+        record["source_note"] = (mask_value(note) or "") if note else ""
+        record["ok"] = ok
+        record["reason"] = reason
+        ledger.append(record)
+    return ledger, index
+
+
+# ---------------------------------------------------------------------------
 # 步骤 5：ExecutionResult 构造 + B 档 success 判定（架构 §2.3.5，Q-S3-01）
 # ---------------------------------------------------------------------------
 
