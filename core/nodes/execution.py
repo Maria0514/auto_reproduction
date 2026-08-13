@@ -2657,6 +2657,130 @@ def _build_evidence_ledger(
     return ledger, index
 
 
+# 🔴 逐条预期回验的三态（S8-08，架构 §9 复裁项 1 的默认取值，Maria 已确认采纳）。
+# **用户可见**（报告的逐条回验小节原样印）⇒ 通俗中文、提为模块级具名常量以进术语守门
+# 扫描面（账目交 T-S8-3-10，沿 _EV_REASON_* 同款）。
+# 🔴 **不复用旧三态词**：①旧的第三态在新机制下**是错的** —— 现在是"agent 判过、但物证
+# 核实不了"，不是"没验过"；②「印证上了」直接对应四档判据里"论文核心结论得到印证"那句，
+# 语义一线贯通；③"零新枚举"的实质是不新增 Python Enum 类、不新增分类维度 —— 这里仍然
+# 只是三个模块常量，该实质完全成立。
+_VERDICT_CONFIRMED: str = "印证上了"
+_VERDICT_NOT_CONFIRMED: str = "没印证上"
+_VERDICT_UNVERIFIABLE: str = "无法核实"
+_VERDICTS: Tuple[str, ...] = (
+    _VERDICT_CONFIRMED,
+    _VERDICT_NOT_CONFIRMED,
+    _VERDICT_UNVERIFIABLE,
+)
+
+
+def _decide_conclusion(
+    report: Optional[Dict[str, Any]],
+    ledger: List[Dict[str, Any]],
+    index: Dict[Tuple[str, str, str], str],
+    exit_ok: bool,
+    recon: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """四档判定单点：**只读 agent 报的档位 + 数封顶**，然后收编逐条结论与物证引用。
+
+    🔴 **AR-S8-04 是本函数的头号红线，也是本 Sprint 最容易做反的一件事**：
+    「一条统一判据」落地时**极易长回两套** —— 最常见的复发形态就是按"数值 / 趋势 /
+    定性"给本函数写三个分支。**那正是病③（照着某类论文设计，另一类结构性拿不到高档）
+    的原样复发。** 写死：**本函数不读证据形态、不读证据出处、不解析证据语义**，
+    它对一条物证唯一知道的事情是**它过没过验（一个布尔）**。
+
+    🔴 **也不读计划里那条本篇达标线**（§0.5 红线 2）：那是**给 agent 看的判断依据**，
+    不是给代码看的判据。代码一旦开始解析它的文本，就是在把第二层重新硬编码回代码里。
+
+    🔴 **不读结果块**：块有几个、几行、印了什么数，**一律不参与判定**。块与档位同源于
+    同一次汇报、同刻落盘，但**方向是单向的**。⇒ 本函数**连形参都不收块**——这让
+    "块不参与判定"从一条要靠行为用例去证的约定，变成**结构上不可能违反**；
+    块与全局标注由收编函数产出、在接线处并进同一个 dict（T-S8-2-10b / T-S8-2-11）。
+
+    **三条封顶**（PRD §4.5.3，**代码从不抬高档位，只压低**）：
+      ①命令跑挂了（``exit_ok`` 为假）⇒ 封顶「失败」；
+      ②计划步骤没跑完 ⇒ 封顶「仅代码跑通」；
+      ③**支撑档位本身的那组物证一条都不成立** ⇒ 封顶「仅代码跑通」。
+    实现 = **按 ``_LEVELS`` 下标取 max**（元组从高到低），**不写 if 链**（架构 §2.3）。
+    取 max 只会往低走 ⇒ **"agent 报低档但客观事实良好时不得被抬高"是这个写法的
+    数学结论，不是另加的一条规则**。
+
+    🔴 **agent 报的档位拿不到 / 不在四档字面量内 ⇒ 起点取最高档，全交给封顶决定**
+    （架构 §1.4）。这不是"给它放水"，恰恰相反：此时封顶③必然命中（没有任何一条
+    支撑物证成立）⇒ 落「仅代码跑通」；命令若还跑挂了，封顶①再把它压到「失败」。
+    ⇒ **§1.4 那张表逐行由此得出，而「跑通了却因为没读到汇报被判失败」这条失真路径
+    在算术上不可能发生。** ⚠ 档名**不做模糊匹配、不做归一化** —— 那正是 S7-13 真跑
+    挖出的歧义源，本 Sprint 正在删它，不能在这里重建。
+
+    ⚠ **封顶③把"一条支撑物证都没报"也算在内**，理由逐字见架构 §1.4 第三行：
+    汇报缺失**等价于**"支撑物证一条都不成立"。⇒ 提示词必须要求 agent 判高档时点名
+    哪个文件里的哪个数支撑（T-S8-2-9），**漏写这句会让正当的高档判定被封顶③压掉**。
+    """
+    data = report if isinstance(report, dict) else {}
+    ok_by_id: Dict[str, bool] = {
+        str(r.get("id")): bool(r.get("ok")) for r in ledger if isinstance(r, dict)
+    }
+
+    def _ids_of(holder: Dict[str, Any]) -> List[str]:
+        """把一处就地写的物证换成台账 id（查 T-S8-2-5 建的同一份索引）。"""
+        out: List[str] = []
+        for item in holder.get("evidence") or []:
+            eid = index.get(_evidence_key(item))
+            if eid is not None and eid not in out:
+                out.append(eid)
+        return out
+
+    # ── 逐条预期结论：判者是 agent、验者是代码（PRD §4.8）
+    goal_checks: List[Dict[str, Any]] = []
+    for entry in data.get("goal_checks") or []:
+        if not isinstance(entry, dict):
+            continue
+        ids = _ids_of(entry)
+        reported = entry.get("verdict")
+        verdict = reported if reported in _VERDICTS else _VERDICT_UNVERIFIABLE
+        # 🔴 物证不过验 ⇒ 该条落「无法核实」（保守出口，PRD §4.8 第 3 条）。
+        # "一条物证都没附"同样落这里：核不了的东西不能算印证上了。
+        # ⚠ 这里读的是**物证过没过验这个布尔**，不是物证是什么形态 —— 上面那条红线
+        # 说的"不读形态"与这里读 ok，是两件事，别当成同一件而把这行也删了。
+        if not ids or not all(ok_by_id.get(i, False) for i in ids):
+            verdict = _VERDICT_UNVERIFIABLE
+        goal_checks.append({
+            "description": mask_value(str(entry.get("description") or "")) or "",
+            "verdict": verdict,
+            "evidence_ids": ids,
+        })
+
+    # ── 支撑**档位本身**的那组物证（封顶③的唯一输入，架构 §2 形态图逐字）
+    level_ids = _ids_of(data)
+
+    # ── 档位：起点 + 三条封顶，一律按下标取 max
+    agent_level = data.get("conclusion_level")
+    if agent_level in _LEVELS:
+        indices = [_LEVELS.index(agent_level)]
+    else:
+        if data:
+            logger.warning(
+                "[%s] agent 报的档位取不到合法值（%r 不在四档字面量内），"
+                "起点按最高档、全交给封顶决定（架构 §1.4）；**不做模糊匹配**",
+                NODE_NAME, agent_level,
+            )
+        indices = [0]
+    if not exit_ok:                                  # 封顶①
+        indices.append(_LEVELS.index(_LEVEL_FAILED))
+    if _completion_insufficient(recon):              # 封顶②
+        indices.append(_LEVELS.index(_LEVEL_CODE_ONLY))
+    if not any(ok_by_id.get(i, False) for i in level_ids):   # 封顶③
+        indices.append(_LEVELS.index(_LEVEL_CODE_ONLY))
+    level = _LEVELS[max(indices)]
+
+    return {
+        "level": level,
+        "goal_checks": goal_checks,
+        "evidence_ledger": list(ledger),
+        "level_evidence_ids": level_ids,
+    }
+
+
 # ---------------------------------------------------------------------------
 # 步骤 5：ExecutionResult 构造 + B 档 success 判定（架构 §2.3.5，Q-S3-01）
 # ---------------------------------------------------------------------------
