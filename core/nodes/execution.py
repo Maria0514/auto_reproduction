@@ -183,7 +183,7 @@ class ErrorCategory(str, Enum):
     NO_VERIFIABLE_OUTPUT = "no_verifiable_output"
     # S7-11（T-S7-7-6）：命令都跑通了、但计划步骤没跑完——可自动修复（送回 coding
     # 继续补跑）。不复用 NO_METRICS 的三条理由（架构 Q-S7-29）：①会被
-    # _no_metrics_stalled 的"无进展早停"误伤成提前打断；②fix_hint 指错方向；
+    # _no_progress_stalled 的"无进展早停"误伤成提前打断；②fix_hint 指错方向；
     # ③fix_loop_history.error_category 是面向用户的修复历程标题，复用会让界面连续
     # 印"未产出指标"而真相是"步骤没跑完"——对用户撒谎比技术债更贵。
     INCOMPLETE_EXECUTION = "incomplete_execution"
@@ -2237,7 +2237,19 @@ def _audit_declared_steps(
 
 
 # ---------------------------------------------------------------------------
-# 步骤 4.75（S6-B2，T-S6-2-4）：NO_METRICS 合流——exit 0 但无指标时改判
+# 步骤 4.7 / 4.8：两级"改判"——先判"没跑完"，再判"没产出"
+#   · 步骤 4.7（S7-11，T-S7-7-6）：`_apply_incomplete_execution`
+#   · 步骤 4.8（sp8 S8-04，T-S8-2-7）：`_apply_no_verifiable_output`
+#   ⚠ 本节原为「步骤 4.75（S6-B2，T-S6-2-4）：NO_METRICS 合流」；该合流随
+#     `_apply_no_metrics` 在 T-S8-2-7 整体删除（`<METRICS>` 通道退场后它已判无可判），
+#     "4.75"这个号从此只属下一节（证据台账）。⇒ 上一版注释里"重号由 T-S8-2-7 消解"
+#     这句到期项**已兑现**，此处一并撤下。
+# 🔴 `_apply_incomplete_execution` 的 **docstring 里仍写着 `_apply_no_metrics`**
+#    （"与它同款结构" / "排在它上游"）—— **不许改**：该函数在冻结表里登记为
+#    「一字不动、哈希不变」（dev-plan §3.4 A 表；`tests/test_sprint7_s713_reported_metrics.py`
+#    的 `test_f1` 逐字节守）。T-S8-2-7 实测过一次：**只改它 docstring 两行 ⇒ 该行冻结哈希当场红**。
+#    ⇒ 正确读法以本横幅为准：**上游 = 4.7 `_apply_incomplete_execution`，
+#    下游 = 4.8 `_apply_no_verifiable_output`**；docstring 那句指的正是这条继承关系。
 # ---------------------------------------------------------------------------
 
 
@@ -2256,7 +2268,8 @@ _INCOMPLETE_STEPS_TEXT_MAX: int = 5
 # 与上方两条同款——**用户可见**（经 _append_fix_record 进 fix_loop_history，由 UI 的
 # "修复历程"折叠条直接展示）⇒ 通俗中文、零内部标识符、零字段名，并提为模块级具名
 # 常量以进术语守门扫描面（账目交 T-S8-3-10）。
-# ⚠ 消费方 _apply_no_verifiable_output 落在 T-S8-2-7，本任务只立常量、不接线。
+# 消费方 = `_apply_no_verifiable_output`（T-S8-2-7 已建）。⚠ 它的**调用点**在
+# T-S8-2-11 的步骤 4.8 —— 在那之前本函数有定义、零消费者。
 _NO_VERIFIABLE_OUTPUT_SUMMARY_LEAD: str = "跑通了，但计划里说好要产出的东西没落地"
 _NO_VERIFIABLE_OUTPUT_FIX_HINT: str = (
     "请检查入口脚本有没有真的把结果写成文件、写到了计划声明的位置；"
@@ -2317,45 +2330,46 @@ def _apply_incomplete_execution(
     )
 
 
-def _apply_no_metrics(
+def _apply_no_verifiable_output(
     feedback: "ExecutionFeedback",
-    metrics: dict,
-    metrics_groups: dict,
+    level: Any,
     exit_ok: bool,
 ) -> "ExecutionFeedback":
-    """纯函数：代码跑通但未产出指标时，将 feedback 改判为 NO_METRICS。
+    """纯函数：命令全跑通、但档位只有「仅代码跑通」时，改判为 NO_VERIFIABLE_OUTPUT。
 
-    条件：exit_ok ∧ feedback.category == NONE ∧ metrics 为空 ∧ metrics_groups 为空。
-    其余情形原样返回。
+    S8-04（Q-S8-04 / PRD §4.5.4 第 4 条）：**取代 T-S8-2-7 删掉的 `_apply_no_metrics`**。
+    旧判据"零指标"随 `<METRICS>` 通道一起退场（判无可判）；新判据改看**档位**——
+    "跑通了却没交出任何能核实的结果"这件事，只有档位说得清。
+
+    - 条件（唯一，写死）：``exit_ok ∧ feedback.category == NONE ∧ level == 仅代码跑通``，
+      其余情形**原样返回**（与 ``_apply_incomplete_execution`` 逐字同款结构）；
+    - **优先级**：本函数排在 ``_apply_incomplete_execution`` **下游**（步骤 4.8）⇒
+      "步骤没跑完"命中后 category 不再是 ``NONE``，本函数的前置守卫自动让位
+      （Q-S7-30：优先级靠调用顺序拿）⇒ 报的是**真因而不是果**；
+    - ``level`` 是判定那一步（步骤 4.75 `_decide_conclusion`）算出的档位。**拿不到档位
+      就不改判**：非字符串 / 空值 / 未知档名一律原样返回，与四个档名逐个精确相等比较，
+      **不做模糊匹配、不猜**（旧 checkpoint 与降级路径都可能没有档位）。
     """
-    if (
+    if not (
         exit_ok
         and feedback.category == ErrorCategory.NONE
-        and not metrics
-        and not metrics_groups
+        and level == _LEVEL_CODE_ONLY
     ):
-        msg = (
-            "代码跑通但未产出指标：全部命令 exit 0，但未发现 <METRICS> 输出或"
-            " outputs/*/summary.json。请检查执行步骤是否调用了实验主入口，"
-            "并按输出约定写出指标。"
-        )
-        return ExecutionFeedback(
-            category=ErrorCategory.NO_METRICS,
-            auto_fixable=True,
-            summary=msg,
-            fix_hint=msg,
-            representative_stderr="",
-        )
-    return feedback
+        return feedback
+    return ExecutionFeedback(
+        category=ErrorCategory.NO_VERIFIABLE_OUTPUT,
+        auto_fixable=True,
+        summary=_NO_VERIFIABLE_OUTPUT_SUMMARY_LEAD,
+        fix_hint=_NO_VERIFIABLE_OUTPUT_FIX_HINT,
+        representative_stderr="",
+    )
 
 
 # ---------------------------------------------------------------------------
 # 步骤 4.75（sp8 S8-04，T-S8-2-5）：证据台账建账 + 七重验钞
 # ---------------------------------------------------------------------------
-# ⚠ 上一节的横幅写的**也是**"步骤 4.75"（S6-B2 的 NO_METRICS 合流）。不是笔误，
-#   也不在本任务射程内：sp8 的步骤骨架（架构 §1.5）把 4.75 给了本节，NO_METRICS
-#   合流那一节随 _apply_no_metrics 由 T-S8-2-7 整体删除，届时重号自然消失。
-#   批次 2 内部串行改同一文件，**本任务只加不改**（T-S8-2-2 已声明该纪律）。
+# ⚠ 与上一节的重号**已消解**（T-S8-2-7 删掉 NO_METRICS 合流后，"4.75"只属本节）。
+#   批次 2 内部串行改同一文件，**T-S8-2-5 当时只加不改**（T-S8-2-2 已声明该纪律）。
 #
 # 🔴 本节只立函数，**不接线**：调用点在 T-S8-2-11 的步骤 4.75。在那之前它零消费者。
 
@@ -3221,10 +3235,18 @@ def _route_user_fix_decision(decision: Any, updates: dict, state: GlobalState) -
     return out
 
 
-# 早停终态文案：N+1 轮（尾部 N 条历史 + 当前 1 次），面板 error_summary 与 :2070 logger 共用。
+# 早停终态文案：N+1 轮（尾部 N 条历史 + 当前 1 次），面板 error_summary 与 logger 共用。
+# 〔T-S8-2-7，2026-10-21〕**文案换发**：旧文「…请检查执行步骤或**更换论文**」对一个纯
+# 定性分析的论文是**错误建议**（它本来就不产出数值，换一篇还是这样），踩 MEMORY §4.2
+# 「用户可见文本」那一族。新文案对"有数值"与"无数值"两类论文都成立，且**不含"更换论文"**
+# （CP-2.7-7 的负向断言）。
+# ⚠ **常量名沿用 `_NO_METRICS_…`**：它不是用户可见文本，改名收益为零、回归面为正
+#   （与下方 Q-S8-04「不改 config 常量名」同理）；`NO_METRICS_EARLY_STOP_ROUNDS` 亦不动。
 _NO_METRICS_EARLY_STOP_SUMMARY = (
-    f"已连续 {NO_METRICS_EARLY_STOP_ROUNDS + 1} 轮零指标，"
-    "自动修复无进展，请检查执行步骤或更换论文"
+    f"已连续 {NO_METRICS_EARLY_STOP_ROUNDS + 1} 轮跑完都没有交出计划里说好要产出的东西，"
+    "自动修复没有进展，已停在这里等你处置。"
+    "请检查实验入口有没有真的把结果写出来；"
+    "若这篇论文本身不产出可比对的数值，可以在计划里把要交的产物写得更具体。"
 )
 
 # sp7 S7-01（架构 §4.3）：预算耗尽终态面板文案，走既有 summary/fix_hint 通道经 replace 注入
@@ -3236,20 +3258,26 @@ _BUDGET_EXHAUSTED_SUMMARY = (
 )
 
 
-def _no_metrics_stalled(state: GlobalState, feedback: "ExecutionFeedback") -> bool:
-    """早停判定：本轮 NO_METRICS 且历史尾部已连续 NO_METRICS_EARLY_STOP_ROUNDS 轮。
+def _no_progress_stalled(state: GlobalState, feedback: "ExecutionFeedback") -> bool:
+    """早停判定：本轮「没交出可核实的东西」且历史尾部已连续 N 轮同类。
+
+    〔T-S8-2-7，2026-10-21〕原名 `_no_metrics_stalled`：**改名 + 匹配类别换发**
+    （`NO_METRICS` → `NO_VERIFIABLE_OUTPUT`）。⚠ 不换类别则本早停**永远不会触发**
+    —— `NO_METRICS` 自本任务起已无生产者（它唯一的改判函数被删），继续按它判
+    "无进展"会一直判 False ⇒ 修复循环空转到预算烧光。**函数体结构逐行同构**，
+    改动的只有"认哪个类别"这一件事（两处类别字面量：本轮的谓词 + 历史条目的比对）。
 
     "无进展"口径 = 类别连续复现：fix_loop_history 尾部已有 >= N 条
-    error_category == "no_metrics" 的历史记录。
+    error_category == "no_verifiable_output" 的历史记录。
     """
-    if feedback.category != ErrorCategory.NO_METRICS:
+    if feedback.category != ErrorCategory.NO_VERIFIABLE_OUTPUT:
         return False
     history = state.get("fix_loop_history") or []
     if not isinstance(history, list) or len(history) < NO_METRICS_EARLY_STOP_ROUNDS:
         return False
     tail = history[-NO_METRICS_EARLY_STOP_ROUNDS:]
     return all(
-        isinstance(r, dict) and r.get("error_category") == ErrorCategory.NO_METRICS.value
+        isinstance(r, dict) and r.get("error_category") == ErrorCategory.NO_VERIFIABLE_OUTPUT.value
         for r in tail
     )
 
@@ -3285,13 +3313,13 @@ def _maybe_interrupt_or_return(
     # 复用 commit-边界-return + self-loop-重入，`already_committed` guard 一字不改、零新路径、
     # 零新 guard（架构 §2.2 坐实：预算门命中时 exec_result 已在 updates、sandbox 不重跑）。
     #
-    # 可修复 + 未超限 + 预算够一回合 + 子预算未触顶 + 无 NO_METRICS 早停 → 回 coding 修复。
+    # 可修复 + 未超限 + 预算够一回合 + 子预算未触顶 + 无「没产出」早停 → 回 coding 修复。
     if (
         feedback.auto_fixable
         and fix_count < MAX_FIX_LOOP_COUNT
         and dev_calls < MAX_DEV_LOOP_LLM_CALLS
         and budget >= DEV_LOOP_MIN_CALLS_PER_ROUND  # sp7 S7-01：预算门下沉为修复准入否决条件
-        and not _no_metrics_stalled(state, feedback)
+        and not _no_progress_stalled(state, feedback)
     ):
         updates["fix_loop_count"] = fix_count + 1  # 单点自增（§2.5.2）
         updates["fix_loop_history"] = _append_fix_record(state, fix_count + 1, feedback)
@@ -3321,10 +3349,12 @@ def _maybe_interrupt_or_return(
 
     # 本回合结果已落盘 → 安全地在函数体内 interrupt()。
     # 早停终态：覆盖 feedback.summary/fix_hint（面板 error_summary 渲染此值），使决策面板承载
-    # 早停轮次上下文文案而非普通 NO_METRICS 通用文案（架构 §3.4，走既有 summary 通道，payload
+    # 早停轮次上下文文案而非普通「没产出」通用文案（架构 §3.4，走既有 summary 通道，payload
     # 键结构不变）。reason 与 payload 文案共用同一常量，避免日志/面板轮次口径不一致。
+    # ⚠ 早停优先级链的 elif 顺序**一字未动**（CP-2.7-8）：早停 > 预算耗尽 > 子上限 >
+    #   不可修复 > 修复耗尽；T-S8-2-7 只换了判据名字与类别，没有动顺序。
     panel_feedback = feedback
-    if _no_metrics_stalled(state, feedback):
+    if _no_progress_stalled(state, feedback):
         reason = _NO_METRICS_EARLY_STOP_SUMMARY
         panel_feedback = replace(
             feedback,
@@ -3491,15 +3521,17 @@ def execution(state: GlobalState) -> dict:
         plan.get("execution_steps") or [], run_results, agent_out.step_ledger,
     )
 
-    # 步骤 4.7（S7-11，T-S7-7-6）+ 4.75（S6-B2，T-S6-2-4）：两级改判合流。
-    # 顺序即优先级（Q-S7-30）：INCOMPLETE 排在 NO_METRICS 之前 ⇒ "没跑完且没指标"
-    # 报的是"步骤没跑完"（真因）而不是"没产出指标"（果）；_apply_no_metrics 的
-    # category==NONE 前置守卫使它在改判后自动原样返回，**函数体一行不改**。
-    # 两者共用同一处 exit_ok 单点计算，与分类器同套 _effective_runs 口径。
+    # 步骤 4.7（S7-11，T-S7-7-6）：完整度改判。
+    # 〔T-S8-2-7，2026-10-21〕原同点的 NO_METRICS 合流**已删**（它唯一的改判函数随
+    # `<METRICS>` 通道退场，判无可判）。接任者 `_apply_no_verifiable_output` 排在
+    # **步骤 4.8**、由 **T-S8-2-11** 接线 ⇒ 本处只剩一级。
+    # 顺序即优先级（Q-S7-30）在两级的最终形态里照样成立：4.7 在上游、4.8 在下游，
+    # 下游的 `category == NONE` 前置守卫使其在"没跑完"命中后自动让位 ⇒ 报的仍是
+    # **真因（步骤没跑完）而不是果（没交出东西）**。
+    # exit_ok 单点计算保持不变，与分类器同套 _effective_runs 口径。
     _prep_ok = bool(agent_out.prep.success) if agent_out.prep is not None else bool(run_results)
     _exit_ok = _prep_ok and all(r.exit_code == 0 for r in _effective_runs(run_results))
     feedback = _apply_incomplete_execution(feedback, step_reconciliation, _exit_ok)
-    feedback = _apply_no_metrics(feedback, metrics, metrics_groups, _exit_ok)
     # AC-S5-03 第②落点：同点快照 coding gate 的降级凭证 purpose_key（.get() 防御读，
     # 兼容旧 checkpoint 无该键；只存 purpose_key，天然无敏感值，架构 §9.3）。
     degraded_credentials = sorted((state.get("credential_degradations") or {}).keys())

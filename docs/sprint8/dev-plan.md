@@ -1548,15 +1548,23 @@ graph TD
 6. 🔴 **早停优先级链 `:2817-2840` 的 elif 顺序一字不动**：新类别早停**原位继承**旧早停的位置。原论据（"早停是更具体的无进展语境"，`:2825-2826` 逐字记着）在新类别下同样成立。
 
 **自测检查点**：
-- [ ] **CP-2.7-1** `_apply_no_verifiable_output` 触发条件三合取**逐项必要**：任一不满足 → 原样返回
-- [ ] **CP-2.7-2** ★**顺序即优先级**：步骤没跑完 + 档位「仅代码跑通」→ 报的是 `INCOMPLETE_EXECUTION`（**真因**）而不是 `NO_VERIFIABLE_OUTPUT`
-- [ ] **CP-2.7-3** `NO_VERIFIABLE_OUTPUT` 的 `auto_fixable is True` ⇒ 路由回编码环节（不是打断用户）
-- [ ] **CP-2.7-4** `_apply_no_metrics` **函数与其调用点均已删除**（AC-S8-18）；⚠ **枚举成员仍在**（复跑 CP-2.3-4）
-- [ ] **CP-2.7-5** `_no_progress_stalled` 改名完成，**函数体结构与改前逐行同构**（只改类别匹配那一处）
-- [ ] **CP-2.7-6** `config.py` **逐字节未改**（`git diff` 为空自证）
-- [ ] **CP-2.7-7** ★早停文案已改写：**不含"更换论文"**（负向断言）；文案通俗中文、对定性论文成立；已提为具名常量并进守门候选
-- [ ] **CP-2.7-8** ★**早停优先级链顺序一字未动**：`:2817-2840` 的 elif 顺序与 CP-2.2-6 落档的抄录**逐行相同**
-- [ ] **CP-2.7-9 验红**：①把 `_apply_no_verifiable_output` 排到 `_apply_incomplete_execution` 上游 → CP-2.7-2 必红；②改动早停链顺序 → CP-2.7-8 必红
+- [x] **CP-2.7-1** `_apply_no_verifiable_output` 触发条件三合取**逐项必要**：任一不满足 → 原样返回 ⇒ ✅ **[2026-10-21]** 探针 11 向全绿：三条件全满 → `no_verifiable_output`；`exit_ok=False` / `category≠NONE` / `level ∈ {复现成功, 部分复现, 失败, None, '', 123}` / 档名带尾空格 → **返回同一对象**（`is` 判等，字段一个不动）。⇒ 与四档名**精确相等**比较，不做模糊匹配
+- [x] **CP-2.7-2** ★**顺序即优先级**：步骤没跑完 + 档位「仅代码跑通」→ 报的是 `INCOMPLETE_EXECUTION`（**真因**）而不是 `NO_VERIFIABLE_OUTPUT` ⇒ ✅ **[2026-10-21]** 构造「没跑完（`completed=1 < planned_actionable=3`）+ 档位仅代码跑通」：4.7 命中 `INCOMPLETE_EXECUTION` 后，4.8 的 `category==NONE` 前置守卫使其**返回同一对象** ⇒ 终值 `incomplete_execution`（真因）。反向对照「没跑完 + 档位复现成功」同样不被改判
+- [x] **CP-2.7-3** `NO_VERIFIABLE_OUTPUT` 的 `auto_fixable is True` ⇒ 路由回编码环节（不是打断用户）⇒ ✅ **[2026-10-21]** `auto_fixable is True` 且 `category in AUTO_FIXABLE` ⇒ `_maybe_interrupt_or_return` 的 `feedback.auto_fixable` 判据成立＝回 coding、不进 interrupt#2；文案走两条具名常量（`_SUMMARY_LEAD` / `_FIX_HINT`），非同一句复读
+- [x] **CP-2.7-4** `_apply_no_metrics` **函数与其调用点均已删除**（AC-S8-18）；⚠ **枚举成员仍在**（复跑 CP-2.3-4）⇒ ✅ **[2026-10-21]** 定义零、调用零；残留 3 处**全是注释/docstring 留痕**（`tokenize` 实测 **`NAME` 型引用 = 0**）。🔴 **口径交付给 T-S8-2-12**：AC-S8-18 的静态断言必须判「无 `NAME` token」，**不能写成「源码里不含该子串」**——否则会被自己的留痕注释打红。枚举复跑：旧快照 `error_category=no_metrics` 反序列化不抛、重建出 `NO_METRICS`；`AUTO_FIXABLE` 归属不动
+- [x] **CP-2.7-5** `_no_progress_stalled` 改名完成，**函数体结构与改前逐行同构**（只改类别匹配那一处）⇒ ✅ **[2026-10-21]** AST 归一（抹函数名 / 两处类别字面量 / docstring）后与 `HEAD` 版**逐行相同**；差异面实测恰为「1 处函数名 + 2 处类别字面量」。⟦⚠ **与本任务正文第 3 条「（单点谓词，改一处）」不一致**：磁盘上类别匹配是**两处**（本轮谓词 `!=` + 历史条目比对 `.value`），**必须同改**，只改一处则早停恒判 `False`、永不触发。已在函数 docstring 里写死，待主控定性是否开勘误⟧
+- [x] **CP-2.7-6** `config.py` **逐字节未改**（`git diff` 为空自证）⇒ ✅ **[2026-10-21]** `git diff -- config.py` 空、`git status -- config.py` 空
+- [x] **CP-2.7-7** ★早停文案已改写：**不含"更换论文"**（负向断言）；文案通俗中文、对定性论文成立；已提为具名常量并进守门候选 ⇒ ✅ **[2026-10-21]** 负向断言过（全文零「更换论文」）；内部标识符黑名单 9 词实测 **0 命中**；**显式覆盖「若这篇论文本身不产出可比对的数值」** ⇒ 对定性论文成立；仍以「已连续 N 轮」开头（既有断言 `"已连续" not in 普通载荷` 依赖此区分）；已是模块级具名常量，守门账目交 `T-S8-3-10`
+- [x] **CP-2.7-8** ★**早停优先级链顺序一字未动**：`:2817-2840` 的 elif 顺序与 CP-2.2-6 落档的抄录**逐行相同** ⇒ ✅ **[2026-10-21]** 解析源码实测五档 = 早停 → 预算耗尽 → 子预算触顶 → 不可修复 → 修复耗尽，与 **§15.4 B** 抄录逐行相同；只换第 1 档的谓词与类别，2~5 档次序未动
+- [x] **CP-2.7-9 验红**：①把 `_apply_no_verifiable_output` 排到 `_apply_incomplete_execution` 上游 → CP-2.7-2 必红；②改动早停链顺序 → CP-2.7-8 必红 ⇒ ✅ **[2026-10-21]** ①反转实测得 `no_verifiable_output`（CP-2.7-2 要求 `incomplete_execution`）⇒ 必红成立；②**真改磁盘**换序 ⇒ 链序实测变为 `dev_calls` 在前 ⇒ CP-2.7-8 报红；`cp` 备份 + `sha256` 还原后与改前**逐字节相同**、复绿。⚠ ①在**组合层**验（4.8 的调用点属 `T-S8-2-11`），生产路径上同一条因果要到 2-11 才真正成立
+
+> **交付留痕（2026-10-21）**
+> 1. **本任务产出 = 一个函数立、一个函数删、一个函数改名、一句文案换发**；**不接线**：`_apply_no_verifiable_output` 的调用点在 `T-S8-2-11` 步骤 4.8，在那之前它有定义、零消费者。
+> 2. **全量回归**（本机 Windows，`-m "not e2e and not browser"）：**135 failed / 2642 passed / 29 skipped / 26 error**（改前基线 **123 / 2670 / 31 / 8**）。
+> 3. **新增红面 30 项 = 12 FAILED + 18 ERROR，跨 5 文件**，逐条归入 §3.3 已登记的两族：`_apply_no_metrics` 相关（`test_sprint6_b5_deferred_cps` **6 条**直调/文案、`test_sprint6_b2` **8 条** setup import、`:812` 那条 `hasattr` 正向断言、`s711_gap_audit` **1 条**链断言、冻结表 **1 行**，合 17）与 `_no_metrics_stalled` 相关（`test_sprint6_b2` **10 条** setup import、`s711_completion` **3 条**，合 13）。**归不到的红 = 0**；另 2 项由 skip 转 error，同族同断点。**复绿时点一律 `T-S8-2-12`**（只换不弱化）。
+> 4. 🔴 **冻结表当场抓到一次越界**：本任务最初改过 `_apply_incomplete_execution` 的 docstring 两行（为消掉指向已删函数的悬空引用），`test_f1` 立刻报该行哈希变化 ⇒ **已整段撤回原文**，改把说明写进本节横幅注释（横幅不在 `inspect.getsource` 射程内）。**实测结论：冻结表 5 个"一字不动"函数连 docstring 都动不得。** 现冻结表剩 4 红 = `_apply_no_metrics`（本任务，行待移出）+ `_extract_metrics_block` / `_parse_metrics` / `_regex_scan_metrics`（`T-S8-2-1`，行待移出）。
+> 5. `mypy --config-file mypy.ini core/nodes/execution.py` 零错误；`config.py` 零改动。
+
 
 ### 任务 T-S8-2-8：`_build_execution_result` +`conclusion` + `success` 由 `level` 派生 + 🔴 **`ExecutionResult` 删两键**（v1.3 新增）
 
