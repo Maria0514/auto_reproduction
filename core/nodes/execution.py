@@ -10,9 +10,11 @@ sp4 §3.4 步骤 1+2 换内嵌子图）：
        → 正则 → LLM 抽取兜底）」**四个函数整体删除**，<METRICS> 通道废止（Maria 决策 3：
        是废掉不是收窄）。metrics 现在的**唯一来源** = agent 经 <result>.metrics 自报，
        由步骤 4.4 _split_reported_metrics 拆分；
-    5. _build_execution_result success 判定 —— ⚠ **判据正在换装**：T-S8-2-8 会把 success
-       改为由四档 level 派生，**在那之前 success 恒假**（`len(metrics) >= 1` 这个合取项的
-       分子已被步骤 4 撤走）。这是计划内的中间态，详见步骤 4 处的窗口告示；
+    5. [_build_execution_result] success 判定 —— 〔S8-05 / T-S8-2-8，2026-10-21：**已换装**〕
+       success 不再由"命令 exit 全 0 + 有指标 + 步骤跑完"三合取判定，改为**由四档
+       level 派生**（前两档成功、后两档失败），三项各有新落点（封顶① / 通道退场 /
+       封顶②）。⚠ 但 `level` 的产线要到 T-S8-2-11 接线 ⇒ **在那之前 success 仍恒假**，
+       这是计划内的中间态，详见步骤 4 处的窗口告示；
     6. _map_execution_result 单点 read-modify-write（细分类进 error_message 前缀）；
     7. _maybe_interrupt_or_return 修复循环边界 + 可能的 interrupt#2。
 
@@ -463,16 +465,22 @@ def _classify_execution(
 # _split_reported_metrics 拆成主实验 / 分组两份。**没有第二个来源。**
 #
 # ★★★ 给后人看的窗口告示（dev-plan §0.0，AR-S8-01）★★★
-# 从本次删除合入起，到 T-S8-2-8（success 由四档 level 派生）落地为止，
-# **本系统一律判失败** —— 因为 _build_execution_result 的成功判据里还留着
-# `len(metrics) >= 1` 这个合取项，而它的分子刚刚被撤走（步骤 4.4 的自律门控
-# 在主通道零指标时不采信 agent 自报，见那里的 elif 分支）。
+# 窗口期 = 从 T-S8-2-1（本次删除合入）起，到 **T-S8-2-11**（节点主体接线 + S7-13
+# 自律门控废止）为止：**本系统仍会一律判失败**。
+#
+# 🔴 **2026-10-21 T-S8-2-8 交付后，窗口的成因变了、结论没变**（别照旧版找原因）：
+#   - 旧成因：_build_execution_result 的成功判据里还留着"至少一个指标"这个合取项，
+#     而它的分子已被本步骤撤走 ⇒ 恒假。
+#   - **现成因**：success 已改为由四档 level 派生（T-S8-2-8），但 `conclusion` 的产线
+#     （步骤 4.75 的 _decide_conclusion）要等 T-S8-2-11 才接线 ⇒ 现在 `conclusion` 恒为
+#     `{}` ⇒ 拿不到档位 ⇒ `success` 仍恒假。**换了个原因，同一个结果。**
 #
 # 🔴 **这不是 bug，不要来"修"它**：
-#   - 不要回滚本次删除来让回归变绿（dev-plan §0.0 第 4 条明令禁止）；
-#   - 不要顺手改 `len(metrics) >= 1` 那个合取项 —— 那是 T-S8-2-8 的射程；
+#   - 不要回滚本步骤的删除来让回归变绿（dev-plan §0.0 第 4 条明令禁止）；
+#   - 不要为了让 success 变真而给 `conclusion` 塞一个默认档位 —— 那等于绕过判定链路，
+#     是比"判失败"严重得多的造假；
 #   - 窗口期间**不得端到端真跑、不得对外演示**，也不得据此判断"哪里坏了"。
-# 恢复点 = T-S8-2-11（节点主体接线 + S7-13 自律门控废止）。窗口期间若真有跑通的需求，
+# 恢复点 = T-S8-2-11。窗口期间若真有跑通的需求，
 # **唯一正确的做法是把批次 2 做完**。
 #
 # ✨ 附带红利（dev-plan T-S8-2-1 第 3 条，须随交接文档一起抄走）：
@@ -2082,6 +2090,18 @@ def _reconcile_steps(
 # agent 首轮诚实声明了 8/9 步，**根本没有虚报**；问题从来不在自报可信度，而在
 # "exit_code 全 0 就算成功"这个口径（做得多反而判失败、做得少反而判成功）。
 # 采信自报的代价（理论上可被刷满）由下方 _audit_declared_steps 的 WARNING 留痕对冲。
+#
+# 🔴 〔T-S8-2-8，2026-10-21〕**`_completion_insufficient` 的 docstring 已失真，且不许就地改**：
+# 它写着「`success` 判定（`_build_execution_result`）与 `_apply_incomplete_execution`
+# **两处必须都调它**」—— 那句话现在两半都不对：
+#   ① `_build_execution_result` **已不调它**（success 改由四档 level 派生，见步骤 5）；
+#   ② 它漏了**真正的第二个调用点** `_decide_conclusion` 的**封顶②**（T-S8-2-6 引入，
+#      当时就没跟改这句）。
+# ⇒ **现役调用点恰两个**：`_apply_incomplete_execution`（步骤 4.7）+ `_decide_conclusion`（封顶②）。
+# ⚠ **为什么不直接改 docstring**：本函数在字节冻结表里登记为「一字不动、哈希不变」
+#   （`tests/test_sprint7_s713_reported_metrics.py::test_f1`，`inspect.getsource` 含 docstring）。
+#   上一次（T-S8-2-7）改另一个冻结函数的 docstring 两行，该行哈希当场红 ⇒ 只能把说明写在这里。
+#   待主控定性是否开勘误。
 
 # 自报不符的 WARNING 里最多并排展示几条（防长清单刷屏，非产品语义 ⇒ 不进 config.py）。
 _AUDIT_MISMATCH_LOG_MAX: int = 5
@@ -2920,40 +2940,46 @@ def _build_execution_result(
     prep: Optional[SandboxPrepareResult],
     run_results: List[SandboxRunResult],
     feedback: ExecutionFeedback,
-    metrics: Dict[str, Any],
     work_dir: str,
     step_reconciliation: Optional[Dict[str, Any]] = None,
+    conclusion: Optional[Dict[str, Any]] = None,
     degraded_credentials: Optional[List[str]] = None,
     budget_truncated: bool = False,
-    metrics_groups: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> ExecutionResult:
-    """构造 ExecutionResult，B 档 success = (exit 全 0) and len(metrics) >= 1。
+    """构造 ExecutionResult。🔴 **success 由四档 level 派生**（T-S8-2-8，PRD §4.5.4 表）。
 
-    - B 档判定只认真实 exit_code（收集器/回读），agent 自述无从进入（R-S4-01）；
+    - 🔴 **判据（唯一）**：``success = level ∈ {复现成功, 部分复现}`` —— 前两档算成功、
+      后两档算失败。**旧的三合取判据整体退场**，三项各有新落点、一个都没丢：
+      「至少抓到一个指标」那一项的分子已随 `<METRICS>` 通道撤走（`T-S8-2-1`）；
+      「计划步骤跑完」那一项迁进**封顶②**（`_decide_conclusion` 里的
+      `_completion_insufficient(recon)`，`T-S8-2-6`）；「命令 exit 全 0」那一项迁进
+      **封顶①**（同一函数）。⇒ **本函数只做形状落盘，不判好坏**，判好坏一律在 4.75。
+    - **拿不到档位就判失败**：``conclusion`` 缺省 ``{}`` ⇒ ``level`` 为 ``None`` ⇒
+      ``success=False``。这是批次 2 窗口内的**正确行为**——`level` 的产线要到
+      `T-S8-2-11` 接线（详见步骤 4 处的窗口告示），在此之前本函数必然判失败。
+    - 🔴 **旧快照不走本函数**：guard 命中路径（`_has_committed_result_for_round`）直接复用
+      已落盘的 ``execution_result``，其 ``success`` 键原值即权威值 ⇒ **旧报告可重放**
+      （架构 §2.4）。本函数**永不**重算历史结果，所以"旧快照没有 conclusion"不构成风险。
     - prep=None（sp4 E3）：有运行结果视为中性（复用既有 venv），无运行结果视为失败；
     - logs 回 state 前统一 ``mask_value``（sp4 §9.4 落点：install_log + stdout/stderr
       原文在此收口脱敏，AC-S4-11）；
-    - L-E4-01：exit_ok 对 effective runs（同命令最后一次）求 all-0；
-      logs 聚合与 runtime_seconds 仍用全量 run_results（失败证据/真实耗时不丢）；
+    - logs 聚合与 runtime_seconds 用全量 run_results（失败证据/真实耗时不丢）；
     - sp5 T-S5-2-4/2-5/2-6（幂等纪律③）：step_reconciliation / degraded_credentials /
-      budget_truncated / metrics_groups 由调用方在本函数**之前**算好传入，随
-      exec_result 一次 commit——guard 命中路径复用已落盘结果即含新字段，零重算；
-      guard / _map_execution_result 均不二次写入。budget_truncated 判据单点在
-      _run_execution_agent（Q-S5-7）、metrics_groups 产出单点在
-      _collect_grouped_metrics（步骤 4.5），本函数只透传落盘 + 默认值兜底。
+      budget_truncated 由调用方在本函数**之前**算好传入，随 exec_result 一次 commit——
+      guard 命中路径复用已落盘结果即含新字段，零重算；guard / _map_execution_result 均不
+      二次写入。budget_truncated 判据单点在 _run_execution_agent（Q-S5-7）。
+    - T-S8-2-8：``conclusion`` 同款——调用方在步骤 4.75 算好传入，落盘
+      ``dict(conclusion or {})``；**本函数不解析它的内容**（档位、台账、结果块原样落盘）。
     """
-    prep_ok = bool(prep.success) if prep is not None else bool(run_results)
-    exit_ok = prep_ok and all(r.exit_code == 0 for r in _effective_runs(run_results))
-    # S7-11（T-S7-7-6，修法 C）：第三个合取项——计划里的步骤必须跑完。
-    # 在此之前只问"做过的有没有做错"，不问"该做的做完没有"，构成反向激励：
-    # 立项那次真跑 round_0 跑了 17 条命令 5 条失败 ⇒ 判失败；round_1 只跑 2 条全 0
-    # ⇒ 判**成功**（指标还是汇总上一轮的残留产物）。做 2 件事比做 17 件事更容易成功。
-    # ⚠ 必须调 _completion_insufficient 这个单点谓词，禁止在此另写比较（红线）。
-    success = bool(
-        exit_ok
-        and len(metrics) >= 1
-        and not _completion_insufficient(step_reconciliation)
-    )
+    # S7-11（T-S7-7-6）教训——🔴 **不许随代码消失**（`CP-2.8-4` 守的就是这段还在不在）：
+    # 立项那次真跑 round_0 跑了 17 条命令 5 条失败 ⇒ 判失败；round_1 只跑 2 条全 0 ⇒
+    # 判**成功**（指标还是上一轮留下的残留产物）⇒「做 2 件事比做 17 件事更容易成功」，
+    # 这是 S7-11 立项的全部理由，也是"为什么必须有完整度这一项"的唯一记录。
+    # 🔴 〔T-S8-2-8〕这一项的**落点已迁走、教训不许删**：完整度现在由**封顶②**承担
+    # （`_decide_conclusion` ⇒ `_completion_insufficient(recon)` ⇒ 封顶「仅代码跑通」）。
+    # ⇒ 本函数不再判完整度，`step_reconciliation` 只落盘给封顶②与报告消费。
+    level = (conclusion or {}).get("level")
+    success = level in (_LEVEL_SUCCESS, _LEVEL_PARTIAL)
 
     # artifacts 收集（越界等异常不应炸节点）。
     artifacts: List[str] = []
@@ -2974,16 +3000,17 @@ def _build_execution_result(
 
     return ExecutionResult(
         success=success,
-        metrics=metrics,
         logs=mask_value(_aggregate_logs(prep, run_results)) or "",
         errors=errors,
         artifacts=artifacts,
         runtime_seconds=float(sum(r.duration_seconds for r in run_results)),
         environment_info=dict(prep.env_info or {}) if prep is not None else {},
         step_reconciliation=dict(step_reconciliation or {}),
-        degraded_credentials=list(degraded_credentials or []),
         budget_truncated=bool(budget_truncated),
-        metrics_groups=dict(metrics_groups or {}),
+        degraded_credentials=list(degraded_credentials or []),
+        # 〔T-S8-2-8〕四档判定结论 + 证据台账 + 结果块，与 step_reconciliation 同款：
+        # 调用方算好传入、随 exec_result 一次 commit，guard 命中路径零重算。
+        conclusion=dict(conclusion or {}),
     )
 
 
@@ -3447,14 +3474,18 @@ def execution(state: GlobalState) -> dict:
             "检查 coding 节点是否产出代码", "",
         )
         exec_result = ExecutionResult(
-            success=False, metrics={}, logs="", errors=[
+            success=False, logs="", errors=[
                 f"[error_category={feedback.category.value}] {feedback.summary}"
             ],
             artifacts=[], runtime_seconds=0.0, environment_info={},
-            # sp5 T-S5-2-6：降级路径构造点同步补齐 4 新键默认值（架构 §8 R-6，
-            # 未进 sandbox——对账/截断/分组/降级快照均为空默认）。
+            # sp5 T-S5-2-6：降级路径构造点同步补齐新键默认值（架构 §8 R-6，
+            # 未进 sandbox——对账/截断/降级快照均为空默认）。
             step_reconciliation={}, budget_truncated=False,
-            metrics_groups={}, degraded_credentials=[],
+            degraded_credentials=[],
+            # 〔T-S8-2-8〕conclusion 同批补齐：该路径没有判定（连代码目录都没有），
+            # 结论留空 `{}` ⇒ 下游 `.get("conclusion") or {}` 防御读拿到空档位。
+            # ⚠ 键数账与正常路径一致：本路径产出的 ExecutionResult 也是 10 键。
+            conclusion={},
         )
         updates = _map_execution_result(exec_result, feedback, state)
         return _mark_degraded_for_report(updates, state, reason="missing_code_output_dir")
@@ -3502,6 +3533,10 @@ def execution(state: GlobalState) -> dict:
     # 判歧义返 None，本来能匹配上的组反而匹配不上（一条"符合"退回"未验证"）。
     # 幂等纪律③同 4.6：在 _build_execution_result 之前算好、随 exec_result 一次
     # commit，guard 命中路径复用已落盘结果零重算。
+    # 🔴 〔T-S8-2-8，2026-10-21〕**本值现无消费点**：`ExecutionResult` 的两个指标键已删，
+    # `_build_execution_result` 不再收 metrics_groups。此处**故意不提前动**——步骤 4.5 与
+    # `_collect_grouped_metrics` 的退场归 `T-S8-2-10`（批次 2 内部串行、文件边界不允许
+    # 跨任务顺手删）。⚠ 别把"它没人用"当成可以在这轮删掉的理由。
     metrics_groups = reported_groups or _collect_grouped_metrics(work_dir)
 
     # 步骤 4.6（sp5 S5-06，T-S5-2-4/2-5）：确定性步骤对账 + 降级凭证快照 + 截断标记。
@@ -3536,14 +3571,15 @@ def execution(state: GlobalState) -> dict:
     # 兼容旧 checkpoint 无该键；只存 purpose_key，天然无敏感值，架构 §9.3）。
     degraded_credentials = sorted((state.get("credential_degradations") or {}).keys())
 
-    # 步骤 5：构造 ExecutionResult + B 档 success（budget_truncated 判据与 INFO 日志
-    # 单点在 _run_execution_agent，此处只随 exec_result 透传落盘，AC-S5-12）。
+    # 步骤 5：构造 ExecutionResult。🔴 〔T-S8-2-8〕**success 现由四档 level 派生**，
+    # 两个旧形参（主实验指标 / 分组指标）已删；`conclusion` 的产线在步骤 4.75、
+    # 由 `T-S8-2-11` 接线，**在那之前这里不传 ⇒ level 拿不到 ⇒ success 恒假**（窗口内正确）。
+    # budget_truncated 判据与 INFO 日志单点在 _run_execution_agent，此处只透传落盘（AC-S5-12）。
     exec_result = _build_execution_result(
-        prep, run_results, feedback, metrics, work_dir,
+        prep, run_results, feedback, work_dir,
         step_reconciliation=step_reconciliation,
         degraded_credentials=degraded_credentials,
         budget_truncated=agent_out.budget_truncated,
-        metrics_groups=metrics_groups,
     )
 
     # 步骤 5.5（sp7 S7-02，架构 §5.3）：本回合完整日志落盘到

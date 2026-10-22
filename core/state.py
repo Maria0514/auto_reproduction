@@ -186,12 +186,23 @@ class ExecutionResult(TypedDict):
           ⚠ planned 是**原始步数**（"计划共 N 步"陈述 + agent 自报 step_index 的合法区间），
           planned_actionable 是**可执行步数**——完成度分母只认后者（BUG-S7-11-01）；
         - budget_truncated: 执行因轮次预算截断（reporting 截断声明，AC-S5-12）；
-        - metrics_groups: 多组指标 {组名: {指标: 值}}（execution _collect_grouped_metrics 写）；
         - degraded_credentials: 本次执行降级的凭证 purpose_key 列表（自 state 快照）。
     下游消费一律 .get() 防御读（兼容旧 checkpoint 无新键，R-6）。
+
+    🔴 **Sprint 8 删除 2 键**（架构 sp8 §2.6.3，`T-S8-2-8` 落地）：主实验指标与分组指标
+    两键一并退场——`<METRICS>` 三档通道与分组折叠整体删除，本次执行结果改由
+    `conclusion` 里的结果块承载。⚠ **读到旧 checkpoint 里这两个键不是脏数据**：它们是
+    Sprint 8 之前存下来的合法快照，只是不再声明、不再渲染；运行期零校验，读不崩。
+    ⇒ 判别式（架构 sp8 §2.6.2 末段写死，**不可类推**）：`Enum(值)` 反序列化会
+    `ValueError` ⇒ 枚举成员必须留；**TypedDict 键删了没有这回事**（运行时就是 dict）。
+
+    Sprint 8 新增 1 键（`AR-S8-15` / 架构 sp8 §17.3）：
+        - conclusion: 本次执行的四档判定结论 + 证据台账 + 结果块（`_decide_conclusion`
+          产出、步骤 4.75 组装）。缺省 `{}`、**缺键 ≡ `{}`**，下游走
+          `.get("conclusion") or {}` 防御读（旧 checkpoint 无此键，架构 sp8 §2.4）。
+    ⇒ 键数账：**11 - 2 + 1 = 10 键**。
     """
     success: bool
-    metrics: Dict[str, Any]
     logs: str
     errors: List[str]
     artifacts: List[str]
@@ -199,8 +210,8 @@ class ExecutionResult(TypedDict):
     environment_info: Dict[str, str]
     step_reconciliation: Dict[str, Any]
     budget_truncated: bool
-    metrics_groups: Dict[str, Dict[str, Any]]
     degraded_credentials: List[str]
+    conclusion: Dict[str, Any]
 
 
 class NodeError(TypedDict):
