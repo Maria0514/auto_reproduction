@@ -1642,7 +1642,7 @@ graph TD
 >    - **乙·两形参 / 两键被删**（9）：`test_sprint5_t26_grouped_metrics` 三条、`test_sprint5_t12_state` 三条、`test_sprint7_s713` 的 `test_b1` / `test_b2` / `test_b3`；
 >    - **丙·冻结表换发**（1）：`test_f1_frozen_function_source_bytes_are_unchanged[_build_execution_result]` —— §3.4 A 表本就登记它为"**换发**"，新哈希待 `T-S8-2-12` 落。
 >    - **复绿时点**：甲 / 乙 → `T-S8-2-12`（"只换不弱化"）；丙 → `T-S8-2-12` 换发哈希。
-> 4. 🔴 **3 条转绿是假绿，不得记成"变好了"**：`test_b4_zero_report_output_is_byte_identical_to_pre_batch` 的 `[field_absent]` / `[none]` / `[str]` 由红转绿。原因是该用例的"改前基线"**由同一份代码在运行时现算**（`_drive(reported=_ABSENT)`），而本轮**从结果里删掉了会变的键** ⇒ 两侧一起变、相等成立。**它测不出整条链一起劣化**，与本 Sprint 反复记的"双口径用例静默退化成记录当前行为"同族（`P-S8-44` 已登记不治）⇒ **不构成任何能力恢复的证据**。
+> 4. 🔴 **3 条转绿是假绿，不得记成"变好了"**：`test_b4_zero_report_output_is_byte_identical_to_pre_batch` 的 `[field_absent]` / `[none]` / `[str]` 由红转绿。原因是该用例的"改前基线"**由同一份代码在运行时现算**（`_drive(reported=_ABSENT)`），而本轮**从结果里删掉了会变的键** ⇒ 两侧一起变、相等成立。**它测不出整条链一起劣化**，与本 Sprint 反复记的"双口径用例静默退化成记录当前行为"同族（`P-S8-44` 已登记不治）⇒ **不构成任何能力恢复的证据**。⟦🔴 **2026-10-21 订正（`T-S8-2-8b` 交付时现查）**：上面"假绿"的解释**不够准确** —— 真因是该用例的 `_projection` **保留了带时间戳的 `node_errors`**，同一份代码连跑两次就在微秒上不同（实测 `…35.292024` vs `…35.293030`）⇒ 它是 **flaky**：两个方向都会翻。本任务这轮它就翻回红了。⇒ 红/绿两个方向**都不构成能力变化**，一律按 `P-S8-44` 记**不治**⟧
 > 5. **mypy** 全仓 27 文件零错误；`CP-2.8-9④` 变异实测报错逐字对上；`_has_committed_result_for_round` / `_completion_insufficient` **零字节改动**。
 > 6. 🔴 **`_completion_insufficient` 的 docstring 已失真且不许就地改**（它在冻结表内）：它写「`success` 判定（`_build_execution_result`）与 `_apply_incomplete_execution` 两处必须都调它」——本任务后 `_build_execution_result` **不再调它**，而真正的第二个调用点是 `_decide_conclusion` 的**封顶②**（2-6 引入、当时就没跟改这句）。⇒ 说明写在该函数**上方的横幅注释**里（横幅不在 `inspect.getsource` 射程内），并登记 `P-S8-65`。
 > 7. **窗口成因已换、结论未变**：`success` 已由 level 派生，但 `conclusion` 的产线要等 `T-S8-2-11` 接线 ⇒ 模块顶部与步骤 4 的窗口告示已同批改写为"**换了个原因，同一个结果**"，恢复点仍是 2-11。
@@ -1674,22 +1674,32 @@ graph TD
    - payload 键名 **`baseline_results`**，与 state **同名透传**（既有 payload 键全是英文机器键；不另起名，省一层映射）；
    - **非空才注入**：`isinstance(dict) and 非空`，与 `credential_degradations`（`:1349-1354`）/ `scale_reduced_directive`（`:1367-1368`）/ `expected_results`（`:1378-1380`）三处先例**逐字同款**；
    - **只送 `baseline_results`，不送整个 `paper_analysis`**（A-S8-07，反过度工程）。
-2. **`success_criteria` 注入**（架构 §11 前置① + §2.5.5）：`plan.get("success_criteria") or ""`，**非空才注入**。⚠ 此时字段还没有生产者（在 1b），读到空 ⇒ 不注入 ⇒ 字节零扰动。
+2. **`success_criteria` 注入**（架构 §11 前置① + §2.5.5）：`plan.get("success_criteria")`，**非空才注入**。
+   - ⟦🔴 **2026-10-21 现查订正（`T-S8-2-8b` 交付时）**：原文写的「⚠ **此时字段还没有生产者（在 1b）**，读到空 ⇒ 不注入」**已过期** —— `T-S8-1b-2` 早把它交付了（`ReproductionPlan.success_criteria` 进 `required`），所以本次注入**会真的拿到值**，能验到"有值"那条真路径。⟧
+   - ⟦🔴 **另一处按字面冲突、取更严者**：原文写 `or ""`，但 `or ""` 会把 `123` / `{}` **原样注入**（它们都是真值），而 `CP-2.8b-3` 要求**非 str 形态字节零扰动** ⇒ 两者按字面互斥。实现取更严的 `isinstance(x, str) and x.strip()`（沿 `P-S8-29` / `BUG-S8-01` 既有裁决：`str({})` = `"{}"` 会被当真值印给 agent，**刻意不做 `str()` 强转**）。⟧
 3. 🔴 **两者都走 HumanMessage 动态通道**（`json.dumps(sort_keys=True)` 字节幂等），**系统提示词主体不因本项改动**（架构 §6.2③：缓存命中面挂在稳定前缀 SystemMessage，HumanMessage 是前缀之后的动态段 ⇒ **本项对 cache 命中率的影响为零**）。
 4. 🔴 **`sort_keys=True` 必须保持**：`baseline_results` 是 dict，键序不定则字节抖动，Prompt Cache 与回归基线双双失效（架构 §6.2⑤）。
 5. ⚠ **配套提示词约束（「论文没报这个数也是合法结论」）不在本任务**——它属 prompt 主体，随 T-S8-2-9 一次落（**§16.D 已裁定：注入与其配套约束必须同批落地**）。**本任务只做通道，不做措辞。**
 6. 🔴 **既有 payload 键的构造顺序与取值一字不动**（架构 §12）。
 
 **自测检查点**：
-- [ ] **CP-2.8b-1** 有 `baseline_results` 时 payload 含该键，值与 state 中的**逐字相同**（原样透传，不加工）
-- [ ] **CP-2.8b-2** ★**命门·字节零扰动**（AC-S8-15②）：`baseline_results` 缺失 / 为 `None` / 为 `{}` / 为非 dict **四种形态**下，payload 与 sp7 基线**逐字节相同**（⇒ **既有 HumanMessage 字节基线不换发**，只新增"有该值"一条基线）
-- [ ] **CP-2.8b-3** `success_criteria` 同款四形态字节零扰动；有值时注入且**原文照传**（不摘要、不截断）
-- [ ] **CP-2.8b-4** ★**系统提示词主体零改动**（AC-S8-15③）：`_EXECUTION_SYSTEM_PROMPT_BODY` 本任务前后**逐字节相同**（`sha256` 比对，值与 T-S8-2-2 记录的旧基线一致）
-- [ ] **CP-2.8b-5** 字节幂等：同一 state 连跑 3 次 `_build_execution_agent_context` 的 `json.dumps(sort_keys=True)` **逐字节相同**；`baseline_results` 键序打乱后重建，序列化结果仍相同（证明 `sort_keys` 生效）
-- [ ] **CP-2.8b-6 逐条验红**：①去掉 `baseline_results` 注入 → CP-2.8b-1 红；②把"非空才注入"改成无条件注入 → CP-2.8b-2 红；③去掉 `sort_keys=True` → CP-2.8b-5 后半红
-- [ ] **CP-2.8b-7** **旧快照兼容·execution 注入侧**（AC-S8-02④，**由批次 1b 的 `CP-1b.2-7` 改判迁入，2026-08-08，§15.0d `P-S8-33`**）：缺 `success_criteria` 的旧计划 dict 经 `_build_execution_agent_context` 的 `.get(...) or ""` 读**不崩**、按空处理
+- [x] **CP-2.8b-1** 有 `baseline_results` 时 payload 含该键，值与 state 中的**逐字相同**（原样透传，不加工） ⇒ ✅ **[2026-10-21]** 两层实测：①等值断言过；②**A-S8-07**：state 里另带 `datasets` / `title` 时 payload **只多出 `baseline_results` 一个键**（`paper_analysis` / `datasets` / `title` 全不出现）
+- [x] **CP-2.8b-2** ★**命门·字节零扰动**（AC-S8-15②）：`baseline_results` 缺失 / 为 `None` / 为 `{}` / 为非 dict **四种形态**下，payload 与 sp7 基线**逐字节相同**（⇒ **既有 HumanMessage 字节基线不换发**，只新增"有该值"一条基线） ⇒ ✅ **[2026-10-21]** 改前/改后各采一次：**连 plan 都没有** = `ef5182dc731a6dda` / 87，四种形态 + `success_criteria` 五种形态 = `481d6b5702684b7e` / 150，**改前改后逐字节相同（9/9）**。验红见 `CP-2.8b-6②`
+- [x] **CP-2.8b-3** `success_criteria` 同款四形态字节零扰动；有值时注入且**原文照传**（不摘要、不截断） ⇒ ✅ **[2026-10-21]** 五形态（缺 / `None` / `""` / **纯空白** / **非 str**）全部 `481d6b5702684b7e`；有值时**原文照传**（含首尾空白也不 strip，实测 `len=35` 逐字相等）。⚠ 实现的取法见正文第 2 条的⟦按字面冲突⟧留痕：取 `isinstance(str) and strip()`，**比正文写的 `or ""` 更严**
+- [x] **CP-2.8b-4** ★**系统提示词主体零改动**（AC-S8-15③）：`_EXECUTION_SYSTEM_PROMPT_BODY` 本任务前后**逐字节相同**（`sha256` 比对，值与 T-S8-2-2 记录的旧基线一致） ⇒ ✅ **[2026-10-21]** 实测 **`80862b25e3b926b0` / 2479 字符**，与 §15.1 记录的 CP-2.2-2 基线**逐字一致**
+- [x] **CP-2.8b-5** 字节幂等：同一 state 连跑 3 次 `_build_execution_agent_context` 的 `json.dumps(sort_keys=True)` **逐字节相同**；`baseline_results` 键序打乱后重建，序列化结果仍相同（证明 `sort_keys` 生效） ⇒ ✅ **[2026-10-21]** 3 次同字节；键序打乱（含嵌套 dict）后序列化**仍相同**；**另加反证**：不带 `sort_keys` 时两者**会不同** ⇒ 该开关确实必要（防 `-5b` 因构造无效而成假绿）
+- [x] **CP-2.8b-6 逐条验红**：①去掉 `baseline_results` 注入 → CP-2.8b-1 红；②把"非空才注入"改成无条件注入 → CP-2.8b-2 红；③去掉 `sort_keys=True` → CP-2.8b-5 后半红 ⇒ ✅ **[2026-10-21]** **两次真改磁盘**（`cp` 备份 + `sha256` 还原，逐字节相同）：①**删掉整个注入块**（连 `if` 一起删，否则 `if` 体空导致 `IndentationError` 而探针崩溃 —— 首轮就是这么崩的，留痕）⇒ `CP-2.8b-1` / `-1b` / `-6①` / `-6②` 全红，而 `CP-2.8b-2` **仍绿**（证明两条断言互不代偿）；②把 `isinstance(...) and baseline_results` 放宽成 `isinstance(...)` ⇒ **`CP-2.8b-2` 红**（`{}` 被注入、字节偏离基线）+ `-6②` 红。③`sort_keys` 用 `-5c` 的反证代替源码变异（序列化点未动，`inspect.getsource(_run_execution_agent)` 里 `sort_keys=True` 仍在）
+- [x] **CP-2.8b-7** **旧快照兼容·execution 注入侧**（AC-S8-02④，**由批次 1b 的 `CP-1b.2-7` 改判迁入，2026-08-08，§15.0d `P-S8-33`**）：缺 `success_criteria` 的旧计划 dict 经 `_build_execution_agent_context` 的 `.get(...) or ""` 读**不崩**、按空处理 ⇒ ✅ **[2026-10-21]** 真拿**缺该键**的旧 plan dict（不是 `success_criteria=""` 的 plan）：不抛、且不注入；另复验 `plan=None` 与 `plan` 非 dict 两形态也不崩
   > 🔴 **改判理由**：同 `CP-2.1b-11` —— 本条原是 `CP-1b.2-7` 三处要求之一，而 execution 侧注入**在批次 1b 不存在**（现查 `core/nodes/execution.py` 对 `success_criteria` 0 命中），编在批次 1b 注定拿不到证据（`P-S8-19` 同型）。**本任务是该注入落地的那一刻。**
   > ⚠ 与 `CP-2.8b-3`（四形态字节零扰动）**不是同一件事**：那条守"注入与否不扰动既有字节"，本条守"**读一个根本没有这个键的旧计划不抛异常**"。⚠ 用例须真拿一个**缺键的 plan dict**（不是 `success_criteria=""` 的 plan）——两者在 `.get(...) or ""` 下结果相同，但**只有前者能证明缺键路径**，拿后者构造会假绿。
+
+> **交付留痕（2026-10-21，`T-S8-2-8b`）**
+> 1. **只动 `_build_execution_agent_context` 末尾两处注入**，既有 payload 键的构造顺序与取值一字未动：`baseline_results` 取自 `state["paper_analysis"]`（**只此一份，不送整个论文分析**，A-S8-07）、`success_criteria` 取自 `plan`（走 HumanMessage 动态通道，**绝不进系统提示词主体**）。
+> 2. **全量回归**：**157 failed / 2620 passed / 29 skipped / 26 error**（上一轮 2-8 交付后 **154 / 2623 / 29 / 26**）⇒ **数字上 +3**，但**这三条不是本任务造成的**：`test_b4_zero_report_output_is_byte_identical_to_pre_batch` 的 `[field_absent]` / `[none]` / `[str]` 三条**回红**，原因是该用例拿**同一份代码跑两次**比"逐字节相等"，而它的 `_projection` 只剔 `runtime_seconds` / `logs`、**保留带时间戳的 `node_errors`**（`P-S8-44` 已登记不治）⇒ 实测两次差在 `…35.292024` vs `…35.293030`（微秒级）。**⇒ 本条是 flaky 用例，两个方向都会翻，不是回归。** 逐条比对：新增失败 **3**、转绿 **0**、其余 **154** 条与上一轮**逐条相同** ⇒ **本任务净新增红 = 0**。
+>    > 🔴 **同时订正 `T-S8-2-8` 交付留痕第 4 条的自述**：那里把这三条写成"**假绿**（删掉会变的键后两侧一起变）"。**那个解释不够准确** —— 真因是**时间戳导致的不确定性**，它在 2-8 那轮恰好往绿的方向翻、这轮往红的方向翻。**"假绿"与"flaky"要分清**：前者是"永远绿、没牙"，后者是"每次结果随机"。⇒ 本条仍应记作 **flaky、不治**（`P-S8-44`），而不是"恢复了"或"退化了"。
+> 3. **两条真改磁盘的验红**（`cp` + `sha256` 还原、逐字节相同）：①删注入块 ⇒ `CP-2.8b-1/-1b/-6①/-6②` 红而 `CP-2.8b-2` 仍绿；②放宽"非空"闸 ⇒ `CP-2.8b-2` 红。⚠ **首轮变异①把 `if` 体删空导致 `IndentationError`、探针直接崩掉（零输出）** —— 记一笔：**删代码块做变异时，连 `if` 一起删**，否则"红"是语法错误的红、什么都证明不了。
+> 4. **mypy** 全仓 27 源文件零错误；`_EXECUTION_SYSTEM_PROMPT_BODY` **零字节改动**（`80862b25e3b926b0` / 2479）。
+> 5. ⚠ **一处与正文按字面冲突、取更严者**（已在正文第 2 条留痕）：正文写 `or ""`，但那样 `123` / `{}` 会被原样注入；`CP-2.8b-3` 又要求非 str 形态零扰动 ⇒ 实现取 `isinstance(str) and strip()`。**不新开勘误**：冲突的解法是唯一的（只有一种写法能同时满足 CP），不存在"照文档做会做错"的分叉。
 
 ### 任务 T-S8-2-9：execution 冻结区 prompt 改写 + `EXECUTION_OUTPUT_SCHEMA` +3 字段 + 哈希三件套
 

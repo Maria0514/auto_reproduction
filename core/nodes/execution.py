@@ -1325,6 +1325,33 @@ def _build_execution_agent_context(
     if expected_results:
         payload["expected_results"] = expected_results
 
+    # S8-10（T-S8-2-8b）：把**论文自己报的数值**送到执行 agent 眼前。
+    # 在此之前本文件对 `paper_analysis` / `baseline_results` **零命中** ⇒ agent 手上没有任何
+    # 合法的论文值来源，也就谈不上"引用论文报告值"⇒ 验钞第⑥⑦重（`_verify_evidence`）没有
+    # 可核的对象，`AR-S8-14` 那条防作弊线整体悬空。本处补的正是这条通道。
+    # 🔴 **A-S8-07：只送这一份 `baseline_results`，不送整个 `paper_analysis`、更不送论文原文。**
+    # 正因为送得少，「你报的论文值必须能在送进来的这份里查到」才是**完备**核验；日后若为了
+    # "让 agent 看得更全"把整份论文分析塞进来，就会在**毫无察觉**的情况下把第⑥重掏空
+    # （`_verify_evidence` 里那段注释与本处同源）。
+    # 沿 credential_degradations / scale_reduced_directive / expected_results 同款
+    # "非空才注入"范式：缺失 / None / {} / 非 dict 四形态下 payload 与 sp7 基线**逐字节相同**。
+    analysis = state.get("paper_analysis") or {}
+    baseline_results = analysis.get("baseline_results") if isinstance(analysis, dict) else None
+    if isinstance(baseline_results, dict) and baseline_results:
+        payload["baseline_results"] = baseline_results
+
+    # 架构 §11 前置① + §2.5.5：把**本篇的达标线**送到执行 agent 眼前。
+    # ⚠ 它的诱导性比 `baseline_results` 更强（等于告诉 agent"达到什么算过"），所以只能走
+    # **HumanMessage 动态通道**（每篇论文不同）；🔴 **绝不可进系统提示词主体** —— 那是全论文
+    # 共用的稳定前缀，写进去等于把判据硬编码回代码，"两层分离"当场作废（§2.5.4）。
+    # 🔴 **只认 `str` 且非空白**：非 str 一律按"没写"处理，**刻意不做 `str()` 强转**
+    # （同 P-S8-29 / BUG-S8-01 那条：`str({})` = `"{}"`、`str(123)` = `"123"` 都是非空串，
+    # 真值判断放行后就把 Python 的对象写法直接印给 agent）。有值时**原文照传**，不摘要不截断。
+    # 缺失 / None / "" / 纯空白 / 非 str 五形态下 payload 与 sp7 基线**逐字节相同**。
+    success_criteria = plan.get("success_criteria")
+    if isinstance(success_criteria, str) and success_criteria.strip():
+        payload["success_criteria"] = success_criteria
+
     return payload
 
 
