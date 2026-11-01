@@ -8,8 +8,9 @@ sp4 §3.4 步骤 1+2 换内嵌子图）：
     3. _classify_execution 错误分类（节点本地 ExecutionFeedback，不污染 NodeError 三态）；
     4.〔S8-02 / T-S8-2-1，2026-08-10：**已退场**〕原「_parse_metrics 三档解析（结构化标签
        → 正则 → LLM 抽取兜底）」**四个函数整体删除**，<METRICS> 通道废止（Maria 决策 3：
-       是废掉不是收窄）。metrics 现在的**唯一来源** = agent 经 <result>.metrics 自报，
-       由步骤 4.4 _split_reported_metrics 拆分；
+       是废掉不是收窄）。⟦〔T-S8-2-10，2026-10-21〕**步骤 4.4 / 4.5 也一并退场**：
+       agent 自报指标数组的折叠拆分与扫盘收编四个函数/常量全删 ⇒ **本节点不再收编任何
+       指标数组**，"结果"改由 `conclusion.result_blocks` 承载。⟧
     5. [_build_execution_result] success 判定 —— 〔S8-05 / T-S8-2-8，2026-10-21：**已换装**〕
        success 不再由"命令 exit 全 0 + 有指标 + 步骤跑完"三合取判定，改为**由四档
        level 派生**（前两档成功、后两档失败），三项各有新落点（封顶① / 通道退场 /
@@ -461,8 +462,8 @@ def _classify_execution(
 # 🔴 **是废掉，不是收窄**（Maria 决策 3）。不要"为了兼容"把任何一档加回来 —— 加回来就等于
 # 把"分子由 agent 自己写"这条路重新打通，而本 Sprint 整件事就是为了堵它。
 #
-# **metrics 现在的唯一来源** = 执行 agent 经 <result>.metrics 自报，由步骤 4.4 的
-# _split_reported_metrics 拆成主实验 / 分组两份。**没有第二个来源。**
+# **metrics 现在没有任何来源** —— 步骤 4.4 / 4.5 的四个函数与常量已于 `T-S8-2-10`
+# 随折叠动作一并删除（见原处的留痕）。**不要再给指标数组找第二个出口。**
 #
 # ★★★ 给后人看的窗口告示（dev-plan §0.0，AR-S8-01）★★★
 # 窗口期 = 从 T-S8-2-1（本次删除合入）起，到 **T-S8-2-11**（节点主体接线 + S7-13
@@ -1252,20 +1253,16 @@ class ExecAgentOutput:
       代理判据 rounds_used >= effective_max_rounds ⇔ force_finish 截断路径）；
       _run_execution_agent 单点产出（架构 §8 总表），随 exec_result 一次 commit。
       带默认值 False：降级路径（rounds_used=0）与既有构造点天然为 False。
-    - reported_metrics（S7-13，T-S7-9-1）：agent <result>.metrics 的**原样透传**
-      （list of dict，未清洗）。这是"让 agent 汇报、代码只管判定"的唯一入口；清洗
-      与拆分在 `_split_reported_metrics`（步骤 4.4）单点做，本 dataclass 不加工。
-      ⚠ 它是**自报**通道：绝不进 `_reconcile_steps` / `_completion_insufficient` /
-      `exit_ok` 任何一处（R-S4-01 红线），且主实验指标合并受"三档主通道非空"门控
-      （见 execution() 步骤 4.4 注释）——`len(metrics) >= 1` 这个成功合取项的
-      **分子来源不因本批变化**。带默认值 []：降级路径与既有构造点天然为空。
     - report（sp8 Q-S8-01，T-S8-2-4）：agent 收尾汇报的**整份原样透传**，由
       `_resolve_agent_report` 单点产出（result 通道优先 + messages 末条 <result> 回读
-      兜底）。档位 / 逐条结论 / 物证清单**全部从这里取**，不再各自去读 final_state。
+      兜底）。档位 / 逐条结论 / 物证清单 / 结果块**全部从这里取**，不再各自去读 final_state。
       ⚠ 它同样是**自报**通道，R-S4-01 红线照旧：绝不进 _reconcile_steps /
-      _completion_insufficient / exit_ok。`reported_metrics` 已改为它的派生量
-      （report.get("metrics")）⇒ 两个取数口径合并为一个。带默认值 {}：降级路径
+      _completion_insufficient / exit_ok。带默认值 {}：降级路径
       （子图抛非 GraphBubbleUp 异常）与既有构造点天然为空。
+      ⟦〔T-S8-2-10，2026-10-21〕**原 `reported_metrics` 字段已删除**（零消费者，且
+      `report` 是唯一取数口径）。"agent 自报指标"这条路现在由 `report` 里的
+      `conclusion_level` / `goal_checks` / `evidence` / `result_blocks` 承载，
+      **不再有"纯指标数组"这个字段**。⟧
     """
 
     prep: Optional[SandboxPrepareResult]
@@ -1274,7 +1271,6 @@ class ExecAgentOutput:
     llm_calls: int
     step_ledger: List[Tuple[int, List[str], int]] = field(default_factory=list)
     budget_truncated: bool = False
-    reported_metrics: List[Any] = field(default_factory=list)
     report: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -1704,10 +1700,12 @@ def _resolve_agent_report(
             tag_text = blocks[-1]
             break
 
-    # 🔴 禁静默吞错（陷阱 3）。⚠ 这里与 reported_metrics 的"零指标不打 WARNING"
-    # **故意相反**：零指标是合法常态（跑失败、只跑了 prepare），而**档位缺失不是**
-    # —— 两条通道都没交出汇报意味着子图没能正常收尾，必须留痕。后人若照
-    # reported_metrics 的先例把这里"统一"成不打日志，就把唯一的现场线索抹掉了。
+    # 🔴 禁静默吞错（陷阱 3）。⚠ 这里与"零指标不打 WARNING"那类判断**故意相反**：
+    # 零指标曾是合法常态（跑失败、只跑了 prepare），而**档位缺失不是**——两条通道都没
+    # 交出汇报意味着子图没能正常收尾，必须留痕。后人若按"合法常态不打日志"的直觉把这里
+    # "统一"成不打日志，就把唯一的现场线索抹掉了。
+    # ⟦〔T-S8-2-10，2026-10-21〕原文拿 `reported_metrics` 的零指标先例作对照 —— 那个字段
+    # 已删除，故此处改成不带具体字段的表述；**禁止静默吞错这条结论不变**。⟧
     if tag_text is None:
         logger.warning(
             "[%s] agent 收尾汇报两条通道皆空（final_state.result 缺失/为空，且 messages 末尾"
@@ -1887,20 +1885,13 @@ def _run_execution_agent(
     # result 为空时整份汇报就没了，而同一份字节其实还躺在 messages 末条 <result> 里。
     report = _resolve_agent_report(final_state, final_messages)
 
-    # S7-13（T-S7-9-1）：取 agent 自报的指标数组（原样透传不清洗）。改为 report 的
-    # 派生量，**不再单独读 final_state["result"]** ⇒ 消除两个取数口径（架构 §1.3）。
-    # 非 dict / 非 list 一律降级空数组——**不打 WARNING**：零指标回合是合法常态
-    # （跑失败、只跑了 prepare），打了就是噪声。⚠ 这与 _resolve_agent_report 里
-    # "两通道皆空必打 WARNING" 的反差是**有意的**，理由见该函数注释，勿"统一"。
-    raw_reported = report.get("metrics")
-    reported_metrics: List[Any] = list(raw_reported) if isinstance(raw_reported, list) else []
-
+    # 〔T-S8-2-10，2026-10-21〕**`reported_metrics` 已随步骤 4.4 的折叠函数一并删除**：
+    # 那是 `<result>.metrics` 数组的原样透传，零消费者（`report` 是唯一取数口径）。
+    # ⇒ 本处不再派生它，日志里的那个计数项也一并去掉。
     logger.info(
-        "[%s] execution agent 完成: rounds=%d, prep_success=%s, run_results=%d, "
-        "reported_metrics=%d",
+        "[%s] execution agent 完成: rounds=%d, prep_success=%s, run_results=%d",
         NODE_NAME, rounds_used,
         (prep.success if prep is not None else None), len(run_results),
-        len(reported_metrics),
     )
     return ExecAgentOutput(
         prep=prep,
@@ -1909,159 +1900,46 @@ def _run_execution_agent(
         llm_calls=rounds_used,
         step_ledger=list(collector.step_ledger),
         budget_truncated=budget_truncated,
-        reported_metrics=reported_metrics,
         report=report,
     )
 
 
 # ---------------------------------------------------------------------------
-# 步骤 4.5（sp5 S5-10，T-S5-2-6）：多组指标确定性收编（架构 §7.10）
+# 步骤 4.4 / 4.5：〔T-S8-2-10，2026-10-21〕**四个函数 / 常量整体退场** —— 此处原有代码已删除
 # ---------------------------------------------------------------------------
-
-# 顶层 str 字段收编长度上限：超长视为日志/长文本混入，跳过不收（防污染对比表）。
-_GROUP_METRIC_STR_MAX_LEN: int = 120
-
-
-def _collect_grouped_metrics(work_dir: str) -> Dict[str, Dict[str, Any]]:
-    """步骤 4.5：扫描 ``<work_dir>/outputs/**/summary.json`` 收编多组实验指标。
-
-    确定性纯函数（零 LLM），架构 §7.10 裁决（文件扫描约定，弃"扩展 <METRICS>
-    多块"方案）：
-        - 组名 = summary.json 相对 outputs/ 的父目录 POSIX 路径（回归样本即
-          evoskills_smoke / baselines/no_skill / baselines/self_generated）；
-        - 每文件只收**顶层**数值/布尔/短字符串字段——深层嵌套 dict/list/None/
-          超长 str 跳过（与档 1 _extract_metrics_block 同口径，防嵌套大对象
-          污染对比表）；
-        - 既有 <METRICS> 三档主通道语义零改动（metrics 仍是主实验指标，本函数
-          产出独立落 ExecutionResult.metrics_groups）。
-
-    容错（CP-2.6-2）：无 outputs 目录 → ``{}``；损坏 JSON / 顶层非 dict / 读取
-    失败 → 容忍跳过 + WARNING（非静默吞错）。str 值过 ``mask_value`` 后落 state
-    （生成代码的输出理论上可能内嵌敏感值，脱敏出口纪律同 §9.3）；文件按路径
-    排序遍历，产出确定性。
-    """
-    groups: Dict[str, Dict[str, Any]] = {}
-    if not work_dir:
-        return groups
-    outputs_dir = Path(work_dir) / "outputs"
-    if not outputs_dir.is_dir():
-        return groups
-    for path in sorted(outputs_dir.rglob("summary.json")):
-        try:
-            parsed = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            logger.warning(
-                "[%s] 多组指标收编：summary.json 读取/解析失败，容忍跳过 %s: %s",
-                NODE_NAME, path, exc,
-            )
-            continue
-        if not isinstance(parsed, dict):
-            logger.warning(
-                "[%s] 多组指标收编：summary.json 顶层非 dict（%s），容忍跳过 %s",
-                NODE_NAME, type(parsed).__name__, path,
-            )
-            continue
-        fields: Dict[str, Any] = {}
-        for k, v in parsed.items():
-            if isinstance(v, (bool, int, float)):
-                fields[str(k)] = v
-            elif isinstance(v, str) and len(v) <= _GROUP_METRIC_STR_MAX_LEN:
-                fields[str(k)] = mask_value(v) or ""
-            # 其余（dict/list/None/超长 str）：只收顶层标量，跳过。
-        groups[path.parent.relative_to(outputs_dir).as_posix()] = fields
-    return groups
-
-
-# ---------------------------------------------------------------------------
-# 步骤 4.4（sp7 S7-13，T-S7-9-1）：agent 自报指标拆分（主实验 / 分组）
-# ---------------------------------------------------------------------------
-
-
-def _coerce_reported_value(value: Any) -> Tuple[bool, Any]:
-    """标量收编，口径与 `_collect_grouped_metrics` 完全一致。
-
-    返回 ``(是否可收, 收编后的值)``——用 tuple 而不是 ``Optional`` 是因为 ``None``
-    与 ``""`` / ``0`` / ``False`` 都是合法取值，单靠返回值无法区分"不可收"。
-    """
-    if isinstance(value, bool) or isinstance(value, (int, float)):
-        return True, value
-    if isinstance(value, str):
-        text = value.strip()
-        if not text or len(text) > _GROUP_METRIC_STR_MAX_LEN:
-            return False, None
-        # 生成代码的输出理论上可能内嵌敏感值，脱敏出口纪律同 §9.3。
-        return True, (mask_value(text) or "")
-    return False, None
-
-
-def _split_reported_metrics(
-    reported: Any,
-) -> Tuple[Dict[str, Any], Dict[str, Dict[str, Any]]]:
-    """把 agent `<result>.metrics` 数组拆成 ``(主实验指标, 分组指标)``。
-
-    确定性纯函数（零 LLM、零磁盘 IO），是 S7-13「让 agent 汇报、代码只管判定」的
-    唯一清洗点：
-
-        - ``group`` 缺省 / null / 去空白后为空 ⇒ **主实验指标**（第一个返回值）；
-        - ``group`` 非空 ⇒ 落 ``{组名: {指标名: 值}}``（第二个返回值），组名**保持
-          agent 填的原文**（它填的是计划预期里的写法，`reporting._match_metrics_group`
-          归一后正好与 ``trend.greater`` / ``trend.lesser`` 对得上——名字对不上的问题
-          在这里是被**绕过**的，不是被修补的）；
-        - 值只收标量（口径同 `_collect_grouped_metrics`），str 过 ``mask_value`` +
-          120 字符上限；
-        - 同一 (组, 指标名) 重复：**先到先得**，绝不后覆盖前（"后覆盖前"正是本批要治
-          的病：把某一步的值冒充成另一步的）；取值不同的重复打 WARNING 留痕；
-        - 畸形条目（非 dict / 无 name / 值非标量）跳过并**打 WARNING**（已知 bug 模式
-          #3：禁止静默吞错）；
-        - 产出按组名、指标名 ``sorted``，同一份输入连跑逐字节相同。
-
-    ⚠ 本函数的输出属**agent 自报**，绝不得进入 `_reconcile_steps` /
-    `_completion_insufficient` / `exit_ok` 任何一处（R-S4-01 红线）。
-    """
-    main: Dict[str, Any] = {}
-    groups: Dict[str, Dict[str, Any]] = {}
-    if not isinstance(reported, list) or not reported:
-        return main, groups
-
-    collected: Dict[str, Dict[str, Any]] = {}
-    skipped: List[str] = []
-    conflicts: List[str] = []
-    for item in reported:
-        if not isinstance(item, dict):
-            skipped.append(f"非对象条目({type(item).__name__})")
-            continue
-        name = str(item.get("name") or "").strip()
-        if not name:
-            skipped.append("name 缺失或为空")
-            continue
-        ok, value = _coerce_reported_value(item.get("value"))
-        if not ok:
-            skipped.append(f"{name}: value 非标量或超长")
-            continue
-        raw_group = item.get("group")
-        group = str(raw_group).strip() if isinstance(raw_group, str) else ""
-        bucket = collected.setdefault(group, {})
-        if name in bucket:
-            if bucket[name] != value:
-                conflicts.append(f"{group or '(主实验)'}::{name}")
-            continue  # 先到先得
-        bucket[name] = value
-
-    if skipped:
-        logger.warning(
-            "[%s] agent 自报指标：%d 条畸形条目已跳过（%s）",
-            NODE_NAME, len(skipped), "; ".join(skipped[:5]),
-        )
-    if conflicts:
-        logger.warning(
-            "[%s] agent 自报指标：%d 处同名异值重复，保留首次出现值（%s）",
-            NODE_NAME, len(conflicts), "; ".join(sorted(set(conflicts))[:5]),
-        )
-
-    main = dict(sorted(collected.get("", {}).items()))
-    for group_name in sorted(k for k in collected if k):
-        groups[group_name] = dict(sorted(collected[group_name].items()))
-    return main, groups
+#
+# 删掉的是（架构 v2.4 §16.6 全表 + §12「v2.2 删除面（四项一并）」）：
+#   - `_split_reported_metrics`（**折叠动作就是病根**：把 agent 汇报的平坦记录数组折成
+#     二维，并在 (组, 指标) 撞名时先到先得）；
+#   - `_coerce_reported_value`（唯一调用点在上一行那个函数体内）；
+#   - `_collect_grouped_metrics`（**扫盘兜底**；⚠ 本任务**推翻**架构 v2.1 §13 的"不删、不改"）；
+#   - `_GROUP_METRIC_STR_MAX_LEN`（两个消费者都没了；取值 **120 由 `_BLOCK_CELL_MAX_LEN`
+#     继承**，见 `T-S8-2-10b` —— 那不是新造第二个常量，是**改名继任**）。
+#
+# 🔴 **能力回退如实登记（`R-S8-20`；Maria 2026-08-06 知情后拍板"接受并登记"）**：
+# 删掉扫盘那个函数就等于**丢掉一层兜底** —— 结果块现在是**纯自报**，不再有
+# `reported_groups or _collect_grouped_metrics(work_dir)` 里的那个 `or`。
+# ⚠ 架构 §11 前置③ 的补充依据（须一并转达到交接文档）：那层兜底的三条硬编码前提
+# （目录 `outputs/`、文件名 `summary.json`、只收顶层标量）在本次改造后**不再由任何契约
+# 保证** ⇒ 它不是被更好的设计取代，而是**前提被同批拆除后留下的空壳**。
+# 🔴 **如实登记，不得美化**：少一层兜底就是少一层。
+#
+# ⚠ 架构 §16.6 **备选 B 不启用**：块为空时**不得**用扫盘结果拼一个写死两列的块 —— 那个
+# 形状是**代码替 agent 决定**的，与被禁的预设表头同性质。
+# ⚠ 本句**刻意不复述那个列名**：`CP-2.10-5` 是负向断言，留痕里若写出列名，会把断言自己
+# 打红（与 `CP-2.10-1` 同一个口径：负向断言只该判代码 / `NAME` token，不该判子串）。
+#
+# 🔴 **`BUG-S8-01` 的重判（上磁盘重新判定，不是想当然作废）**：缺陷原址
+# `group = str(raw_group).strip() if isinstance(raw_group, str) else ""` 在本函数体内，
+# 随本任务**整体消失**；**但缺陷类别转移了、而且更危险** —— `_collect_result_blocks`
+# （`T-S8-2-10b`）要对 agent 汇报的 title / note / cell 做**同款处理**，而架构 §16.5①
+# 只写了"过 `mask_value`"、没说非 str 怎么办。
+# ⇒ 验收点 **`DA-S8-1` 换发不注销**：新落点 = `T-S8-2-10b` / `CP-2.10b-7`
+# （非 str 必须先确定性转字符串再过脱敏，畸形形态打 WARNING）。
+#
+# ⚠ **`CP-2.10-1` 的判法**：本段留痕**故意点了这四个符号的名字**（读者需要知道这里原来
+# 有什么）⇒ 该断言**只能判 `NAME` token / 定义与调用**，**不能判子串**，否则会被本段注释
+# 自己打红（同 `AC-S8-18` 那次的口径）。
 
 
 # ---------------------------------------------------------------------------
@@ -3584,8 +3462,9 @@ def execution(state: GlobalState) -> dict:
 
     七步骨架（架构 §2.3.1 + sp4 §3.4）：_run_execution_agent（内嵌 ReAct 子图，步骤 1+2）→
     _classify_execution → ~~_parse_metrics~~（**T-S8-2-1 已删除，<METRICS> 通道退场**）→
-    _split_reported_metrics（步骤 4.4，metrics 的唯一来源）→ _build_execution_result →
-    _map_execution_result → _maybe_interrupt_or_return。
+    ~~agent 自报指标的折叠拆分 / 扫盘收编~~（**T-S8-2-10 已删除**：四个函数与常量一并退场，
+    本节点不再收编指标数组，结果改由 `conclusion.result_blocks` 承载）→
+    _build_execution_result → _map_execution_result → _maybe_interrupt_or_return。
     """
     work_dir = state.get("code_output_dir")  # C1 集成约定：直接读，不自拼目录。
 
@@ -3644,41 +3523,12 @@ def execution(state: GlobalState) -> dict:
     # 步骤 3：错误分类。
     feedback = _classify_execution(prep, run_results)
 
-    # 步骤 4：〔T-S8-2-1，2026-08-10〕**<METRICS> 三档解析已整体删除**（模块顶部有完整告示）。
-    # metrics 从这里起是空字典，唯一来源是下面步骤 4.4 的 agent 自报；而步骤 4.4 的自律门控
-    # 在主通道零指标时**不采信**自报 ⇒ **在 T-S8-2-8 换上新判据之前 metrics 恒空、success 恒假**。
-    # 🔴 这是计划内的不可用中间态（AR-S8-01），不是回归。
-    metrics: Dict[str, Any] = {}
-
-    # 步骤 4.4（sp7 S7-13，T-S7-9-1）：agent 自报指标拆分。
-    reported_main, reported_groups = _split_reported_metrics(agent_out.reported_metrics)
-    if metrics and reported_main:
-        # 主实验指标合并，**真实 stdout 解析值优先**（同名键 agent 自报不得覆盖），
-        # agent 自报只填补主通道没解析到的键——真跑现场档 1 只取到收尾脚本的
-        # mean_timing_seconds，科学指标 best_knn_accuracy 就是这样被补回来的。
-        metrics = {**reported_main, **metrics}
-    elif reported_main:
-        # ★ 门控（本批最要紧的一条自律）：三档主通道零指标时**不采信**自报。
-        # 否则 `len(metrics) >= 1` 这个成功合取项的分子就变成了 agent 自报——
-        # 代码一个字没改，语义却被悄悄换掉，正是 S7-11 立项时那类反向激励。
-        logger.warning(
-            "[%s] 主通道零指标，agent 自报的 %d 个主实验指标不采信"
-            "（成功判定的指标分子只认真实 stdout 解析）",
-            NODE_NAME, len(reported_main),
-        )
-
-    # 步骤 4.5（sp5 S5-10，T-S5-2-6）：多组指标收编。
-    # S7-13：**agent 汇报优先，磁盘扫描降为兜底**（agent 一组都没报时才扫盘）。
-    # 刻意**不合并**两个来源——实测合并会把回验打坏：磁盘组名 "umap" 与 agent 组名
-    # "UMAP" 归一后同为 "umap"，`reporting._match_metrics_group` 精确匹配命中 2 条
-    # 判歧义返 None，本来能匹配上的组反而匹配不上（一条"符合"退回"未验证"）。
-    # 幂等纪律③同 4.6：在 _build_execution_result 之前算好、随 exec_result 一次
-    # commit，guard 命中路径复用已落盘结果零重算。
-    # 🔴 〔T-S8-2-8，2026-10-21〕**本值现无消费点**：`ExecutionResult` 的两个指标键已删，
-    # `_build_execution_result` 不再收 metrics_groups。此处**故意不提前动**——步骤 4.5 与
-    # `_collect_grouped_metrics` 的退场归 `T-S8-2-10`（批次 2 内部串行、文件边界不允许
-    # 跨任务顺手删）。⚠ 别把"它没人用"当成可以在这轮删掉的理由。
-    metrics_groups = reported_groups or _collect_grouped_metrics(work_dir)
+    # 步骤 4 / 4.4 / 4.5：〔T-S8-2-10，2026-10-21〕**整段退场** —— 原处为空。
+    # `metrics` / `metrics_groups` 两个本地量已随四个函数一并消失（见上文那一段留痕）。
+    # 结果现在只经 `conclusion.result_blocks` 承载，**执行主体不再收编任何指标数组**。
+    # 🔴 **能力回退如实登记（`R-S8-20`）**：扫盘兜底已删除 ⇒ 块是**纯自报**，没有 `or` 兜底。
+    # ⚠ 架构 §16.6 **备选 B 不启用**：块为空时**不得**用扫盘结果拼一个写死两列的块（那形状
+    # 是代码替 agent 定的，与被禁的预设表头同性质）。
 
     # 步骤 4.6（sp5 S5-06，T-S5-2-4/2-5）：确定性步骤对账 + 降级凭证快照 + 截断标记。
     # 幂等纪律③（架构 §9.2）：必须在 _build_execution_result 之前完成、随 exec_result
