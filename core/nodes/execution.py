@@ -1027,10 +1027,39 @@ def make_run_in_sandbox_tool(
 #     那时字段才有消费点，而不是先摆一个"看着像防线"的空壳。
 # required 刻意**不含 metrics**：零指标回合它就是空数组，若列为必填会被
 # `react_base._missing_required_fields` 判成"缺失"→ 每次都白烧一次 schema 重生成调用。
+# 物证条目的 schema 片段（三处复用：逐条结论 / 档位物证 / 结果块）。
+# ⚠ 刻意**不**用 `$ref` / `definitions` —— 该 schema 会经 `with_structured_output` 归一化，
+#   下游不保证支持引用；三处共用同一个片段对象即可（形态由 CP-2.9-5 守）。
+# ⚠ `path` 与 `metric` 二选一：JSON Schema 的"二选一"要用 `oneOf`，而它**不在 strict 子集内**
+#   （架构 §16.2② 同一条理由）⇒ 这条约束**由收编函数在代码里判**，不靠 schema 判。
+_EVIDENCE_ITEM_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "description": "一条物证：本次产物文件的路径，或引用的论文报告值，二选一。",
+    "properties": {
+        "path": {
+            "type": ["string", "null"],
+            "description": "本次产物文件的相对路径（产物物证才有；论文值物证不填）。",
+        },
+        "metric": {
+            "type": ["string", "null"],
+            "description": "论文分析里的指标名（论文值物证才有；产物物证不填）。",
+        },
+        "value": {
+            "type": ["string", "null"],
+            "description": "你读到的值 / 论文报的值，原样写成字符串，不得口算或估计。",
+        },
+        "source_note": {
+            "type": ["string", "null"],
+            "description": "从哪读到的（文件名、表格/图名、参数名等）。",
+        },
+    },
+}
+
+
 EXECUTION_OUTPUT_SCHEMA: Dict[str, Any] = {
     # title 字段是 langchain_openai.with_structured_output 的强制要求（函数名）。
     "title": "ExecutionAgentReport",
-    "description": "execution 节点输出契约：本回合执行情况 + 真实跑出来的指标汇报。",
+    "description": "execution 节点输出契约：本回合执行情况 + 四档结论 + 逐条结论与物证 + 结果块。",
     "type": "object",
     "properties": {
         "steps_attempted": {
@@ -1049,26 +1078,87 @@ EXECUTION_OUTPUT_SCHEMA: Dict[str, Any] = {
             "type": ["string", "null"],
             "description": "降级 / 遗留问题等元信息（可选）。",
         },
-        "metrics": {
+        # ── S8-05（T-S8-2-9，Q-S8-01/04）：四档判定所需的四个字段 ──────────────
+        # 🔴 四者一律不列进顶层 required（AR-S8-07）：`_missing_required_fields` 把空数组
+        # 也算缺失 ⇒ 列进去会让"跑挂了、零结果"的回合每次白烧一次 schema 重生成调用。
+        "conclusion_level": {
+            "type": ["string", "null"],
+            "description": (
+                "本次复现属于哪一档，只能写四个档名之一："
+                "复现成功 / 部分复现 / 仅代码跑通 / 失败。"
+                "判断依据是 HumanMessage 里给出的本篇达标标准与论文报告值。"
+            ),
+        },
+        "goal_checks": {
             "type": "array",
-            "description": "本回合真实跑出来的指标逐条列出；没有则为空数组。",
+            "description": "计划里每一条预期各自的结论，逐条列出；没有预期时为空数组。",
             "items": {
                 "type": "object",
                 "properties": {
-                    "name": {
+                    "description": {
                         "type": "string",
-                        "description": "指标名，优先用计划预期里出现的写法。",
+                        "description": "这条预期的原文。",
                     },
-                    "value": {
-                        "type": ["number", "string", "boolean"],
-                        "description": "指标值，直接取自产物文件，不得口算或估计。",
+                    "verdict": {
+                        # ⚠ 三个字面量必须与 `_VERDICTS` 逐字相同。此处**只能写字面量**：
+                        # 常量定义在本文件后段，模块加载到这一行时它还不存在。
+                        "type": "string",
+                        "enum": ["印证上了", "没印证上", "无法核实"],
+                        "description": "三态结论，只能三选一，不得自创第四种写法。",
                     },
-                    "group": {
-                        "type": ["string", "null"],
-                        "description": "该指标属于哪一组实验，用计划预期里的写法；主实验指标留空。",
+                    "evidence": {
+                        "type": "array",
+                        "description": "支撑这条结论的物证；一条都没附 ⇒ 该条判「无法核实」。",
+                        "items": _EVIDENCE_ITEM_SCHEMA,
                     },
                 },
-                "required": ["name", "value"],
+                # ⚠ 内层 required 不受 AR-S8-07 限制：`_missing_required_fields` 只读顶层。
+                "required": ["description", "verdict"],
+            },
+        },
+        "evidence": {
+            "type": "array",
+            "description": (
+                "支撑**你所报档位本身**的那几条物证（不是逐条预期的，是档位的）。"
+                "一条都没有 ⇒ 档位被压到「仅代码跑通」（封顶③）。"
+            ),
+            "items": _EVIDENCE_ITEM_SCHEMA,
+        },
+        "result_blocks": {
+            "type": "array",
+            "description": (
+                "本次执行的结果，按你认为最便于人阅读的方式自行分块与排版："
+                "分几块、几列、列叫什么、行怎么排，全由你定。"
+            ),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "这块的中文标题。",
+                    },
+                    "note": {
+                        "type": ["string", "null"],
+                        "description": "可选说明：这块的数据来自哪个产物、哪一步。",
+                    },
+                    "columns": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "列名由你定，列数不限。",
+                    },
+                    "rows": {
+                        "type": "array",
+                        "items": {"type": "array", "items": {"type": "string"}},
+                        "description": "每行与 columns 对齐，单元格一律写成字符串。",
+                    },
+                    "evidence": {
+                        "type": "array",
+                        "description": "本块的来源物证。",
+                        "items": _EVIDENCE_ITEM_SCHEMA,
+                    },
+                },
+                # ⚠ 内层 required 合法（同上：只读顶层）；`title` 缺了这块就没法渲染。
+                "required": ["title"],
             },
         },
     },
@@ -1085,6 +1175,8 @@ _EXECUTION_SYSTEM_PROMPT_BODY = """你是复现执行工程师，负责在隔离
 - prepare_environment(): 在工作目录下创建隔离 venv 并安装复现计划声明的依赖。任何 run_in_sandbox 之前必须先调用一次。
 - run_in_sandbox(command, step_index): 在沙箱 venv 中执行一条命令，返回真实 exit_code 与 stdout/stderr 尾部。支持顶层 && / ; 复合与 cd（限工作区内），裸 python/pip 自动指向 venv 解释器。执行 execution_steps 里的第 i 步（下标从 0 起）时**必须**以 step_index=i 声明归属——漏报会让编排层认为该步没跑；计划外命令（调试/兜底）不带该参数即可。本工具不用于写代码；行内 -c 只用于简短探针（导入检查、打印版本或数据形状）。凡是需要写文件、或把成段实现塞进命令行的，一律先落成脚本再运行——超长载荷会被直接拒绝。
 - request_user_input(question, is_sensitive, purpose_key): 缺少继续执行所需的信息（凭证/参数/路径）时向用户索要一条信息。必须单独一轮调用（不与其他工具放在同一轮 tool_calls），且尽量在执行训练等重活之前问。
+- read_code_file(path) / list_dir(path): **只读**工具，用来看工作区里的代码与产物（排查失败原因、确认结果文件里到底写了什么）。
+  ⚠ **"能读"与"能当物证"不是一回事**：本次代码输出目录**之外**的路径你可以读（看代码、查环境），但**不能当物证**——物证只认本次代码输出目录里产出的文件。越界的路径一律不成立。
 
 工作纪律：
 1. 先调 prepare_environment 准备环境；依赖装不全（install_failed_packages 非空）时可用 run_in_sandbox 执行 pip install 兜底或调整版本。
@@ -1094,30 +1186,52 @@ _EXECUTION_SYSTEM_PROMPT_BODY = """你是复现执行工程师，负责在隔离
 5. 预算意识：推理轮数有限，本次实际可用轮数以 HumanMessage 上下文中的 max_rounds 数字为准；同一回合内不要用完全相同的命令反复空转（同一条命令在不同回合之间的重跑是必要的验证，不算空转）。
 6. 修复回合请从 execution_steps 的第一步开始按顺序全量重跑，不要只挑上一轮失败的那几步——代码已被改动，上一轮通过的步骤不再自动成立。HumanMessage 会告知上一轮改了哪些文件与修复思路，据此重跑验证，而不是绕开。
 
+四档口径（程序不替你判，但口径由程序定——逐字照此执行）：
+- 复现成功：计划承诺的产出都落地了，且论文核心结论得到印证。
+- 部分复现：跑通了、产物齐，但部分预期没印证上或核实不了。
+- 仅代码跑通：跑通了，但承诺的产出没落地。
+- 失败：没跑通。
+
 成功判定纪律（强约束）：
-- 你不判定复现是否成功——成功与否由编排层基于工具执行的真实 exit_code 与指标做确定性判定。
-- 编排层还会检查计划步骤是否全部跑完——少跑步骤不会被判成功。
-- 不得在结果中宣称"复现成功"；只如实汇报执行了哪些命令、各自 exit_code 与观察到的现象。
+- 你要照计划写的标准如实判断属于哪一档，并说明你在哪个文件读到了什么。判断依据是 HumanMessage 里给出的**本篇达标标准**与**论文报告值**，不是你的主观印象。
+- **判断权在你，核验权在编排层**：你报的每一条结论、每一份物证都会被逐条核对；对不上的那条会被判成「无法核实」，并把支撑档位的物证一并计入。
+- 编排层还会检查计划步骤是否全部跑完——**少跑步骤不会被判成功**；这一条不因判断权交给你而取消。
+- 不得为了好看把档位报高：报高而物证对不上，会被压到更低的档，并在报告里留下一条「无法核实」。如实报低不会被惩罚，虚报一定会被抓出来。
 
 输出要求：
-- 执行收尾时必须在 <result>...</result> 标签内输出严格 JSON，字段如下：
+- 执行收尾时必须在 <result>...</result> 标签内输出严格 JSON：前三项必填，其余按需（没有就不写或写 null）。
   {
     "steps_attempted": int,        // 本回合实际执行的命令条数
     "all_exit_zero": bool,         // 已执行命令是否全部 exit_code=0（如实填写）
-    "summary": str,                // 执行过程与结果的中文如实描述
+    "summary": str,                // 执行过程与结果的中文如实描述（给人看）
     "notes": str | null,           // 降级/遗留问题等（可选）
-    "metrics": [                   // 本回合真实跑出来的指标，逐条列出；没有就写 []
-      {
-        "name": str,                    // 指标名
-        "value": number | str | bool,   // 指标值，直接抄自产物文件，不得口算或估计
-        "group": str | null             // 该指标属于哪一组实验；主实验指标留 null
-      }
+    "conclusion_level": str,       // 本次属哪一档：复现成功 / 部分复现 / 仅代码跑通 / 失败
+    "goal_checks": [               // 计划里的每一条预期，各自给一条结论
+      {"description": str,         // 这条预期的原文
+       "verdict": "印证上了" | "没印证上" | "无法核实",   // 三选一，不许自创第四种写法
+       "evidence": [物证]}         // 支撑这条结论的物证
+    ],
+    "evidence": [物证],            // 支撑"你报的那个档位"本身的物证
+    "result_blocks": [             // 给人看的结果：怎么分块、分几列、列名叫什么，全由你定
+      {"title": str,               // 这块的中文标题
+       "note": str | null,         // 数据来自哪个产物、哪一步
+       "columns": [str],           // 列名由你定，列数不限
+       "rows": [[str]],            // 每行与 columns 对齐，单元格一律写成字符串
+       "evidence": [物证]}
     ]
   }
-- metrics 的 group 与 name 必须使用 HumanMessage 里 expected_results 的原文写法：计划怎么称呼那一组方法、怎么称呼那个指标，你就怎么填，不要改成产物目录名或代码里的字段名。expected_results 没提到的指标，按产物文件里的原名填。
-- 一条命令跑完写出的产物文件，请用同一组名把该组的各项指标都列出来；同一组同一指标只报一条。
-- 只汇报你本回合真实读到的数值；产物文件里没有的一律不填，宁可少报也不得编造。
-- 不得捏造未执行的命令；不要在 <result> 之外再夹杂其它 JSON 块。
+- 物证的写法（两种出处，写法不同）：
+  - 本次跑出来的：{"path": 产物文件相对路径, "value": 你从该文件读到的值, "source_note": 从哪读到的}
+  - 引用论文报告值：{"metric": 论文分析里的指标名, "value": 论文报的值, "source_note": 从哪看到的}——**不要给它编一个产物路径**（论文值没有产物文件）。
+- 结果块的四条填写纪律（每条都会被检查）：
+  1. 每块都要有一个**中文标题**；
+  2. 每块都要在 note 里说清数据**来自哪个产物、哪一步**；
+  3. 如果 HumanMessage 给了论文报告值，你引用的论文值与本次复现值要**同块内可对照**——写成表、写成一句话、写成条列**都行，由你决定**；不要为了凑格式硬造列；
+  4. **不得覆盖、合并不同来源的同名数字**：同一个指标名有两个来源时，分两条写清各自的出处。
+- 可对照的句式示范（用你手上的真实值替换尖括号，别照抄）：论文报告的 <指标名> 是 <论文值>，本次复现得到 <本次值>（差 <差值>）。
+- 论文没报这个数**也是合法结论**：HumanMessage 里没给的论文报告值就不要报，更不得硬凑一个"对上了"。拿不到就说"论文分析里没有这个指标的报告值"——这不算你失败，反而是如实的结论。
+- 只汇报你本回合真实读到的数值；产物文件里没有的一律不填，宁可少报也不得编造。同一个产物、同一个数值只报一条。
+- 不得捏造未执行的命令或没读过的文件；不要在 <result> 之外再夹杂其它 JSON 块。
 """
 
 
