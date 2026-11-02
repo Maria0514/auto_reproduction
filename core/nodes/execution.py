@@ -1943,6 +1943,275 @@ def _run_execution_agent(
 
 
 # ---------------------------------------------------------------------------
+# 步骤 4.75（sp8 S8-06，T-S8-2-10b）：agent 汇报的结果块收编
+# ---------------------------------------------------------------------------
+# 🔴 **为什么收编在 execution 侧、不在渲染侧**（架构 §16.5 四条理由，第 2 条是决定性的）：
+# 脱敏必须发生在**落 state 之前**。若挪到渲染侧做，`mask_value` 就依赖 `secrets_store` 的
+# 运行时状态 ⇒ "给定同一份 state 重放 ⇒ 报告字节一致"在结构上不成立；而且那时敏感串
+# **已经先落进 state 了**，渲染侧再掩码只是把展示遮住而已。
+# 另三条：checkpoint 体积可控（存的是截断后的块，不是 agent 吐的原始巨物，AR-S8-11）；
+# 与既有两处脱敏出口同址 ⇒ **零新增抽象**；"到底标注了什么"集中在一处。
+#
+# 🔴 **零形状判断**：块怎么分、几列、列名叫什么、行怎么排，**一律按 agent 给的来**。
+# 本区段只做六道处置 —— 脱敏 / 长度 / 对齐 / 上限 / 引用回填 / 不合法降级 ——
+# **不排序、不重排、不补列名、更不兜底回旧的二维表**（架构 §16.6 备选 B 已否决：
+# 用扫盘结果拼一个写死两列的块，与被禁的预设表头同性质）。
+
+_BLOCK_MAX: int = 12           # 真跑最细切法：4 方法 × 3 数据集 = 12
+_BLOCK_COL_MAX: int = 12       # 超 12 列在 Markdown 与 st.table 里都已不可读
+_BLOCK_ROW_MAX: int = 50       # 真跑实测 24 条的 2 倍余量
+# 🔴 `_BLOCK_CELL_MAX_LEN` 是 `_GROUP_METRIC_STR_MAX_LEN` 的**改名继任者**（取值原样搬 120），
+# **不是新造第二个常量** —— 那个常量的两个消费者已随 `T-S8-2-10` 一并删除。
+_BLOCK_CELL_MAX_LEN: int = 120
+# 非标量单元格的占位符（容器 / 未知类型**不做 `str()` 强转**，理由见 `_block_field_text`）。
+_BLOCK_CELL_PLACEHOLDER: str = "（该格无法呈现）"
+
+
+def _block_field_text(value: Any) -> Tuple[str, bool, bool]:
+    """把一个块内字段确定性转成字符串并脱敏 ⇒ ``(文本, 是否畸形, 是否超长被截断)``。
+
+    🔴 **顺序写死：先转字符串、再 `mask_value`**（`DA-S8-1`，`BUG-S8-01` 的新落点）。
+    实测 `mask_value` 对**非 str** 输入的行为取决于"当前有没有注册凭证"：
+
+        - 无凭证（``known`` 为空）⇒ **静默原样返回**，脱敏被完全跳过、且不打任何日志；
+        - 有凭证 ⇒ **抛 ``AttributeError: 'int' object has no attribute 'replace'``**，炸节点。
+
+    ⇒ **单测与集成回归全绿、真跑当场炸**，是一条环境相关、测试抓不到的路径。而主通道是
+    自由 JSON（实测非 strict），schema 里写 ``"type": "string"`` 拦不住 agent 给数字。
+
+    转换口径（写死，勿"统一"成 `str(x)`）：
+        - `str` 原样；`bool` / `int` / `float` ⇒ `str(x)`；`None` ⇒ 空串；
+        - 🔴 **容器（`list` / `dict`）与未知类型 ⇒ 占位符，绝不做 `str()` 强转** ——
+          `str({'a': 1})` 会把 **Python repr 形态**（单引号 dict）印进给人看的报告，与
+          `BUG-S8-01` 当初否决 `str(raw_group)` 的理由**逐字同源**（MEMORY §4.2）。
+    """
+    if value is None:
+        text = ""
+    elif isinstance(value, str):
+        text = value
+    elif isinstance(value, (bool, int, float)):
+        text = str(value)
+    else:
+        # 容器 / 未知类型：占位符 + 记畸形。**绝不 str() 强转**。
+        return _BLOCK_CELL_PLACEHOLDER, True, False
+
+    # 脱敏在转成字符串**之后**（DA-S8-1 第 1 条）。
+    text = mask_value(text) or ""
+    truncated = len(text) > _BLOCK_CELL_MAX_LEN
+    return (text[:_BLOCK_CELL_MAX_LEN] if truncated else text), False, truncated
+
+
+def _collect_result_blocks(
+    blocks: Any,
+    index: Optional[Dict[Tuple[str, str, str], str]] = None,
+) -> List[Dict[str, Any]]:
+    """步骤 4.75：把 agent 汇报的 ``result_blocks`` 收编成**可落 state、可渲染**的块列表。
+
+    六道处置（架构 §16.5① 逐条），**全程不排序、不重排、不补列名**：
+
+        ① 脱敏：每个 ``title`` / ``note`` / 单元格过 `mask_value`；
+        ② 长度：超 `_BLOCK_CELL_MAX_LEN` **截断但不丢弃**，块级 caveats 留一句中文标注；
+        ③ 对齐：``len(row) != len(columns)`` ⇒ **短的补空、长的截断**，块级 caveats 记一句；
+        ④ 上限：块 / 列 / 行各自截断，**每次截断都写一句中文并指向产物路径**（不用省略号、
+           不用脚注 —— 那句标注本身就是给人看的说明）；
+        ⑤ 引用：块自带的 ``{path, value}`` / ``{metric, value}`` 拿台账索引回填
+           ``evidence_ids``。与 ``goal_checks`` 查的是**同一份索引** ⇒ 三处引用必然指向
+           同一个 id，"引用漂移"在结构上不可能发生；
+        ⑥ 不合法：非 dict / 无标题 / 缺列名 ⇒ **降级为"先截断再原样打印"的文本块** +
+           标注 + 指向完整日志；🔴 **绝不兜底回旧的二维表**。
+
+    ⚠ 畸形形态**一律打 WARNING、不静默**（已知 bug 模式 #3）：非标量单元格、非数组的
+    ``columns`` / ``rows``、缺标题 —— 逐类记数后一次性 WARNING。
+
+    Args:
+        blocks: agent 汇报的 ``result_blocks``（任意类型；非 list 一律当空）。
+        index: 台账「去重键 → ``E1``/``E2``…」索引（`_build_evidence_ledger` 的第二个返回值）。
+
+    Returns:
+        块列表，每块形如 ``{title, note, columns, rows, evidence_ids, caveats}``；
+        单元格与列名**一律字符串**（渲染终点是 Markdown 表 / ``st.table``）。
+    """
+    index = index if isinstance(index, dict) else {}
+    if not isinstance(blocks, list) or not blocks:
+        return []
+
+    collected: List[Dict[str, Any]] = []
+    malformed = 0
+    truncated_cells = 0
+    overflow_blocks = 0
+
+    for raw in blocks:
+        if len(collected) >= _BLOCK_MAX:
+            overflow_blocks += 1
+            continue
+
+        caveats: List[str] = []
+        block_malformed = 0
+        block_trunc = 0
+        recorded = raw if isinstance(raw, dict) else {}
+        raw_evidence = recorded.get("evidence")
+        evidence_items = raw_evidence if isinstance(raw_evidence, list) else []
+
+        # 标注里"指向产物路径"：优先用本块自己声明的产物路径，否则指执行日志目录。
+        where = "执行日志 exec_logs/"
+        for item in evidence_items:
+            if isinstance(item, dict) and isinstance(item.get("path"), str) and item["path"]:
+                where = f"产物文件 {item['path']}"
+                break
+
+        title, bad, title_trunc = _block_field_text(recorded.get("title"))
+        block_malformed += int(bad)
+        truncated_cells += int(title_trunc)
+        block_trunc = int(title_trunc)
+        columns_raw = recorded.get("columns")
+        rows_raw = recorded.get("rows")
+
+        degrade_reason = ""
+        if not isinstance(raw, dict):
+            degrade_reason = "该块不是对象"
+        elif not title:
+            degrade_reason = "该块没有标题"
+        elif not isinstance(columns_raw, list) or not columns_raw:
+            degrade_reason = "该块没有列名"
+
+        if degrade_reason:
+            # ⑥ 降级：先转成确定性文本、脱敏、截断，**不丢弃**。
+            # ⚠ 用 json 序列化而不是 str(raw)：str(dict) 是 Python repr（单引号），
+            #   正是 DA-S8-1 要挡掉的那种形态。
+            flat = raw if isinstance(raw, str) else json.dumps(
+                raw, ensure_ascii=False, sort_keys=True, default=str
+            )
+            flat = mask_value(flat) or ""
+            if len(flat) > _BLOCK_CELL_MAX_LEN:
+                flat = flat[:_BLOCK_CELL_MAX_LEN]
+                truncated_cells += 1
+                block_trunc += 1
+            caveats.append(
+                f"{degrade_reason}，未按可渲染结构汇报；已按原样文本截断展示，"
+                f"完整内容见{where}"
+            )
+            collected.append(
+                {
+                    "title": "（未按可渲染结构汇报的内容）",
+                    "note": "",
+                    "columns": [],
+                    "rows": [[flat]],
+                    "evidence_ids": [],
+                    "caveats": caveats,
+                }
+            )
+            malformed += block_malformed + 1
+            continue
+
+        note, bad, note_trunc = _block_field_text(recorded.get("note"))
+        block_malformed += int(bad)
+        truncated_cells += int(note_trunc)
+        block_trunc += int(note_trunc)
+
+        # ── ① 脱敏 + ② 长度（列名逐格）──────────────────────────────────
+        # ⚠ 上面 degrade 分支已排除"非 list / 空 list"；这里再判一次是为了让 mypy 收窄
+        #   （它跟不上 degrade_reason 那个字符串开关）。
+        columns: List[str] = []
+        for cell in columns_raw if isinstance(columns_raw, list) else []:
+            text, bad, trunc = _block_field_text(cell)
+            block_malformed += int(bad)
+            truncated_cells += int(trunc)
+            block_trunc += int(trunc)
+            columns.append(text)
+
+        # ── ③ 对齐：短的补空、长的截断 ─────────────────────────────────
+        if not isinstance(rows_raw, list):
+            block_malformed += 1
+            caveats.append(f"本块的 rows 不是数组，已按空表展示；完整内容见{where}")
+            rows_raw = []
+        ncol = len(columns)
+        misaligned = 0
+        rows: List[List[str]] = []
+        for row in rows_raw:
+            if not isinstance(row, list):
+                block_malformed += 1
+                row = [row]
+            if len(row) != ncol:
+                misaligned += 1
+            padded = list(row[:ncol])
+            if len(padded) < ncol:
+                padded.extend([None] * (ncol - len(padded)))
+            out_row: List[str] = []
+            for cell in padded:
+                text, bad, trunc = _block_field_text(cell)
+                block_malformed += int(bad)
+                truncated_cells += int(trunc)
+                block_trunc += int(trunc)
+                out_row.append(text)
+            rows.append(out_row)
+        if misaligned:
+            caveats.append(f"本块有 {misaligned} 行列数与表头不符，已按表头对齐展示")
+
+        # ── ④ 上限：列 / 行各自截断，每次截断都写一句中文并指向产物 ────────
+        if ncol > _BLOCK_COL_MAX:
+            caveats.append(
+                f"本块有 {ncol - _BLOCK_COL_MAX} 列超过上限 {_BLOCK_COL_MAX} 列，"
+                f"已展示前 {_BLOCK_COL_MAX} 列；完整内容见{where}"
+            )
+            columns = columns[:_BLOCK_COL_MAX]
+            rows = [row[:_BLOCK_COL_MAX] for row in rows]
+        if len(rows) > _BLOCK_ROW_MAX:
+            caveats.append(
+                f"本块有 {len(rows) - _BLOCK_ROW_MAX} 行超过上限 {_BLOCK_ROW_MAX} 行，"
+                f"已展示前 {_BLOCK_ROW_MAX} 行；完整内容见{where}"
+            )
+            rows = rows[:_BLOCK_ROW_MAX]
+
+        if block_trunc:
+            caveats.append(
+                f"本块有 {block_trunc} 处文本超过 {_BLOCK_CELL_MAX_LEN} 字已截断；"
+                f"完整内容见{where}"
+            )
+
+        # ── ⑤ 引用回填：查台账索引（与 goal_checks 同一份）────────────────
+        evidence_ids: List[str] = []
+        if raw_evidence is not None and not isinstance(raw_evidence, list):
+            block_malformed += 1
+            caveats.append("本块的 evidence 不是数组，已忽略")
+        for item in evidence_items:
+            eid = index.get(_evidence_key(item))
+            if eid is not None and eid not in evidence_ids:
+                evidence_ids.append(eid)
+
+        collected.append(
+            {
+                "title": title,
+                "note": note,
+                "columns": columns,
+                "rows": rows,
+                "evidence_ids": evidence_ids,
+                "caveats": caveats,
+            }
+        )
+        malformed += block_malformed
+
+    # 块数超上限：没有"某一块"可挂，挂到最后一块的 caveats 上（不静默丢）。
+    if overflow_blocks and collected:
+        collected[-1]["caveats"].append(
+            f"另有 {overflow_blocks} 块超过上限 {_BLOCK_MAX} 块未展示；"
+            "完整内容见执行日志 exec_logs/"
+        )
+
+    if malformed:
+        logger.warning(
+            "[%s] 结果块收编：%d 处畸形形态（非标量单元格 / 非数组的 columns 或 rows / "
+            "缺标题）已按占位符或降级文本处理（不静默）",
+            NODE_NAME, malformed,
+        )
+    if truncated_cells:
+        logger.info(
+            "[%s] 结果块收编：%d 处文本超过 %d 字已截断（未丢弃，块级 caveats 已标注）",
+            NODE_NAME, truncated_cells, _BLOCK_CELL_MAX_LEN,
+        )
+    return collected
+
+
+# ---------------------------------------------------------------------------
 # 步骤 4.6（sp5 S5-06，T-S5-2-4）：确定性步骤对账（架构 §2 Q-S5-6 / §7.6 / §10.1 R-2）
 # ---------------------------------------------------------------------------
 # 产品红线：执行事实不得来自 agent 单方声明——agent <result> 自报的"已执行步数"
