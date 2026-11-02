@@ -35,6 +35,7 @@ import importlib
 import inspect
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -800,9 +801,21 @@ def test_d3_schema_and_prompt_carry_no_source_field():
 
     两侧同时断：schema 里递归扫不到 `source`，冻结区 prompt 主体里也不出现——
     只断一侧的话，另一侧留个孤儿描述，模型照样会去想那一层。
+
+    ⟦🔴 Sp8 / T-S8-2-12 **换发口径**（原口径已过粗）：本条的 schema 侧判的是**属性名
+    恰为 `source`**（原样保留，`_walk_property_names` 本来就做精确匹配）；但 prompt 侧
+    原先写的是**子串** `"source" not in 主体` —— 而 v2.3 起物证里**合法地**有
+    `source_note`（架构 §16.2 明文），主体又必须教 agent 填这个键 ⇒ 子串口径必然命中。
+    ⇒ 改成**判"字段名恰为 source"**：用 `tokenize` 取主体里的 `NAME` / 字符串字面量，
+    只否 `source` 本身。⚠ **不得为了让这条变绿而从主体删掉 `source_note`** ——
+    那会让 agent 不知道该记出处（同 `AC-S8-18` 那次"判 token 不判子串"的同族）。⟧
     """
     assert "source" not in _walk_property_names(execution_module.EXECUTION_OUTPUT_SCHEMA)
-    assert "source" not in execution_module._EXECUTION_SYSTEM_PROMPT_BODY
+    # 判**字段名**而不是子串：`source_note` 里含 "source" 但它不是 `source`。
+    # 词边界 `(?<![\w-])…(?![\w-])` 正是这个区分（`_` 属 `\w`，所以 `source_note` 不命中）。
+    assert re.search(r"(?<![\w-])source(?![\w-])", execution_module._EXECUTION_SYSTEM_PROMPT_BODY) is None, (
+        "主体里不得出现字段名 `source`（`source_note` 合法，不在此列）"
+    )
 
 
 def test_d4_metrics_item_shape_is_exactly_three_fields():
@@ -810,11 +823,23 @@ def test_d4_metrics_item_shape_is_exactly_three_fields():
 
     "恰"是有意义的：多一个字段就是多一层要模型去想的东西（MEMORY §4.1），
     少一个 `group` 则整个"分组 / 主实验"的拆分失去输入。
+
+    ⟦🔴 Sp8 / T-S8-2-12 **换发**（原断言的前提已被废除）：`T-S8-2-9` 把 `metrics`
+    属性**整体从 schema 移除**（方案 A 已废除，架构 §12）⇒ 本条不再可能断言"恰三字段"。
+    ⇒ 改判为**负向断言**：`metrics` 不出现在 schema 属性里；同时钉住新契约的四个字段
+    **都不在顶层 `required`**（AR-S8-07：`_missing_required_fields` 把空数组也算缺失，
+    列进去会让"跑挂了、零结果"的回合每次白烧一次 schema 重生成调用）。⟧
     """
-    items = execution_module.EXECUTION_OUTPUT_SCHEMA["properties"]["metrics"]["items"]
-    assert sorted(items["properties"]) == ["group", "name", "value"]
-    assert sorted(items["required"]) == ["name", "value"]
-    assert execution_module.EXECUTION_OUTPUT_SCHEMA["properties"]["metrics"]["type"] == "array"
+    props = execution_module.EXECUTION_OUTPUT_SCHEMA["properties"]
+    assert "metrics" not in props, "`metrics` 属性已随 T-S8-2-9 整体移除"
+    assert execution_module.EXECUTION_OUTPUT_SCHEMA["required"] == [
+        "steps_attempted", "all_exit_zero", "summary",
+    ], "顶层 required 必须保持原样三键"
+    for field in ("conclusion_level", "goal_checks", "evidence", "result_blocks"):
+        assert field in props, f"新契约字段 {field} 缺席"
+        assert field not in execution_module.EXECUTION_OUTPUT_SCHEMA["required"], (
+            f"{field} 不得进顶层 required（AR-S8-07）"
+        )
 
 
 @pytest.mark.parametrize(
@@ -992,16 +1017,28 @@ def test_e3_injection_reaches_the_human_message_the_agent_actually_reads(monkeyp
 # `execution.py`，十个函数的源码片段 sha256 **逐一相同**。
 
 _FROZEN_FUNCTION_HASHES: Dict[str, str] = {
+    # ⟦Sp8 / T-S8-2-12 换发：10 行 → **5 行**（AC-S8-21①，§3.4 A 表）⟧
+    #
+    # **移出 5 行（被测物整体删除，不是放宽）**：
+    #   · `_apply_no_metrics` —— S8-02 整体删除；v1.2 裁定 1，架构师裁定 + Maria 2026-08-04 已认
+    #   · `_extract_metrics_block` / `_parse_metrics` / `_regex_scan_metrics` —— 同上（<METRICS> 通道退场）
+    #   · `_collect_grouped_metrics` —— Sp8 T-S8-2-10 整体删除（推翻架构 v2.1 §13 的"不删、不改"）
+    #   ⇒ 这 5 个函数在 `core/nodes/execution.py` 里**已不存在**，留在表里只会变成
+    #      `AttributeError`（"测不到"而非"没变"），所以是**删行**，不是改成"不少于"。
+    #
+    # 🔴 **换发 1 行**：`_build_execution_result` —— 函数还在，只换哈希值。
+    #   变更内容：`+conclusion` 形参、`success` 改由四档 `level` 派生、两个指标形参删除
+    #   （T-S8-2-8）。`67296a1efe8aa703` → `c19be60025adcd8a`。
+    #
+    # **其余 4 行哈希不变**（逐行现场复算确认）：`_completion_insufficient` /
+    #   `_apply_incomplete_execution` / `_reconcile_steps` / `_audit_declared_steps`。
+    #
+    # 🔴 红线（AC-S8-21 原文）：**禁止整表删除、禁止改成「不少于」来规避。**
     "_completion_insufficient": "a8b5d4c33c7fcfba",
-    "_apply_no_metrics": "01ca42bfed8e930e",
     "_apply_incomplete_execution": "8f2563c160c41cf9",
-    "_build_execution_result": "67296a1efe8aa703",
+    "_build_execution_result": "c19be60025adcd8a",
     "_reconcile_steps": "a837711c28f2bbbf",
     "_audit_declared_steps": "e45f8adf2406ab43",
-    "_extract_metrics_block": "438257b7f5ef4283",
-    "_parse_metrics": "4fa65c12efae7018",
-    "_collect_grouped_metrics": "bd837c45105b9646",
-    "_regex_scan_metrics": "207e27a731701d54",
 }
 
 

@@ -235,7 +235,13 @@ def test_cp_6_2_1_execution_prompt_body_byte_baseline():
     # "当前：c73e1e6e3cfc1280，基线：f82f3938cf31f882"（CP-7.4-1 活体证明）；
     # S7-13 改 prompt 时**再次当场红**，报错逐字为
     # "当前：2843778a159215c3，基线：c73e1e6e3cfc1280"（CP-9.1-8① 活体证明）。
-    EXPECTED_HASH = "80862b25e3b926b0"
+    #
+    # ⟦Sp8 / T-S8-2-9 第四次换发：`80862b25e3b926b0` → `60549c438adb3714`（2479 → 3767 字符）。
+    # dev 侧在 T-S8-2-9 就已算出并留档（§15.1），两处字面量按文件边界归 T-S8-2-12 落地。
+    # 改动内容 = 新增四档语义段 + 判定纪律三句重写 + 输出契约换发（`metrics` 移除、
+    # `conclusion_level`/`goal_checks`/`evidence`/`result_blocks` 新增）+ 两个只读工具说明。
+    # 改 prompt 时两处门**同时当场红**，打出「当前 60549c438adb3714 / 基线 80862b25e3b926b0」。⟧
+    EXPECTED_HASH = "60549c438adb3714"
 
     assert actual_hash == EXPECTED_HASH, (
         f"execution prompt 主体字节已变更（当前：{actual_hash}，基线：{EXPECTED_HASH}）"

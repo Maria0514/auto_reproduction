@@ -2012,9 +2012,23 @@ graph TD
 7. 🔴 **本批要求全量回归零失败**（可用性已恢复，不再允许带红收口）。
 
 **自测检查点**：
+> **🔶 进行中（2026-10-21）—— 本任务已拆成两段做，下面是第一段的实际结果。**
+> 第一段（机械换发）已完成并提交：**冻结表 10 行 → 5 行**、**两处 prompt 哈希门换发**、
+> **`test_d3` / `test_d4` 两条 schema 口径换发**。全量回归 **257 → 246 failed / 2526 passed**
+> ⇒ **11 条复绿、0 条新增**。
+> 剩余（第二段，未做）：**246 条红 + 26 条 error**，几乎全是「被测符号已删除」——
+> `test_sprint7_s713_reported_metrics.py`（91 条，整套 S7-13 自报指标防线）、
+> `test_sprint5_t26_grouped_metrics.py`（4 条）、`test_sprint5_t52_regression_targets.py`（1 条），
+> 以及 26 条 import error（`ExecAgentOutput(reported_metrics=...)` / 已删函数 import）。
+> **⇒ 本任务的「全量零失败」门目前未达成，见下方 CP 状态。**
+
 - [ ] **CP-2.12-1** ★**全量非 e2e 回归零失败**（含时间点）；与批次 1a 的红名单逐条对照，**§3.3 五族全部复绿**
-- [ ] **CP-2.12-2** ★**冻结表逐行对账**（AC-S8-21①，~~v1.2 订正~~ ~~v1.3 订正，2026-08-07~~ **2026-08-08 实算再订正**）：~~10 行 → 6 行（移出 4 + 换发 1 + 不变 5）~~ ~~10 行 → 4 行~~ ⇒ **10 行 → `5` 行**（🔴 **换发的那一行留在表内、不减行**；**移出 5**：`_apply_no_metrics` / `_extract_metrics_block` / `_parse_metrics` / `_regex_scan_metrics` / **`_collect_grouped_metrics`** + **换发 1**：`_build_execution_result` + **不变 4**：`_completion_insufficient` / `_apply_incomplete_execution` / `_reconcile_steps` / `_audit_declared_steps`）；**逐行写明原因**；表结构未被整表删除、断言未被改成「不少于」
-- [ ] **CP-2.12-2b** 🔴★★**e2e 哑弹清零（收口门抓不到的那一颗）**：显式跑 `grep -rn "_extract_metrics_block\|_regex_scan_metrics\|_llm_extract_metrics\|_parse_metrics" tests/` ⇒ **必须为空，或逐条有归属**（如仅出现在「已删除」注释里）。
+  > ⏸ **2026-10-21 未达成**：当前 **246 failed / 2526 passed / 26 error**（起点 257/2520/26）。
+  > 缺口全部集中在三个测试文件的「被测符号已删除」族，需按"重写 / 删除"逐条处置 —— 未做。
+- [x] **CP-2.12-2** ★**冻结表逐行对账**（AC-S8-21①）：~~10 行 → 6 行~~ ~~10 行 → 4 行~~ ⇒ **10 行 → `5` 行**（换发的那一行留在表内、不减行；**移出 5** + **换发 1** + **不变 4**）；**逐行写明原因**；表结构未被整表删除、断言未被改成「不少于」 ⇒ ✅ **[2026-10-21]** 表实测 **5 行**：`_completion_insufficient` / `_apply_incomplete_execution` / `_build_execution_result`（**换发** `67296a1efe8aa703` → `c19be60025adcd8a`）/ `_reconcile_steps` / `_audit_declared_steps`；移出的 5 个函数实测 `hasattr` 全为假。**逐行原因写进表内注释**（移出 5 行的理由 + 换发 1 行的理由 + 不变 4 行的现场复算）。`test_f1` 五个参数**全绿**。⚠ **`CP-2.12-2b`（e2e 哑弹）与 `-2c`（三档纯单测删除）未做**
+- [x] **CP-2.12-3** execution prompt **两处哈希基线一致**且均为字面量 ⇒ ✅ **[2026-10-21]** `test_sprint5_t14_execution_prompt.py` 与 `test_sprint7_s710_exec_locality.py` 两处字面量同步换发为 **`60549c438adb3714`**（dev 侧在 `T-S8-2-9` 已算出并留档 §15.1）；两处**均为硬编码字面量**（不是从被测对象现算）；两门实测**转绿**。旧值 `80862b25e3b926b0` 仅余 4 处**历史记录**（docstring 里的换发链），无一处是活断言
+- [ ] **CP-2.12-4** `ExecutionResult` 键数 12 的断言逐处同步
+  > ⏸ **未做，且本条口径需先订正**：实际键数是 **10**（`T-S8-2-8` 删掉 `metrics` / `metrics_groups` 两键、新增 `conclusion` 一键：11 − 2 + 1 = 10），原文的「11 → 12」是 v1.2 的账。
   > ⚠ **为什么必须单列这一条**：`tests/test_sandbox_real_e2e.py:236` 的 `from core.nodes.execution import _extract_metrics_block` 是**函数级 import** —— **模块收集期不失败**；而批次 2 / 批次 4 的收口门跑的是 `-m "not e2e"`，**这条 e2e 根本不会被执行** ⇒ 删除后它会带着哑弹**全绿通过**，直到某次真跑（批次 5 或日后）才炸。**「全量回归零失败」在这一条上零覆盖力，只能靠显式 grep。**
 - [ ] **CP-2.12-2c** 三档纯单测删除 + 9 处 patch 行摘除**逐处完成**；`git diff` 说明逐条写清「被测物消失 ≠ 弱化断言」
 - [ ] **CP-2.12-3** execution prompt **两处哈希基线一致**且均为字面量
