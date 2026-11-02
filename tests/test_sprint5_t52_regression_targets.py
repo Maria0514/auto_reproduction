@@ -28,6 +28,9 @@
 （execution 驱动）、t22 fake interrupt + _ReactStub（gate 驱动）、s5_08 AppTest
 脚本（路由驱动）。全离线 mock，零 LLM、零配额。
 """
+# ⟦T-S8-2-12：以下 1 条测试已删除 —— **被测物消失，不是弱化断言**⟧
+# 被测函数 `_collect_grouped_metrics` 已在 T-S8-2-10 整体删除（架构 v2.4 §16.6），保留只会变成 AttributeError。
+
 
 from __future__ import annotations
 
@@ -634,49 +637,6 @@ def test_cp_5_2_1_ac15_regression_thread_state_sequence_full_route():
 # ===========================================================================
 
 
-def test_cp_5_2_1_ac20_fixture_parse_to_report_columns_chain(report_workspace):
-    """真实 _collect_grouped_metrics 扫固化 outputs → 三组对齐 → 真实 reporting
-    渲染：组逐一展开、"本次复现值"非空（fixture 数字进表）、无巨型 dict、
-    key_packages 逐包渲染。解析与渲染两环真实串联（t26/t34 各自单证的合龙）。"""
-    groups = execution_module._collect_grouped_metrics(str(FIXTURE_CODE_DIR))
-
-    # 解析环：与固化 summary.json 全对齐
-    assert set(groups.keys()) == {
-        "evoskills_smoke", "baselines/no_skill", "baselines/self_generated",
-    }
-    assert groups["evoskills_smoke"]["pass_rate"] == pytest.approx(2 / 3)
-    assert groups["baselines/no_skill"]["pass_rate"] == 0.0
-    assert groups["baselines/self_generated"]["mean_score"] == pytest.approx(
-        0.9666666666666667
-    )
-
-    # 渲染环：真实解析结果原样进 exec_result → 报告
-    state = _reporting_state(
-        report_workspace / _ARXIV_ID / "code",
-        _exec_result_11key(
-            metrics_groups=groups,
-            environment_info={
-                "python_version": "Python 3.11.9",
-                "key_packages": "numpy==1.26.4, httpx==0.27.0",
-            },
-        ),
-    )
-    Path(state["code_output_dir"]).mkdir(parents=True, exist_ok=True)  # 空目录→审计 clean
-    md, out = _render(state)
-
-    assert "指标对比" in md and "本次复现值" in md
-    assert "计划 expected" not in md  # AC-S5-09 删列（同表共证）
-    for group in ("evoskills_smoke", "baselines/no_skill", "baselines/self_generated"):
-        assert f"组 `{group}`" in md
-    # "本次复现值"列非空：fixture 数字（4g 格式化）逐一进表
-    assert "0.6667" in md      # pass_rate（smoke / self_generated）
-    assert "0.9667" in md      # mean_oracle_score / mean_score
-    assert "0.06667" in md     # no_skill mean_score
-    # 嵌套降维红线 + environment 节
-    assert "{'" not in md and '{"' not in md
-    assert "关键依赖包（key_packages）" in md
-    assert "`numpy==1.26.4`" in md and "`httpx==0.27.0`" in md
-    assert out["honesty_audit"]["clean"] is True  # 空 code 目录不误报（旁证）
 
 
 # ===========================================================================

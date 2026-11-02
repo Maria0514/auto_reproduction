@@ -2016,7 +2016,9 @@ graph TD
 > 第一段（机械换发）已完成并提交：**冻结表 10 行 → 5 行**、**两处 prompt 哈希门换发**、
 > **`test_d3` / `test_d4` 两条 schema 口径换发**。全量回归 **257 → 246 failed / 2526 passed**
 > ⇒ **11 条复绿、0 条新增**。
-> 剩余（第二段，未做）：**246 条红 + 26 条 error**，几乎全是「被测符号已删除」——
+> 第二段（2026-10-21，Maria 拍板 **A「删掉整个文件」**）已完成：s713 死防线整文件删除，**但把 24 条仍然活的测试迁走**（见下）；t26 删 4 条、t52 删 1 条。全量回归 **246 → 133 failed / 2522 passed / 26 error**。
+> ⚠ **A 的执行口径（如实记）**：旧 s713 跑一遍是 **111 红 / 25 绿** —— 那 25 条绿里 **17 条是活的**（`expected_results` 注入与 payload 字节零扰动、`_completion_insufficient` 真值表、schema 真传进子图工厂）。**照字面"整文件删"会把这 17 条活防线一起删掉**，所以改为：死防线不重写（A 的本意）、活簇**逐段迁出**到 `tests/test_sprint8_exec_contract.py`（冻结表 + d1/d2 + e1/e2/e3 + f4，**24 passed**）。另 6 条绿的（`b4` flaky 自比基线、`b5` 两来源合并）属"绿的但被测物已死"，不迁。
+> 剩余（第三段，未做）：**133 条红 + 26 条 error**，几乎全是「被测符号已删除」——
 > `test_sprint7_s713_reported_metrics.py`（91 条，整套 S7-13 自报指标防线）、
 > `test_sprint5_t26_grouped_metrics.py`（4 条）、`test_sprint5_t52_regression_targets.py`（1 条），
 > 以及 26 条 import error（`ExecAgentOutput(reported_metrics=...)` / 已删函数 import）。

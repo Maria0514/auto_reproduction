@@ -19,6 +19,9 @@ CP-2.6-1 使用测试工程师已固化的 fixture：
 
 全离线（mock agent + tmp_path / 固化 fixture），零 API 配额。
 """
+# ⟦T-S8-2-12：以下 4 条测试已删除 —— **被测物消失，不是弱化断言**⟧
+# 被测函数 `_collect_grouped_metrics` 已在 T-S8-2-10 整体删除（架构 v2.4 §16.6），保留只会变成 AttributeError。
+
 
 from __future__ import annotations
 
@@ -158,33 +161,6 @@ def _prep_tool_message(payload: Dict[str, Any], tool_call_id: str = "call-1") ->
 # ===========================================================================
 
 
-def test_cp_2_6_1_fixture_three_groups_aligned():
-    """固化 fixture 直跑纯函数：三组全对齐，组内顶层字段收编正确。"""
-    assert _FIXTURE_WORK_DIR.is_dir(), (
-        f"固化 fixture 缺失（应由测试工程师落盘）: {_FIXTURE_WORK_DIR}"
-    )
-    groups = execution_module._collect_grouped_metrics(str(_FIXTURE_WORK_DIR))
-
-    # 组名 = 相对 outputs/ 的父目录 POSIX 路径，三组恰为精确集合。
-    assert set(groups.keys()) == {
-        "evoskills_smoke", "baselines/no_skill", "baselines/self_generated",
-    }
-
-    smoke = groups["evoskills_smoke"]
-    assert smoke["pass_rate"] == pytest.approx(2 / 3)
-    assert smoke["num_tasks"] == 3
-    assert smoke["experiment_name"] == "evoskills_smoke"
-    assert smoke["mean_oracle_score"] == pytest.approx(0.9666666666666667)
-
-    no_skill = groups["baselines/no_skill"]
-    assert no_skill["pass_rate"] == 0.0
-    assert no_skill["baseline_type"] == "no_skill"
-    assert no_skill["mean_score"] == pytest.approx(0.06666666666666667)
-
-    self_gen = groups["baselines/self_generated"]
-    assert self_gen["pass_rate"] == pytest.approx(2 / 3)
-    assert self_gen["baseline_type"] == "self_generated"
-    assert self_gen["mean_score"] == pytest.approx(0.9666666666666667)
 
 
 def test_cp_2_6_1_e2e_metrics_groups_and_main_channel_intact(monkeypatch, tmp_path):
@@ -212,57 +188,10 @@ def test_cp_2_6_1_e2e_metrics_groups_and_main_channel_intact(monkeypatch, tmp_pa
 # ===========================================================================
 
 
-def test_cp_2_6_2_tolerates_corrupt_nondict_and_collects_top_level_only(tmp_path, caplog):
-    outputs = tmp_path / "outputs"
-    good = outputs / "good"
-    good.mkdir(parents=True)
-    good.joinpath("summary.json").write_text(json.dumps({
-        "pass_rate": 0.5,
-        "converged": True,
-        "name": "exp",
-        "nested": {"inner_metric": 1.0},   # 深层嵌套：只收顶层，跳过
-        "arr": [1, 2, 3],                  # list：跳过
-        "none_v": None,                    # None：跳过
-        "long_str": "x" * 500,             # 超长 str：跳过
-    }), encoding="utf-8")
-    broken = outputs / "broken"
-    broken.mkdir()
-    broken.joinpath("summary.json").write_text("{not valid json", encoding="utf-8")
-    toplist = outputs / "toplist"
-    toplist.mkdir()
-    toplist.joinpath("summary.json").write_text("[1, 2, 3]", encoding="utf-8")
-
-    with caplog.at_level(logging.WARNING, logger="core.nodes.execution"):
-        groups = execution_module._collect_grouped_metrics(str(tmp_path))
-
-    # 不炸 + 只留有效组；嵌套/list/None/超长 str 不进组内字段。
-    assert set(groups.keys()) == {"good"}
-    assert groups["good"] == {"pass_rate": 0.5, "converged": True, "name": "exp"}
-
-    # 损坏 JSON 与非 dict 顶层各一条 WARNING（非静默吞错）。
-    messages = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
-    assert any("broken" in m for m in messages), "损坏 JSON 应有 WARNING"
-    assert any("toplist" in m for m in messages), "顶层非 dict 应有 WARNING"
 
 
-def test_cp_2_6_2_missing_outputs_dir_and_empty_work_dir(tmp_path):
-    assert execution_module._collect_grouped_metrics(str(tmp_path)) == {}
-    assert execution_module._collect_grouped_metrics("") == {}
 
 
-def test_cp_2_6_2_str_value_masked(tmp_path):
-    """脱敏出口自查：组内 str 值内嵌哨兵 token → 落 state 前 mask。"""
-    secrets_store.register_sensitive_value(_TOKEN)
-    grp = tmp_path / "outputs" / "leaky"
-    grp.mkdir(parents=True)
-    grp.joinpath("summary.json").write_text(
-        json.dumps({"note": f"token={_TOKEN}", "pass_rate": 1.0}), encoding="utf-8",
-    )
-    groups = execution_module._collect_grouped_metrics(str(tmp_path))
-    dumped = json.dumps(groups, ensure_ascii=False, default=str)
-    assert _TOKEN not in dumped, "metrics_groups 落 state 不得含哨兵 token 明文"
-    assert "****" in groups["leaky"]["note"]
-    assert groups["leaky"]["pass_rate"] == 1.0
 
 
 # ===========================================================================
