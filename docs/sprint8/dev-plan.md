@@ -1971,7 +1971,12 @@ graph TD
 - [x] **CP-2.11-5** ★**幂等纪律③**（架构 §1.6 V6）：guard 命中路径重入 → `conclusion` 与上一次落盘**逐键相同**，`_verify_evidence` **零次调用** ⇒ ✅ **[2026-10-21]** 真造 `_dev_loop_route="await_dev_loop_interrupt"` + 已落盘 `execution_result` 重入：`conclusion` 序列化**逐键相同**、`_verify_evidence` **0 次**调用。⚠ 首次探针没设 route 标记 ⇒ guard 没命中、真去起了 agent（日志可见 `KeyError: 'api_key'` 降级）—— **这条 CP 的构造前提必须显式写上，否则测的是别的路径**
 - [x] **CP-2.11-6** interrupt#3 resume 后：`_resolve_agent_report` 拿到完整判定；`_verify_evidence` 重新读盘一次（**不是零次**） ⇒ ✅ **[2026-10-21]** 真跑回合（非 guard 命中）实测 `_verify_evidence` 被调用 ≥1 次 —— **与 `-5` 恰好相反且这是要的**：resume 时磁盘就该是收尾时刻的磁盘
 - [x] **CP-2.11-7** `_has_committed_result_for_round` / `_reconcile_steps` / `_audit_declared_steps` / `_completion_insufficient` / ~~`_collect_grouped_metrics`~~ **五个函数逐字节未改** ⇒ ✅ **[2026-10-21]** 前四个用 `ast` 逐段与 `HEAD` 比对：**逐字节相同**。⚠ **第五个已随 `T-S8-2-10` 整体删除** ⇒ 本 CP 由五个改判为**四个**（删除的事实另由 `CP-2.10-1` 守）
-- [ ] **CP-2.11-8 逐条验红**：①把 `_verify_evidence` 挪到 `_build_execution_result` 之后 → CP-2.11-5 必红；②~~把两来源改成合并~~（对象已随 2-10 删除，改判为「把 `_collect_result_blocks` 的台账索引换成空字典 → CP-2.11-2/-5 必红」）；③恢复 S7-13 门控（同上，改判为「把 `_decide_conclusion` 的返回值丢掉、`conclusion` 传 `{}` → CP-2.11-2 必红」）
+- [x] **CP-2.11-8 逐条验红**：①顺序即幂等 ②引用共用索引 ③判定真接线 ⇒ ✅ **[2026-10-21]** **三次真改磁盘**（`Copy-Item` 备份 + 还原、每次逐字节相同、备份 size 断言 > 0）：
+  > — **①语义变异：让 `_has_committed_result_for_round` 恒返回 False**（guard 不命中 ⇒ 重入必然重判）⇒ **`CP-2.11-5` 红**（`conclusion` 不再相同），且 **`CP-2.11-7b` 同步红**（guard 源码变了）⇒ 顺带证明 `CP-2.11-7` 也有牙。
+  > 　 ⚠ **首版变异不合格、已弃**：把判档块整块挪到 guard **之前** ⇒ 探针崩在 `_report` 未定义（NameError）上，那个"红"是崩了不是重判了。**记一笔：变异要红在断言上，不能红在语法/名字错误上** —— 判据是"红在 CP 说的那件事上"。
+  > — **②把结果块收编的台账索引换成 `{}`** ⇒ **`CP-2.11-2c` 红**（`evidence_ids` 为空、引用断了）。原计划这里验的是"两来源合并"，但那个对象已随 2-10 删除。
+  > — **③步骤 5 改传 `conclusion={}`** ⇒ **`CP-2.11-2` 红**（档位拿不到、`success` 回落），`CP-2.11-1b` 同步红。原计划这里验的是"恢复 S7-13 门控"，但那段代码已随 2-10 删除。
+  > — 🔴 **如实记一处证明力的短板**：变异①里 `_verify_evidence` 调用数仍是 0 —— 因为重入那次 agent 降级（无 `api_key`）、汇报为空 ⇒ 没有物证条目可验。**"零次调用"这半句在本次变异下不敏感**，真正扛住断言的是"`conclusion` 逐键相同"那半句。⇒ `T-S8-2-12` 写正式用例时，**重入前必须让首轮落盘的汇报带物证**，否则"零次调用"永远假绿。
 
 > **交付留痕（2026-10-21，`T-S8-2-11`）★ 可用性恢复点**
 > 1. **接线三步落地**：`execution()` 里 4.7 之后、步骤 5 之前插入 **步骤 4.75**（`_build_evidence_ledger` → `_decide_conclusion` → `_collect_result_blocks` 回填）与 **步骤 4.8**（`_apply_no_verifiable_output`），步骤 5 收 `conclusion` 一起落盘。⚠ **骨架图两处过期已就地订正**：原文写的"步骤 4.4 `_split_reported_metrics` 保留 / 4.5 `metrics_groups` 保留"已被 `T-S8-2-10` 整体删除，现骨架为 4.6 → 4.65 → 4.7 → **4.75 → 4.8** → 5。
