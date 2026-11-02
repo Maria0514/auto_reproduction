@@ -1964,14 +1964,22 @@ graph TD
 6. **interrupt#3 幂等**：resume 后函数体整体重跑、子图从 checkpoint 恢复跑到 finalize，`_resolve_agent_report` 拿到完整判定，`_verify_evidence` **重新读盘一次**——**这正是我们要的**（磁盘就该是收尾时刻的磁盘）。
 
 **自测检查点**：
-- [ ] **CP-2.11-1** 步骤顺序与架构 §1.5 骨架**逐行一致**（4.75 在 4.7 之后、4.8 之前；步骤 5 收 `conclusion`）
-- [ ] **CP-2.11-2** ★**可用性恢复自证**：与 **CP-2.1-5**（T-S8-2-1 的窗口开启自证）**同一份构造输入**（exit 全 0 + 步骤跑完 + agent 自报 1 个主实验指标）→ 现在 `metrics` **非空**、档位判出、`success` 按 `level` 派生。**CP-2.1-5 在此换发（期望值翻转），并在 §15.2 留档「翻转时点」**。⚠ **v1.2 订正**：v1.1 此处误指 `CP-1a.6-5`（该 CP 是 `_build_execution_agent_context` 的字节幂等检查，与本条毫无关系），属拍板 2 改号时的机械替换残留
-- [ ] **CP-2.11-3** ★**门控废止处有注释说明"分子已不再是 metrics"**（元检查，防后人误以为放松了防线）
-- [ ] **CP-2.11-4** `metrics_groups` 来源优先级不变；**禁止合并两来源**（负向：agent 有汇报时磁盘组名**不掺入**）
-- [ ] **CP-2.11-5** ★**幂等纪律③**（架构 §1.6 V6）：guard 命中路径重入 → `conclusion` 与上一次落盘**逐键相同**，`_verify_evidence` **零次调用**
-- [ ] **CP-2.11-6** interrupt#3 resume 后：`_resolve_agent_report` 拿到完整判定；`_verify_evidence` 重新读盘一次（**不是零次**）
-- [ ] **CP-2.11-7** `_has_committed_result_for_round` / `_reconcile_steps` / `_audit_declared_steps` / `_completion_insufficient` / `_collect_grouped_metrics` **五个函数逐字节未改**
-- [ ] **CP-2.11-8 逐条验红**：①把 `_verify_evidence` 挪到 `_build_execution_result` 之后 → CP-2.11-5 必红；②把两来源改成合并 → CP-2.11-4 必红；③恢复 S7-13 门控 → CP-2.11-2 必红
+- [x] **CP-2.11-1** 步骤顺序与架构 §1.5 骨架**逐行一致**（4.75 在 4.7 之后、4.8 之前；步骤 5 收 `conclusion`） ⇒ ✅ **[2026-10-21]** 源码位置实测：4.7 → 4.75（`_build_evidence_ledger` + `_decide_conclusion`）→ 4.8（`_apply_no_verifiable_output`）→ 步骤 5；`conclusion=conclusion,` 已传入。⚠ **骨架图的两处过期**（步骤 4.4 / 4.5 已在 `T-S8-2-10` 删除）已就地订正，见交付留痕第 1 条
+- [x] **CP-2.11-2** ★**可用性恢复自证**：（与 `CP-2.1-5` 同一份构造输入：exit 全 0 + 步骤跑完 + agent 汇报）→ 档位判出、`success` 按 `level` 派生。**CP-2.1-5 在此换发（期望值翻转）**，并在 §15.2 留档「翻转时点」 ⇒ ✅ **[2026-10-21]** 实跑 `execution()`：`level='复现成功'`、**`success=True`**、台账 1 条、结果块带 `evidence_ids=['E1']`。⚠ **另加两条对照**：①agent 报「失败」⇒ `success=False`（**不是恒真**）；②结果块确实随 `conclusion` 落盘。⟦🔴 **换发口径**：原 CP 断的是「`metrics` 非空」，而 `metrics` 已在 `T-S8-2-8`/`2-10` 退场 ⇒ 现断「**档位判出 + success 由 level 派生**」，这才是"可用性恢复"的可观测形态⟧
+- [x] **CP-2.11-3** ★**门控废止处有注释说明"分子已不再是 metrics"**（元检查，防后人误以为放松了防线） ⇒ ✅ **[2026-10-21]** 门控代码随 `T-S8-2-10` 的函数整体删除，故留档写在**删除留痕**里：明写「`metrics` 从此不再是 `success` 的分子 ⇒ 那件事从根上消解」+「防假绿职责已由**七重验钞**接管（`P-S8-36` 口径注）」+「这一段不是少了三行检查，是检查换了更硬的一套」
+- [x] **CP-2.11-4** `metrics_groups` 来源优先级不变；**禁止合并两来源** ⇒ ✅ **[2026-10-21]** ⟦🔴 **已换发为负向断言**：该变量与扫盘函数已在 `T-S8-2-10` 整体删除 ⇒ 本条的**对象不存在**。现断「`metrics_groups` / `reported_groups` / 扫盘函数的**代码引用数 = 0**（`NAME` token 判，不判子串——删除处的留痕**故意引用了旧代码**）」⟧
+- [x] **CP-2.11-5** ★**幂等纪律③**（架构 §1.6 V6）：guard 命中路径重入 → `conclusion` 与上一次落盘**逐键相同**，`_verify_evidence` **零次调用** ⇒ ✅ **[2026-10-21]** 真造 `_dev_loop_route="await_dev_loop_interrupt"` + 已落盘 `execution_result` 重入：`conclusion` 序列化**逐键相同**、`_verify_evidence` **0 次**调用。⚠ 首次探针没设 route 标记 ⇒ guard 没命中、真去起了 agent（日志可见 `KeyError: 'api_key'` 降级）—— **这条 CP 的构造前提必须显式写上，否则测的是别的路径**
+- [x] **CP-2.11-6** interrupt#3 resume 后：`_resolve_agent_report` 拿到完整判定；`_verify_evidence` 重新读盘一次（**不是零次**） ⇒ ✅ **[2026-10-21]** 真跑回合（非 guard 命中）实测 `_verify_evidence` 被调用 ≥1 次 —— **与 `-5` 恰好相反且这是要的**：resume 时磁盘就该是收尾时刻的磁盘
+- [x] **CP-2.11-7** `_has_committed_result_for_round` / `_reconcile_steps` / `_audit_declared_steps` / `_completion_insufficient` / ~~`_collect_grouped_metrics`~~ **五个函数逐字节未改** ⇒ ✅ **[2026-10-21]** 前四个用 `ast` 逐段与 `HEAD` 比对：**逐字节相同**。⚠ **第五个已随 `T-S8-2-10` 整体删除** ⇒ 本 CP 由五个改判为**四个**（删除的事实另由 `CP-2.10-1` 守）
+- [ ] **CP-2.11-8 逐条验红**：①把 `_verify_evidence` 挪到 `_build_execution_result` 之后 → CP-2.11-5 必红；②~~把两来源改成合并~~（对象已随 2-10 删除，改判为「把 `_collect_result_blocks` 的台账索引换成空字典 → CP-2.11-2/-5 必红」）；③恢复 S7-13 门控（同上，改判为「把 `_decide_conclusion` 的返回值丢掉、`conclusion` 传 `{}` → CP-2.11-2 必红」）
+
+> **交付留痕（2026-10-21，`T-S8-2-11`）★ 可用性恢复点**
+> 1. **接线三步落地**：`execution()` 里 4.7 之后、步骤 5 之前插入 **步骤 4.75**（`_build_evidence_ledger` → `_decide_conclusion` → `_collect_result_blocks` 回填）与 **步骤 4.8**（`_apply_no_verifiable_output`），步骤 5 收 `conclusion` 一起落盘。⚠ **骨架图两处过期已就地订正**：原文写的"步骤 4.4 `_split_reported_metrics` 保留 / 4.5 `metrics_groups` 保留"已被 `T-S8-2-10` 整体删除，现骨架为 4.6 → 4.65 → 4.7 → **4.75 → 4.8** → 5。
+> 2. 🔴 **一处容易传错实参的地方（记下来）**：物证第⑤重要的是**计划外命令**清单，来自 `_reconcile_steps` 的产出 `step_reconciliation["extra_commands"]`，**不是** `plan["execution_steps"]` —— 传后者会把计划步骤写出的正常产物**一律判不成立**（第⑤重是"字面子串出现在计划外命令里"）。
+> 3. **S7-13 自律门控废止 = 只留档、不改代码**：那段 `if metrics and reported_main: ...` 已在 `T-S8-2-10` 随函数整体删除，本任务不再有可删的代码。留档三条已写进删除留痕（见 CP-2.11-3）。**授权与口径**：`PRD §4.5.5 留档 2`，授权人 Maria 2026-08-03；`P-S8-36` 口径注（"五重"是 v1.3 之前的称呼，现为**七重**）一并抄录。
+> 4. 🔴 **最重要的一条事实：可用性恢复了，但现有测试一条都看不见。** 全量回归 **257 failed / 2520 passed / 29 skipped / 26 error**，与接线前**逐条相同（新增 0 / 转绿 0）** —— 我用 `git stash` 重建了接线前的基线再逐条 diff，不是拿计数相同当证据。**原因**：所有驱动 `execution()` 的测试**本来就是红的**（它们还在 `ExecAgentOutput(reported_metrics=...)` 这个已删字段上 TypeError）⇒ 接线效果被现有红面**完全遮住**。
+>    ⇒ **可用性恢复的证据目前只存在于本次探针**（`level='复现成功'`、`success=True`）。**这正是 `CP-2.1-5` 必须换发、且必须由 `T-S8-2-12` 写进 `tests/` 的理由** —— 否则"系统又能判档了"这件事**在仓库里没有任何自动化证据**。⚠ 这句话建议原样转达到交接文档。
+> 5. **mypy**：`rm -rf .mypy_cache && mypy` 全仓 27 源文件零错误。
 
 ### 任务 T-S8-2-12：既有断言同步 + 冻结表逐行换发 + 批次 2 自测收口门
 

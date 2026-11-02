@@ -1924,6 +1924,17 @@ def _run_execution_agent(
 # 保证** ⇒ 它不是被更好的设计取代，而是**前提被同批拆除后留下的空壳**。
 # 🔴 **如实登记，不得美化**：少一层兜底就是少一层。
 #
+# 🔴 **S7-13 自律门控也随之废止**（PRD §4.5.5 留档 2，授权人 Maria 2026-08-03；它原本
+# 就在被删的这个函数体内 —— 原注释自称"本批最要紧的一条自律"，内容是"三档主通道零指标
+# 时**不采信** agent 自报的主实验指标"）：
+#   · 门控当初防的是「`success` 的**指标分子**变成 agent 自报」（`len(metrics) >= 1` 那个
+#     合取项）；而 `T-S8-2-8` 已把 `success` 改由四档 `level` 派生 ⇒ **`metrics` 从此不再是
+#     `success` 的分子**，那件事**从根上消解**了。这就是废止它的**技术前提**。
+#   · ⚠ **后人别把这里读成"放松了防线"**：防假绿的职责已由**七重验钞**接管（产物侧五重 +
+#     论文值侧两重，架构 v2.4 §16.3.2；`P-S8-36` 口径注：留档原文说的"五重"是 v1.3 之前的
+#     称呼，现已扩为七重）。
+#   · ⇒ **这一段不是"少了三行检查"，是"检查换了更硬的一套"。**
+#
 # ⚠ 架构 §16.6 **备选 B 不启用**：块为空时**不得**用扫盘结果拼一个写死两列的块 —— 那个
 # 形状是**代码替 agent 决定**的，与被禁的预设表头同性质。
 # ⚠ 本句**刻意不复述那个列名**：`CP-2.10-5` 是负向断言，留痕里若写出列名，会把断言自己
@@ -3831,15 +3842,47 @@ def execution(state: GlobalState) -> dict:
     # 兼容旧 checkpoint 无该键；只存 purpose_key，天然无敏感值，架构 §9.3）。
     degraded_credentials = sorted((state.get("credential_degradations") or {}).keys())
 
+    # ── 步骤 4.75（sp8 S8-06，T-S8-2-11）：★ 验钞 → 四档判定 ────────────────────
+    # 🔴 **必须在此处读盘**（幂等纪律③ / PRD §4.5.1 落点理由①）：这里与 agent 跑命令是
+    # **同一次节点调用、同一份 `code_output_dir` 现场**。报告环节读的是已落盘的
+    # `conclusion`，**不重算、不重读盘** —— 隔久了磁盘就不是那一刻的磁盘了。
+    # 🔴 **顺序即优先级**：本步排在 4.7（完整度改判）之后 ⇒ "步骤没跑完"先命中并压档，
+    # 不会被本步翻回高档；下游 4.8 的 `category == NONE` 前置守卫又保证它能让位
+    # ⇒ 报出的始终是**真因**（没跑完）而不是果（没交出东西）。
+    # ⚠ 物证第⑤重要的是**计划外命令**清单（`_reconcile_steps` 的产出），**不是计划步骤本身**
+    #   —— 传 `plan["execution_steps"]` 会把计划步骤写出的正常产物一律判不成立。
+    _report = agent_out.report or {}
+    _analysis = state.get("paper_analysis") or {}
+    _raw_baseline = _analysis.get("baseline_results") if isinstance(_analysis, dict) else None
+    _baseline_results = _raw_baseline if isinstance(_raw_baseline, dict) else None
+    _extra_commands = (step_reconciliation or {}).get("extra_commands")
+    _ledger, _index = _build_evidence_ledger(
+        _report, work_dir, _extra_commands, _baseline_results,
+    )
+    conclusion = _decide_conclusion(
+        _report, _ledger, _index, _exit_ok, step_reconciliation,
+    )
+    # 结果块收编**查同一份台账索引** ⇒ 块与逐条结论指向同一个 id，"引用漂移"在结构上不可能
+    # （架构 §16.3.1 方案 A）。⚠ 不放进 `_decide_conclusion` 里：那个函数只管"判档 + 收编
+    # 逐条结论"，形状收编（六道处置）归这一段，职责别混。
+    conclusion["result_blocks"] = _collect_result_blocks(_report.get("result_blocks"), _index)
+
+    # 步骤 4.8（sp8 S8-04，T-S8-2-7）：命令全跑通、但档位只有「仅代码跑通」⇒ 改判为
+    # NO_VERIFIABLE_OUTPUT —— "跑通了但拿不出可核验产出"是**独立的一种结局**，不该被当成
+    # 普通失败去重跑。⚠ 它有 `category == NONE` 前置守卫 ⇒ 4.7 已判"没跑完"时自动让位。
+    feedback = _apply_no_verifiable_output(feedback, conclusion.get("level"), _exit_ok)
+
     # 步骤 5：构造 ExecutionResult。🔴 〔T-S8-2-8〕**success 现由四档 level 派生**，
-    # 两个旧形参（主实验指标 / 分组指标）已删；`conclusion` 的产线在步骤 4.75、
-    # 由 `T-S8-2-11` 接线，**在那之前这里不传 ⇒ level 拿不到 ⇒ success 恒假**（窗口内正确）。
+    # 两个旧形参（主实验指标 / 分组指标）已删。`conclusion` 由上面 4.75 产线产出、
+    # 在此**随 exec_result 一次 commit**（幂等纪律③）⇒ guard 命中路径复用的已落盘结果
+    # 天然含档位，重入不重判。
     # budget_truncated 判据与 INFO 日志单点在 _run_execution_agent，此处只透传落盘（AC-S5-12）。
     exec_result = _build_execution_result(
         prep, run_results, feedback, work_dir,
         step_reconciliation=step_reconciliation,
         degraded_credentials=degraded_credentials,
         budget_truncated=agent_out.budget_truncated,
+        conclusion=conclusion,
     )
 
     # 步骤 5.5（sp7 S7-02，架构 §5.3）：本回合完整日志落盘到
