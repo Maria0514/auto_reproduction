@@ -4,7 +4,14 @@
 
 # ---- 核心依赖 ----
 langgraph>=0.2.0
-langgraph-checkpoint-sqlite>=3.0.0
+# langgraph-checkpoint-sqlite：上界 `<3.1` 是实测硬约束，不是保守估计（2026-10-21 实测）。
+# 3.1.0 起的 checkpoint 表结构新增 `task_path` 列，读既有库直接
+# `sqlite3.OperationalError: no such column: task_path` ⇒ `workspaces/spike_s*.sqlite`
+# 与本地 `tests/fixtures/checkpoints_s6_*.db` 里的存量 checkpoint 全部读不出来。
+# 实测对照：装 3.1.2 → 7 条用例在 setup 阶段 error；钉 3.0.3 → 全部消失。
+# ⚠ 这正是 `R-S6-A3` 预告的「上游升级让旧 checkpoint 读不出来」，只是先动手的不是
+# langgraph 本体而是 checkpoint-sqlite。
+langgraph-checkpoint-sqlite>=3.0.0,<3.1
 langchain-openai>=0.1.0
 langchain-core>=0.2.0
 # deepxiv-sdk>=0.2.5  -- 从本地安装: pip install -e ./deepxiv_sdk
