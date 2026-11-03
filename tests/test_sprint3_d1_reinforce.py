@@ -95,6 +95,7 @@ def _patch_sandbox(
     *,
     run_results: Optional[List[FakeRunResult]] = None,
     counter: Optional[Dict[str, int]] = None,
+    report: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, int]:
     """patch execution 的 sandbox 执行入口，返回调用计数器。
 
@@ -118,6 +119,9 @@ def _patch_sandbox(
             rr = runs[-1] if runs else FakeRunResult()
         return execution_module.ExecAgentOutput(
             prep=FakePrepareResult(), run_results=[rr], rounds_used=0, llm_calls=0,
+            # ⟦T-S8-2-12 换发（2026-10-21）⟧ report 透传：批次 2 起 `success` 由四档
+            # `level` 派生，档位要站得住就必须有一条能过验的物证（封顶③）。
+            report=dict(report or {}),
         )
 
     def fake_collect_artifacts(*args: Any, **kwargs: Any) -> List[str]:
@@ -330,17 +334,31 @@ def test_h3_retry_coding_back_edge_in_real_graph(monkeypatch):
     → 路由 'coding' → stub_coding 清 await → 回 execution，第二次 run 成功 → reporting。
     断言 execution 被进入 2 次（首次失败 + 修复后成功），最终到 reporting。
     """
+    # ⟦T-S8-2-12 换发（2026-10-21）⟧ 修复回合也要交出"能过验的产出"，否则封顶③ 会把
+    # 档位压到「仅代码跑通」⇒ 修复回边永远闭不了环（正是本条要守的成边语义被遮蔽）。
+    # 物证走**论文值侧**（第⑥⑦重）：`baseline_results` 注入 + 报同一个数，不必落盘。
     cnt = _patch_sandbox(
         monkeypatch,
         run_results=[
             FakeRunResult(exit_code=1, stderr="ModuleNotFoundError: No module named 'torch'"),
-            FakeRunResult(exit_code=0, stdout='<METRICS>{"accuracy": 0.9}</METRICS>'),
+            FakeRunResult(exit_code=0, stdout="accuracy: 0.9"),
         ],
+        report={
+            "conclusion_level": "部分复现",
+            "goal_checks": [],
+            "evidence": [{"metric": "accuracy", "value": "0.9"}],
+            "result_blocks": [],
+        },
     )
     saver = InMemorySaver()
     graph = _build_real_route_execution_graph(saver)
     cfg = {"configurable": {"thread_id": f"d1-h3-{uuid.uuid4()}"}}
-    final = graph.invoke(_full_mode_initial_state(), cfg)
+    final = graph.invoke(
+        _full_mode_initial_state(
+            paper_analysis={"baseline_results": {"accuracy": 0.9}},
+        ),
+        cfg,
+    )
     # 修复回边走通：sandbox 跑了 2 次（首次失败 + 修复后成功），prepare 2 次。
     assert cnt["prepare"] == 2, (
         f"修复回边应使 execution 进入 2 次（sandbox prepare 2 次），实际 {cnt['prepare']}"

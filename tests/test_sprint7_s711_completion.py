@@ -94,14 +94,28 @@ def _run(command: List[str], exit_code: int = 0, stdout: str = "") -> SandboxRun
     )
 
 
+# ⟦T-S8-2-12 换发（2026-10-21）⟧ 批次 2 起 `success` 由四档 `level` 派生，而档位要
+# 站得住就必须有一条**能过七重验钞的物证**（封顶③）。这里用论文值侧那两重
+# （`baseline_results` 注入 + 报同一个数）⇒ 单元级不必往磁盘落文件。
+_OK_REPORT: Dict[str, Any] = {
+    "conclusion_level": "部分复现",
+    "goal_checks": [],
+    "evidence": [{"metric": "acc", "value": "0.9"}],
+    "result_blocks": [],
+}
+_OK_ANALYSIS: Dict[str, Any] = {"baseline_results": {"acc": 0.9}}
+
+
 def _agent_out(
     runs: List[SandboxRunResult],
     ledger: Optional[List[Any]] = None,
     rounds: int = 2,
+    report: Optional[Dict[str, Any]] = None,
 ) -> ExecAgentOutput:
     return ExecAgentOutput(
         prep=_prep(), run_results=runs, rounds_used=rounds, llm_calls=rounds,
         step_ledger=list(ledger or []),
+        report=dict(report or {}),
     )
 
 
@@ -445,20 +459,23 @@ def test_da_4_cp_7_5_4_audit_is_pure_observation(monkeypatch, caplog):
     monkeypatch.setattr(execution_module, "_audit_declared_steps", loud_audit)
     steps = _steps("python train.py")
     _patch_agent(monkeypatch, _agent_out(
-        [_run(["python", "train.py"], stdout=_METRICS_LINE)],
+        [_run(["python", "train.py"], stdout="acc: 0.9")],
         [(0, ["python", "train.py"], 0)],
+        report=_OK_REPORT,
     ))
     with caplog.at_level(logging.WARNING):
-        out = execution(_base_state(steps))
+        out = execution(_base_state(steps, paper_analysis=_OK_ANALYSIS))
 
     assert calls["n"] == 1, "留痕函数应在主流程被调用一次"
     er = out["execution_result"]
     assert er["success"] is True, "留痕结论绝不得影响 success"
     assert er["errors"] == []
+    # ⟦T-S8-2-12 换发⟧ 键集合按 `T-S8-2-8` 后的现行契约：删 `metrics`/`metrics_groups`、
+    # 加 `conclusion` ⇒ **恰 10 键**（原文那 11 键是 S8 之前的账）。
     assert set(er.keys()) == {
-        "success", "metrics", "logs", "errors", "artifacts", "runtime_seconds",
+        "success", "logs", "errors", "artifacts", "runtime_seconds",
         "environment_info", "step_reconciliation", "budget_truncated",
-        "metrics_groups", "degraded_credentials",
+        "degraded_credentials", "conclusion",
     }, "本批零新增 schema 键（§49.0 变更 1）"
 
 
@@ -481,34 +498,39 @@ def test_da_4_cp_7_5_5_audit_masks_secrets(caplog, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "has_metrics, completion_ok, expected_category, expected_success",
+    "completion_ok, with_report, expected_category, expected_success",
     [
         (True, True, ErrorCategory.NONE, True),
-        (True, False, ErrorCategory.INCOMPLETE_EXECUTION, False),
+        (True, False, ErrorCategory.NO_VERIFIABLE_OUTPUT, False),
         (False, False, ErrorCategory.INCOMPLETE_EXECUTION, False),
-        (False, True, ErrorCategory.NO_METRICS, False),
+        (False, True, ErrorCategory.INCOMPLETE_EXECUTION, False),
     ],
-    ids=["metrics_complete", "metrics_incomplete", "nometrics_incomplete", "nometrics_complete"],
+    ids=["complete_with_evidence", "complete_no_evidence",
+         "incomplete_no_evidence", "incomplete_with_evidence"],
 )
 def test_da_7_cp_7_6_1_four_cell_truth_table(
-    monkeypatch, has_metrics, completion_ok, expected_category, expected_success,
+    monkeypatch, completion_ok, with_report, expected_category, expected_success,
 ):
     """CP-7.6-1 ★ 四格真值表（exit 全 0 前提）。
 
-    第三格是关键：**没跑完且没指标 → 报"步骤没跑完"（真因）而不是"未产出指标"（果）**。
+    ⟦T-S8-2-12 换发（2026-10-21）⟧ 自变量由「有没有 `<METRICS>` 指标」换成
+    「**有没有一份过验的档位物证**」—— 指标不再从 stdout 解析（`T-S8-2-1`），
+    "有没有产出"现在由四档 + 封顶③ 说。
+
+    第二格是关键：**没跑完 → 报"步骤没跑完"（真因）而不是"没交出可核验产出"（果）**。
     优先级不是写死的 if-else，而是**靠调用顺序拿**：`_apply_incomplete_execution` 排在
-    `_apply_no_metrics` 上游，后者的 `category == NONE` 前置守卫使它自动让位 ⇒
-    `_apply_no_metrics` 函数体一行不改（Q-S7-30）。
+    `_apply_no_verifiable_output` 上游，后者的 `category == NONE` 前置守卫使它自动让位
+    （Q-S7-30）。⚠ 第 4 格（没跑完 + 却报了好档位）也必须是 `INCOMPLETE_EXECUTION`：
+    封顶② 压档在前，改判只报真因。
     """
     steps = _steps("python a.py", "python b.py")
     ran = ["python a.py", "python b.py"] if completion_ok else ["python a.py"]
-    runs = [
-        _run(c.split(), stdout=_METRICS_LINE if (has_metrics and i == 0) else "")
-        for i, c in enumerate(ran)
-    ]
+    runs = [_run(c.split(), stdout="acc: 0.9" if with_report else "") for c in ran]
     ledger = [(i, c.split(), 0) for i, c in enumerate(ran)]
-    _patch_agent(monkeypatch, _agent_out(runs, ledger))
-    out = execution(_base_state(steps))
+    _patch_agent(monkeypatch, _agent_out(
+        runs, ledger, report=_OK_REPORT if with_report else None))
+    out = execution(_base_state(
+        steps, paper_analysis=_OK_ANALYSIS if with_report else {"metrics": []}))
 
     er = out["execution_result"]
     assert er["success"] is expected_success
@@ -535,10 +557,11 @@ def test_da_5_cp_7_6_2_single_predicate_drives_both_success_and_feedback(
     写一遍 `completed < planned` 比较，两处口径就会各自漂移，而本用例会当场变红。
     """
     steps = _steps("python a.py")
-    runs = [_run(["python", "a.py"], stdout=_METRICS_LINE)]
-    _patch_agent(monkeypatch, _agent_out(runs, [(0, ["python", "a.py"], 0)]))
+    runs = [_run(["python", "a.py"], stdout="acc: 0.9")]
+    _patch_agent(monkeypatch, _agent_out(
+        runs, [(0, ["python", "a.py"], 0)], report=_OK_REPORT))
     _stub_predicate(monkeypatch, stubbed)
-    er = execution(_base_state(steps))["execution_result"]
+    er = execution(_base_state(steps, paper_analysis=_OK_ANALYSIS))["execution_result"]
 
     assert er["success"] is (not stubbed)
     if stubbed:
@@ -597,10 +620,14 @@ def test_da_6_cp_7_6_5_guard_reentry_round_trip(monkeypatch):
 
 
 def test_da_6_cp_7_6_6_no_metrics_early_stop_not_triggered():
-    """CP-7.6-6：连续多轮 INCOMPLETE 不触发 NO_METRICS 早停。
+    """CP-7.6-6：连续多轮 INCOMPLETE 不触发早停。
 
-    这正是**不复用 NO_METRICS 分类**的第一条理由（Q-S7-29）：复用会让"正在补跑"被
-    `_no_metrics_stalled` 当成"无进展"提前打断用户。
+    这正是**不复用"没产出"分类**的第一条理由（Q-S7-29）：复用会让"正在补跑"被
+    早停谓词当成"无进展"提前打断用户。
+
+    ⟦T-S8-2-12 换发（2026-10-21）⟧ 谓词已在 `T-S8-2-7` **改名 + 换类别**：
+    `_no_metrics_stalled`（认 `NO_METRICS`）→ `_no_progress_stalled`（认
+    `NO_VERIFIABLE_OUTPUT`）。用例语义一字未变（"补跑不算无进展"），只是跟改新名字。
     """
     state = {
         "fix_loop_history": [
@@ -610,7 +637,7 @@ def test_da_6_cp_7_6_6_no_metrics_early_stop_not_triggered():
     fb = ExecutionFeedback(
         ErrorCategory.INCOMPLETE_EXECUTION, True, "没跑完", "补跑", "",
     )
-    assert execution_module._no_metrics_stalled(state, fb) is False
+    assert execution_module._no_progress_stalled(state, fb) is False
 
 
 def test_da_6_cp_7_6_7_three_mapping_points_need_no_change():
@@ -622,14 +649,20 @@ def test_da_6_cp_7_6_7_three_mapping_points_need_no_change():
 
 
 def test_da_7_cp_7_6_8_apply_no_metrics_untouched_and_returns_as_is():
-    """CP-7.6-8：`_apply_no_metrics` 在 category 已被改判后原样返回（前置守卫生效）。
+    """CP-7.6-8：下游改判在 category 已被上游改判后原样返回（前置守卫生效）。
 
     这是"优先级靠调用顺序拿、函数体一行不改"的直接证明。
+
+    ⟦T-S8-2-12 换发（2026-10-21）⟧ 下游改判函数已由 `_apply_no_metrics` 换成
+    `_apply_no_verifiable_output`（`T-S8-2-7`：判据从"零指标"换成"档位只有仅代码跑通"）。
+    **守的东西一字未变**：上游（完整度改判）已把类别改成 `INCOMPLETE_EXECUTION` 时，
+    下游那个"只看 `NONE`"的前置守卫必须让它原样返回 —— 否则报的就成了"果"而不是"真因"。
     """
     incomplete = ExecutionFeedback(
         ErrorCategory.INCOMPLETE_EXECUTION, True, "没跑完", "补跑", "",
     )
-    out = execution_module._apply_no_metrics(incomplete, {}, {}, True)
+    out = execution_module._apply_no_verifiable_output(
+        incomplete, execution_module._LEVEL_CODE_ONLY, True)
     assert out is incomplete
 
 
@@ -771,10 +804,12 @@ def test_da_9_zero_schema_growth():
     """
     from core.state import ExecutionResult
 
+    # ⟦T-S8-2-12 换发⟧ `T-S8-2-8` 后的现行契约：删 `metrics`/`metrics_groups`、
+    # 加 `conclusion` ⇒ **恰 10 键**（原文 11 键）。
     assert set(ExecutionResult.__annotations__) == {
-        "success", "metrics", "logs", "errors", "artifacts", "runtime_seconds",
+        "success", "logs", "errors", "artifacts", "runtime_seconds",
         "environment_info", "step_reconciliation", "budget_truncated",
-        "metrics_groups", "degraded_credentials",
+        "degraded_credentials", "conclusion",
     }
     assert not hasattr(execution_module, "_deterministic_completion"), (
         "确定性完成度算法已被 Maria 复审砍掉（§49.0 变更 1），不得悄悄回来"

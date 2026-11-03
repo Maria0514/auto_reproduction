@@ -105,118 +105,19 @@ class TestCP223FixRoundStillHasDegradationDirective:
 
 
 # ===========================================================================
-# CP-2.4-5（AC-S6-09）：characterization 翻转 NONE+零指标 → NO_METRICS
+# CP-2.4-5（AC-S6-09）：⟦T-S8-2-12 删除留痕（2026-10-21）⟧ 整段删除
 # ===========================================================================
 #
-# 既有老测试审计（不改老文件）：
-#   - tests/test_sprint3_c3.py::test_build_execution_result_b_grade（L696-706）直接调
-#     _build_execution_result(NONE feedback, metrics={}) 只断言 success is False，
-#     不走 _apply_no_metrics、不断言 category/errors 文案 → 不受 batch2 改判影响，未挂。
-#   - tests/test_sprint3_c3.py L269-271：_classify_execution 全 exit0 → NONE 是分类器
-#     行为；_apply_no_metrics 是分类器之后的独立改判步，不改分类器语义 → 未挂。
-#   结论：无老测试断言"NONE+零指标 exit0"的旧矛盾行为，无需改动老文件；新行为在本文
-#   件内补新锚（characterization 用例锁定 batch2 改判后的语义）。
-
-
-class TestCP245NoMetricsFlip:
-    """CP-2.4-5：NONE + 零指标 + exit0 → NO_METRICS 翻转 characterization + 四象限对照。"""
-
-    def _none_feedback(self):
-        """旧 NONE feedback：summary 为矛盾文案 '执行成功'（改判前的自相矛盾态）。"""
-        from core.nodes.execution import ErrorCategory, ExecutionFeedback
-
-        return ExecutionFeedback(
-            category=ErrorCategory.NONE,
-            auto_fixable=False,
-            summary="执行成功",
-            fix_hint="",
-            representative_stderr="",
-        )
-
-    def test_cp_2_4_5_flip_category_and_no_contradiction(self):
-        """核心 characterization：NONE + exit_ok + metrics={} + metrics_groups={}
-        → category 翻为 NO_METRICS，summary/fix_hint 含 '未产出指标'+'实验主入口' 语义，
-        且不再出现 '执行成功' 式自相矛盾文案。
-        """
-        from core.nodes.execution import _apply_no_metrics, ErrorCategory
-
-        fb = self._none_feedback()
-        result = _apply_no_metrics(fb, {}, {}, exit_ok=True)
-
-        # 1) 分类翻转。
-        assert result.category == ErrorCategory.NO_METRICS
-        assert result.category != ErrorCategory.NONE
-
-        # 2) 语义锚：summary + fix_hint 都承载"未产出指标"+"实验主入口"。
-        assert "未产出指标" in result.summary
-        assert "实验主入口" in result.summary
-        assert "未产出指标" in result.fix_hint
-        assert "实验主入口" in result.fix_hint
-
-        # 3) 不再自相矛盾：翻转后 summary/fix_hint 不含旧的 '执行成功' 文案。
-        assert "执行成功" not in result.summary
-        assert "执行成功" not in result.fix_hint
-
-        # 4) 翻转后可自动修复（进 dev-loop 修复语义）。
-        assert result.auto_fixable is True
-
-    def test_cp_2_4_5_flipped_feedback_lands_no_metrics_errors0(self):
-        """翻转后的 feedback 经 _build_execution_result 落地：errors[0] 为
-        [error_category=no_metrics] ...，而非 [error_category=none] 执行成功。
-        """
-        from core.nodes.execution import _apply_no_metrics, _build_execution_result
-
-        fb = self._none_feedback()
-        flipped = _apply_no_metrics(fb, {}, {}, exit_ok=True)
-
-        # NO_METRICS 落地：exit0 但 metrics={} → success=False → errors 非空。
-        prep = _FakePrepareResult(success=True)
-        runs = [_FakeRunResult(exit_code=0)]
-        er = _build_execution_result(prep, runs, flipped, {}, "/tmp/s6_b5_no_metrics_wd")
-
-        assert er["success"] is False, "零指标 → B 档 success False"
-        assert len(er["errors"]) >= 1, "失败必有 errors 首条"
-        errors0 = er["errors"][0]
-        # 首条格式契约（execution.py:1737）：[error_category={category.value}] {summary}。
-        assert errors0.startswith("[error_category=no_metrics]"), (
-            f"errors[0] 应以 no_metrics 前缀开头，实际: {errors0!r}"
-        )
-        # 反锚：不是旧的 [error_category=none] 执行成功 自相矛盾。
-        assert not errors0.startswith("[error_category=none]"), (
-            f"errors[0] 不应是 none 前缀（旧矛盾态），实际: {errors0!r}"
-        )
-        assert "执行成功" not in errors0
-        # 正锚：hint 语义仍在 errors[0] 内（面板/coding 下游数据源）。
-        assert "未产出指标" in errors0
-
-    # -------------------- 四象限对照：三种不翻转（保守） --------------------
-
-    def test_cp_2_4_5_quadrant_exit_fail_no_flip(self):
-        """exit_ok=False → 不翻转（即使 metrics/groups 全空，保守）。"""
-        from core.nodes.execution import _apply_no_metrics, ErrorCategory
-
-        fb = self._none_feedback()
-        result = _apply_no_metrics(fb, {}, {}, exit_ok=False)
-        assert result.category == ErrorCategory.NONE
-        assert result is fb, "不满足条件应原样返回同一对象"
-
-    def test_cp_2_4_5_quadrant_has_metrics_no_flip(self):
-        """metrics 非空 → 不翻转（有真实指标即达 B 档，非无指标态）。"""
-        from core.nodes.execution import _apply_no_metrics, ErrorCategory
-
-        fb = self._none_feedback()
-        result = _apply_no_metrics(fb, {"accuracy": 0.91}, {}, exit_ok=True)
-        assert result.category == ErrorCategory.NONE
-        assert result is fb
-
-    def test_cp_2_4_5_quadrant_has_metrics_groups_no_flip(self):
-        """metrics_groups 非空 → 不翻转（分组指标也算产出，保守不误判无指标）。"""
-        from core.nodes.execution import _apply_no_metrics, ErrorCategory
-
-        fb = self._none_feedback()
-        result = _apply_no_metrics(fb, {}, {"table1": {"acc": 0.8}}, exit_ok=True)
-        assert result.category == ErrorCategory.NONE
-        assert result is fb
+# 原处是 `TestCP245NoMetricsFlip`（5 条）：NONE + 零指标 + exit0 → `NO_METRICS`
+# 的 characterization 翻转 + 四象限对照。**被测物消失 ≠ 弱化断言**：
+# `_apply_no_metrics` 与"零指标"这个判据在 `T-S8-2-7` **一并退场**
+# （`<METRICS>` 通道已在 `T-S8-2-1` 撤走，指标不再从 stdout 解析 ⇒ 判无可判）。
+#
+# ⇒ 五条里的四象限"不翻转"语义**没有丢**，它以新判据在
+# `tests/test_sprint8_exec_contract.py::TestNoVerifiableOutputFlip` 里换发了
+# （exit 失败不翻转 / 档位更高不翻转 / 上游已改判不翻转 / 取不到档位不翻转 /
+# 命中才翻转），且**多一格旧表没有的**："上游已改判 ⇒ 本函数不得再改判"。
+# 面板/下游那条真链路没有丢，见下面 `TestCP253HintVisibleThreeDownstreams` 的换发。
 
 
 # ===========================================================================
@@ -302,15 +203,21 @@ class TestCP253HintVisibleThreeDownstreams:
               消费的 payload 字段，execution.py:1910）含 hint。
         两段闭合即证 hint 从 execution 结果流到面板数据源无丢失。
         """
+        # ⟦T-S8-2-12 换发（2026-10-21）⟧ 本用例守的是"定向诊断文案能一路流到面板数据源"，
+        # 用的是 `_apply_no_metrics` 的文案。该函数已在 `T-S8-2-7` **整体删除** ⇒
+        # 换发到接任者 `_apply_no_verifiable_output`："跑通了但拿不出可核验产出"。
+        # **链路断言一字未动**（errors[0] → payload.execution_errors[0] → category 字段），
+        # 只是换了被送下去的那句话与类别值。
         from core.nodes.execution import (
-            _apply_no_metrics,
+            _apply_no_verifiable_output,
             _build_execution_result,
             _build_dev_loop_interrupt_payload,
+            _LEVEL_CODE_ONLY,
             ErrorCategory,
             ExecutionFeedback,
         )
 
-        # (a) 权威数据源：真跑一遍改判 + 落地，errors[0] 含 hint。
+        # (a) 权威数据源：真跑一遍改判 + 落地，errors[0] 含定向诊断文案。
         none_fb = ExecutionFeedback(
             category=ErrorCategory.NONE,
             auto_fixable=False,
@@ -318,27 +225,28 @@ class TestCP253HintVisibleThreeDownstreams:
             fix_hint="",
             representative_stderr="",
         )
-        flipped = _apply_no_metrics(none_fb, {}, {}, exit_ok=True)
+        flipped = _apply_no_verifiable_output(none_fb, _LEVEL_CODE_ONLY, True)
+        assert flipped.category == ErrorCategory.NO_VERIFIABLE_OUTPUT
         prep = _FakePrepareResult(success=True)
         runs = [_FakeRunResult(exit_code=0)]
-        er = _build_execution_result(prep, runs, flipped, {}, "/tmp/s6_b5_panel_wd")
+        er = _build_execution_result(prep, runs, flipped, work_dir="/tmp/s6_b5_panel_wd")
 
         assert er["errors"], "面板数据源 ExecutionResult.errors 应非空"
-        assert "未产出指标" in er["errors"][0]
-        assert "实验主入口" in er["errors"][0]
+        assert "跑通了" in er["errors"][0]
+        assert "没落地" in er["errors"][0]
 
-        # (b) 面板直接消费字段：payload['execution_errors'] 首条含 hint。
+        # (b) 面板直接消费字段：payload['execution_errors'] 首条含同一条文案。
         state = {"fix_loop_count": 1, "fix_loop_history": []}
         payload = _build_dev_loop_interrupt_payload(er, flipped, state)
 
         assert payload["execution_errors"], "面板 payload.execution_errors 应非空"
         panel_errors0 = payload["execution_errors"][0]
-        assert "未产出指标" in panel_errors0, (
-            f"面板数据源 execution_errors[0] 应含 hint，实际: {panel_errors0!r}"
+        assert "跑通了" in panel_errors0, (
+            f"面板数据源 execution_errors[0] 应含定向文案，实际: {panel_errors0!r}"
         )
-        assert "实验主入口" in panel_errors0
-        # error_category 面板字段仍标 no_metrics（term_map 渲染中文的键）。
-        assert payload["error_category"] == "no_metrics"
+        assert "没落地" in panel_errors0
+        # error_category 面板字段标新类别（term_map 渲染中文的键）。
+        assert payload["error_category"] == "no_verifiable_output"
 
 
 # ===========================================================================

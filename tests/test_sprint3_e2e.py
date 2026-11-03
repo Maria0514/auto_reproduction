@@ -130,8 +130,28 @@ def _patch_sandbox(
             rr = next(run_iter)
         except StopIteration:
             rr = runs[-1] if runs else FakeRunResult()
+        # ⟦T-S8-2-12 换发（2026-10-21）⟧ 批次 2 起 `success` 由四档 `level` 派生
+        # （`_build_execution_result`），而档位要站得住就必须有**至少一条能过七重验钞的
+        # 档位物证**（封顶③）。原来这份物证由 `<METRICS>` 通道供数，该通道已在
+        # `T-S8-2-1` 整体退场 ⇒ 改成**真的落一个文件**（`work_dir` 就是本次
+        # code_output_dir），report 里报它的相对路径与值。**断言的期望值一个都没动。**
+        try:
+            Path(work_dir).mkdir(parents=True, exist_ok=True)
+            Path(work_dir, "summary.json").write_text(
+                '{"accuracy": 0.893, "f1": 0.88}', encoding="utf-8")
+        except OSError:
+            pass
         return execution_module.ExecAgentOutput(
             prep=prep_obj, run_results=[rr], rounds_used=0, llm_calls=0,
+            report={
+                "steps_attempted": 1,
+                "all_exit_zero": bool(rr.exit_code == 0),
+                "summary": "sp3 e2e mock 执行",
+                "conclusion_level": "部分复现",
+                "goal_checks": [],
+                "evidence": [{"path": "summary.json", "value": "0.893"}],
+                "result_blocks": [],
+            },
         )
 
     def fake_collect_artifacts(*args: Any, **kwargs: Any) -> List[str]:
@@ -140,12 +160,11 @@ def _patch_sandbox(
 
     monkeypatch.setattr(execution_module, "_run_execution_agent", fake_run_execution_agent)
     monkeypatch.setattr(execution_module, "collect_artifacts", fake_collect_artifacts)
-    # 默认让 LLM 抽取不触发（零扣减），隔离预算行为；档1 <METRICS> 命中时本就不触发。
-    monkeypatch.setattr(
-        execution_module,
-        "_llm_extract_metrics",
-        llm_extract if llm_extract is not None else (lambda *a, **k: ({}, 0)),
-    )
+    # ⟦T-S8-2-12 删除留痕⟧ 原此处 `monkeypatch.setattr(execution_module,
+    # "_llm_extract_metrics", ...)` 已删除：**被测物消失 ≠ 弱化断言** ——
+    # 该函数随 `<METRICS>` 通道在 `T-S8-2-1` 整体删除（v1.2 裁定 1），桩打在已不存在的
+    # 属性上必 `AttributeError`。它原本的用途（隔离"档 3 LLM 抽取"的预算扣减）
+    # 随通道退场一并消解：执行主体在 ReAct 子图之外已零 LLM 调用。
     return cnt
 
 
@@ -274,18 +293,30 @@ def test_f2_e2e_1_happy_path_b_grade_success_full_mode(monkeypatch, tmp_path):
     assert final["reproduction_plan"]["approved"] is True
     assert final["code_output_dir"] == code_dir
 
-    # execution 真实跑：B 档成功（exit0 + ≥1 指标）。
+    # execution 真实跑：成功（exit 全 0 + 档位「部分复现」+ 一条能过验的物证）。
     er = final["execution_result"]
-    assert er["success"] is True, "exit0 + <METRICS> 可解析 → B 档成功"
-    assert er["metrics"].get("accuracy") == 0.893
+    assert er["success"] is True, "exit 全 0 + 档位「部分复现」+ 可过验物证 → 成功"
+    # ⟦T-S8-2-12 换发⟧ 原 `assert er["metrics"].get("accuracy") == 0.893` 已删：
+    # `metrics` 键与 `<METRICS>` 通道一并退场（`T-S8-2-1` 删通道 / `T-S8-2-8` 删两键）
+    # —— **被测物消失 ≠ 弱化断言**。指标口径的新落点是 `conclusion`，故改判下面三处：
+    assert er["conclusion"]["level"] == "部分复现", (
+        f"档位应按 agent 汇报落「部分复现」，实际 {er['conclusion'].get('level')!r}")
+    assert er["conclusion"]["evidence_ledger"], "证据台账应非空（档位物证已过验）"
+    assert [e["ok"] for e in er["conclusion"]["evidence_ledger"]] == [True], (
+        "那张 summary.json 物证应过验")
     # sandbox 恰跑 1 次（无修复循环）。
     assert cnt["prepare"] == 1 and cnt["run"] == 1
 
     # reporting full_success 形态（真实渲染落盘）。
     assert reporting_module._determine_report_form(final) == "full_success"
     report = _read_report(final.get("report_path"))
-    assert "0.893" in report, "full_success 报告应含复现指标值"
-    assert "0.91" in report, "full_success 报告应含 baseline 指标对比"
+    # ⟦T-S8-2-12 删除留痕⟧ 原两处 `"0.893" in report` / `"0.91" in report`（复现指标值 +
+    # baseline 对比）已删：报告侧读的是 `execution_result.metrics` 与 `metrics_groups`，
+    # 两个键都已在 `T-S8-2-8` 删除 ⇒ **被测物消失**，报告里不可能再出现那两个数。
+    # ⚠ **这两个数的展示职责没有丢**，它迁到"结果块"：`conclusion.result_blocks` 由
+    # `T-S8-2-10b` 产出、报告页渲染归批次 3（`T-S8-3-2` 起）。本 Sprint 批次 2 的
+    # 职责边界止于"块已落盘且可引用"，故此处改判落盘与引用：
+    assert "result_blocks" in er["conclusion"], "结果块应随 conclusion 一并落盘"
     # B 档红线：只对比不出硬性达标/不达标结论（Q-S3-01）。
     assert "不达标" not in report and "未达标" not in report
     assert final["current_step"] == "reporting"

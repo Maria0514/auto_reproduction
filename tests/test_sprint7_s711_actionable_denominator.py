@@ -81,10 +81,13 @@ def _run(command: List[str], exit_code: int = 0, stdout: str = "") -> SandboxRun
     )
 
 
-def _patch_agent(monkeypatch, runs, ledger) -> None:
+def _patch_agent(monkeypatch, runs, ledger, report=None) -> None:
+    # ⟦T-S8-2-12 换发（2026-10-21）⟧ `report` 形参：批次 2 起 `success` 由四档 `level`
+    # 派生，档位要站得住就必须有一条能过七重验钞的物证（封顶③）。
     out = execution_module.ExecAgentOutput(
         prep=_prep(), run_results=list(runs), rounds_used=2, llm_calls=2,
         step_ledger=list(ledger),
+        report=dict(report or {}),
     )
     monkeypatch.setattr(
         execution_module, "_run_execution_agent", lambda state, wd, plan: out,
@@ -238,8 +241,20 @@ def test_success_report_has_no_incomplete_banner_and_matching_denominator(
         {"step_name": "训练", "command": "python train.py"},
         {"step_name": "查看 outputs/ 下的图表确认可视化正常"},
     ]
-    _patch_agent(monkeypatch, [_run(["python", "train.py"], stdout=_METRICS_LINE)],
-                 [(0, ["python", "train.py"], 0)])
+    # 物证落盘 + 汇报：物证相对路径由 `_verify_evidence` 第④重锚到本次代码目录。
+    code_dir = workspace / "2604.01687" / "code"
+    code_dir.mkdir(parents=True, exist_ok=True)
+    (code_dir / "summary.json").write_text('{"acc": 0.9}', encoding="utf-8")
+    _patch_agent(
+        monkeypatch, [_run(["python", "train.py"], stdout="acc: 0.9")],
+        [(0, ["python", "train.py"], 0)],
+        report={
+            "conclusion_level": "部分复现",
+            "goal_checks": [],
+            "evidence": [{"path": "summary.json", "value": "0.9"}],
+            "result_blocks": [],
+        },
+    )
     state = _exec_state(workspace, steps)
     state.update(execution(state))
 

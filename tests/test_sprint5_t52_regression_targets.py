@@ -315,7 +315,7 @@ def _execution_base_state(**overrides: Any) -> Dict[str, Any]:
     return state
 
 
-def _patch_exec_agent(monkeypatch) -> None:
+def _patch_exec_agent(monkeypatch, report=None) -> None:
     """execution agent 替身：单命令成功 + <METRICS> 主通道输出。"""
     prep = SandboxPrepareResult(
         success=True, venv_dir="/w/.venv", python_exe="/w/.venv/bin/python", pip_exe="",
@@ -327,8 +327,12 @@ def _patch_exec_agent(monkeypatch) -> None:
         duration_seconds=0.1, timed_out=False,
         output_truncated=False, command=["python", "run_evoskills.py"],
     )
+    # ⟦T-S8-2-12 换发（2026-10-21）⟧ 增加 `report` 形参：批次 2 起 `success` 由四档
+    # `level` 派生，档位要有能过验的物证（封顶③）。原来那份物证由 `<METRICS>` 通道
+    # 供数，通道已在 `T-S8-2-1` 退场 ⇒ 由调用方传一份指向真文件的 report。
     out = execution_module.ExecAgentOutput(
         prep=prep, run_results=[run], rounds_used=2, llm_calls=2,
+        report=dict(report or {}),
     )
     monkeypatch.setattr(
         execution_module, "_run_execution_agent", lambda state, work_dir, plan: out,
@@ -681,9 +685,17 @@ def test_cp_5_2_2_ac03_degrade_marker_three_landing_chain(
     assert purpose_key not in secrets_store._SESSION_SECRETS
 
     # ---- 落点②：降级标记随 state 进 execution → exec_result 快照 ----
-    _patch_exec_agent(monkeypatch)
     work_dir = tmp_path / "code"
     work_dir.mkdir()
+    # 物证落盘（档位要站得住就必须有一条能过七重验钞的产物）。
+    (work_dir / "summary.json").write_text(
+        json.dumps({"pass_rate": 0.6667}), encoding="utf-8")
+    _patch_exec_agent(monkeypatch, report={
+        "conclusion_level": "部分复现",
+        "goal_checks": [],
+        "evidence": [{"path": "summary.json", "value": "0.6667"}],
+        "result_blocks": [],
+    })
     exec_out = execution(
         _execution_base_state(
             code_output_dir=str(work_dir),

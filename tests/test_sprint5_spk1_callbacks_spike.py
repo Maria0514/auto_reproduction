@@ -223,6 +223,14 @@ class SpikeScriptLLM(BaseChatModel):
         return self._final({
             "steps_attempted": 1, "all_exit_zero": True,
             "summary": "spk1 执行 train 完成", "notes": None,
+            # ⟦T-S8-2-12 换发（2026-10-21）⟧ 四档判定（T-S8-2-9 的四字段）：
+            # 档位 + 支撑档位本身的物证。物证指向 CountingRunner 真写出的 summary.json，
+            # 值是文件里真实存在的数 ⇒ 七重验钞①②③④全过；没有这一条，封顶③ 会把档位
+            # 压到「仅代码跑通」，`success` 随之变假（success 由 level 派生）。
+            "conclusion_level": "部分复现",
+            "goal_checks": [],
+            "evidence": [{"path": "summary.json", "value": "0.9"}],
+            "result_blocks": [],
         })
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
@@ -320,13 +328,28 @@ def _patch_upstream_fakes(monkeypatch) -> None:
 
 
 class CountingRunner:
-    """run_in_venv mock（sp4 E4 范式裁剪）：train.py → exit 0，B 档成功收尾。"""
+    """run_in_venv mock（sp4 E4 范式裁剪）：train.py → exit 0，并落一份可当物证的产物。
+
+    ⟦T-S8-2-12 换发（2026-10-21）⟧ 批次 2 把 `success` 改成由四档 `level` 派生
+    （`_build_execution_result`：`success = level ∈ {复现成功, 部分复现}`），而档位要
+    站得住就必须有**至少一条能过七重验钞的档位物证**（封顶③）。原来这条链靠
+    `<METRICS>` 通道供数，该通道已在 `T-S8-2-1` 整体退场 ⇒ 现在由本 mock **真的写一个
+    文件**进代码目录，剧本 final 里报它的相对路径与值。**这不是放宽断言**：断言的期望值
+    一个都没动（仍是"全图跑到 reporting"）。
+    """
 
     def __init__(self) -> None:
         self.calls: List[List[str]] = []
 
     def __call__(self, python_exe, command, work_dir, *a, **k):
         self.calls.append(list(command))
+        # 物证落盘：`work_dir` 就是本次 code_output_dir ⇒ 相对路径由 _verify_evidence
+        # 之④锚定后必然落在界内，①②③重也成立（文件在、可读、值在里面）。
+        try:
+            Path(work_dir, "summary.json").write_text(
+                '{"accuracy": 0.9, "f1": 0.81}', encoding="utf-8")
+        except OSError:
+            pass
         return SandboxRunResult(
             exit_code=0, stdout="accuracy: 0.9", stderr="",
             duration_seconds=0.1, timed_out=False, output_truncated=False,
@@ -339,7 +362,13 @@ def _wire_llms(monkeypatch, llm: SpikeScriptLLM, runner: CountingRunner) -> None
     monkeypatch.setattr(execution_module, "create_llm", lambda cfg: llm)
     monkeypatch.setattr(execution_module, "run_in_venv", runner)
     monkeypatch.setattr(execution_module, "collect_artifacts", lambda *a, **k: [])
-    monkeypatch.setattr(execution_module, "_llm_extract_metrics", lambda *a, **k: ({}, 0))
+    # ⟦T-S8-2-12 删除留痕⟧ 原此处 `monkeypatch.setattr(execution_module,
+    # "_llm_extract_metrics", ...)` 已删除：**被测物消失 ≠ 弱化断言** ——
+    # `_llm_extract_metrics` 随 `<METRICS>` 通道在 `T-S8-2-1` 整体删除
+    # （v1.2 裁定 1，架构师裁定 + Maria 2026-08-04 已认），本行桩打在已不存在的属性上，
+    # `setattr(raising=True)` 必然 `AttributeError`，与该用例测什么无关。
+    # 它原来的作用（隔离"档 3 LLM 抽取"的预算扣减）**随该通道退场一并消解**：
+    # 现在执行主体在 ReAct 子图之外零 LLM 调用。
 
 
 def _initial_graph_state(ws: Path) -> Dict[str, Any]:

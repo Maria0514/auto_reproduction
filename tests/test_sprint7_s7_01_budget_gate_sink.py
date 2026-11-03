@@ -185,7 +185,11 @@ def _patch_agent_count(monkeypatch) -> Dict[str, int]:
 
     monkeypatch.setattr(execution_module, "_run_execution_agent", fake_agent)
     monkeypatch.setattr(execution_module, "collect_artifacts", lambda *a, **k: [])
-    monkeypatch.setattr(execution_module, "_llm_extract_metrics", lambda *a, **k: ({}, 0))
+    # ⟦T-S8-2-12 删除留痕⟧ 原 `setattr(execution_module, "_llm_extract_metrics", ...)`
+    # 已删除：**被测物消失 ≠ 弱化断言** —— 该函数随 `<METRICS>` 通道在 `T-S8-2-1`
+    # 整体删除（v1.2 裁定 1，架构师裁定 + Maria 2026-08-04 已认）；桩打在已不存在的
+    # 属性上必 AttributeError。它原本隔离的"档 3 LLM 抽取"扣减已不存在：
+    # 执行主体在 ReAct 子图之外零 LLM 调用。
     return cnt
 
 

@@ -139,8 +139,15 @@ def _patch_sandbox(
 
 
 def _no_llm_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
-    """默认让 LLM 抽取不触发（零扣减），便于隔离预算行为。"""
-    monkeypatch.setattr(execution_module, "_llm_extract_metrics", lambda *a, **k: ({}, 0))
+    """⟦T-S8-2-12 删除留痕（2026-10-21）：本函数体已空转，保留仅为语义留痕。⟧
+
+    原实现是 `monkeypatch.setattr(execution_module, "_llm_extract_metrics", ...)`，
+    用于隔离"档 3 LLM 抽取"的预算扣减。该函数随 `<METRICS>` 通道在 `T-S8-2-1`
+    整体删除（v1.2 裁定 1，架构师裁定 + Maria 2026-08-04 已认）⇒ 桩打在已不存在的
+    属性上必 `AttributeError`。**被测物消失 ≠ 弱化断言**：它要隔离的那笔扣减
+    **已经不存在**（执行主体在 ReAct 子图之外零 LLM 调用），隔离自然成立。
+    ⚠ 本函数已**不提供任何隔离**，仍在调用它只是让 diff 可读；新增用例请直接不调。
+    """
 
 
 # ===========================================================================
@@ -260,46 +267,25 @@ def test_cp_f1_3_dev_loop_subbudget_constant_below_total() -> None:
     )
 
 
-def test_cp_f1_3_budget_writeback_on_llm_extract(monkeypatch: pytest.MonkeyPatch) -> None:
-    """CP-F1-3 ①（AC-S3-04 ①）：metrics LLM 抽取触发时主动单点回写 retry_budget_remaining
-    + 累加 _dev_loop_llm_calls（不再零扣减）。
-    """
-    _patch_sandbox(
-        monkeypatch,
-        run_results=[FakeRunResult(exit_code=0, stdout="acc=0.88")],  # 无 <METRICS> 块，逼 LLM 兜底
-    )
-    # mock LLM 抽取返回 1 个指标 + 消耗 2 次调用。
-    monkeypatch.setattr(
-        execution_module, "_llm_extract_metrics", lambda *a, **k: ({"accuracy": 0.88}, 2)
-    )
-
-    state = _base_state(retry_budget_remaining=40, _dev_loop_llm_calls=0)
-    updates = execution_module.execution(state)
-
-    assert updates.get("retry_budget_remaining") == 38, (
-        f"预算应回写 40-2=38，实际 {updates.get('retry_budget_remaining')}（零扣减=must-fix-2 回归）"
-    )
-    assert updates.get("_dev_loop_llm_calls") == 2, (
-        f"_dev_loop_llm_calls 应累加 2，实际 {updates.get('_dev_loop_llm_calls')}"
-    )
+# ⟦T-S8-2-12 删除留痕（2026-10-21）：本函数原在此处，已整体删除 ——
+# `test_cp_f1_3_budget_writeback_on_llm_extract`（CP-F1-3 ①，AC-S3-04 ①）。
+# **被测物消失 ≠ 弱化断言**：它测的是"metrics 档 3 LLM 抽取触发时主动单点回写
+# `retry_budget_remaining` 并累加 `_dev_loop_llm_calls`（不再零扣减）"，
+# 而 `_llm_extract_metrics` 与三档解析已随 `<METRICS>` 通道在 `T-S8-2-1` 整体删除
+# （v1.2 裁定 1，架构师裁定 + Maria 2026-08-04 已认）⇒ **这个扣减来源在结构上不存在**，
+# 无法"换发"（没有可换的被测物）。
+# ⚠ **扣减单点本身仍在且仍被守**：`_map_execution_result` 的落点 B `retry_budget_remaining`
+# 写回由 `test_cp_e3_1_deduction_rounds_plus_metric_calls` / `..._rounds_only_no_metric_call`
+# （tests/test_sprint4_e3.py）与 `test_sprint5_t25_budget_link.py` 覆盖 —— 那里测的是
+# rounds 扣减，来源是子图 rounds，与本通道无关。
 
 
-def test_cp_f1_3_no_llm_no_budget_change(monkeypatch: pytest.MonkeyPatch) -> None:
-    """CP-F1-3 ①补：LLM 抽取未触发（档1/档2 命中 <METRICS>/正则）→ 预算零扣减。"""
-    _patch_sandbox(
-        monkeypatch,
-        run_results=[FakeRunResult(exit_code=0, stdout='<METRICS>{"accuracy": 0.9}</METRICS>')],
-    )
-    _no_llm_metrics(monkeypatch)
-
-    state = _base_state(retry_budget_remaining=40, _dev_loop_llm_calls=3)
-    updates = execution_module.execution(state)
-
-    # 无 LLM 调用 → 不触发预算回写键，或回写值不变。
-    if "retry_budget_remaining" in updates:
-        assert updates["retry_budget_remaining"] == 40
-    if "_dev_loop_llm_calls" in updates:
-        assert updates["_dev_loop_llm_calls"] == 3
+# ⟦T-S8-2-12 删除留痕（2026-10-21）：本函数原在此处，已整体删除 ——
+# `test_cp_f1_3_no_llm_no_budget_change`（CP-F1-3 ①补）。
+# 它是上面那条的**对照组**（"档 1/档 2 命中 `<METRICS>`/正则 ⇒ 预算零扣减"）。
+# 主条的被测物消失后，对照组的自变量（三档命中路径）同样不存在 ⇒ 该对照恒真、
+# 信息量为零（`MEMORY` §六「恒读 0 的仪器多读几次还是 0」同型）⇒ 一并删除，
+# **不留一条"永远绿的空壳"**。
 
 
 def test_cp_f1_3_entry_budget_gate_degrades(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -362,7 +348,12 @@ AC_COVERAGE_MAP: Dict[str, List[tuple]] = {
     ],
     "AC-S3-04": [  # 预算回写 + 子预算（MAX_DEV_LOOP_LLM_CALLS）+ 入口预算门（sp7 S7-01 下沉转正）
         ("tests.test_sprint3_c3", [
-            "test_cp_c3_8_budget_writeback_on_llm_extract",
+            # ⟦T-S8-2-12 换发（2026-10-21）⟧ 原第一条指向
+            # `test_cp_c3_8_budget_writeback_on_llm_extract`，该用例随
+            # `_llm_extract_metrics`（`<METRICS>` 通道，`T-S8-2-1` 整体删除）一并退场。
+            # 换发到同文件里**活的**对照组 `test_cp_c3_8b_no_llm_no_budget_change`
+            # —— 它守的是同一条扣减单点的"另一半"（不写预算键 = 零扣减）。
+            "test_cp_c3_8b_no_llm_no_budget_change",
             "test_cp_c3_9_entry_budget_gate_routes_to_interrupt",  # sp7 S7-01：预算门下沉转正
             "test_cp_c3_10_dev_loop_budget_ceiling",
         ]),

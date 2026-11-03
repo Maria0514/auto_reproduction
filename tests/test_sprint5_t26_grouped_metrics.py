@@ -52,11 +52,13 @@ _FIXTURE_WORK_DIR = (
     Path(__file__).parent / "fixtures" / "regression_2604_01687" / "code"
 )
 
-# ExecutionResult 契约键集合：sp3 7 键 + sp5 4 新键恰为 11 键（与 test_cp_e3_5 对齐）。
+# ExecutionResult 契约键集合：sp3 7 键 + sp5 4 新键 = 11，批次 2 删 `metrics` /
+# `metrics_groups` 两键、加 `conclusion` 一键 ⇒ **恰 10 键**（与 test_cp_e3_5 对齐）。
+# ⟦T-S8-2-12 换发（2026-10-21）：原写 11 键，是 `T-S8-2-8` 之前的账⟧
 _EXPECTED_RESULT_KEYS = {
-    "success", "metrics", "logs", "errors", "artifacts",
+    "success", "logs", "errors", "artifacts",
     "runtime_seconds", "environment_info", "step_reconciliation",
-    "budget_truncated", "metrics_groups", "degraded_credentials",
+    "budget_truncated", "degraded_credentials", "conclusion",
 }
 
 
@@ -163,24 +165,15 @@ def _prep_tool_message(payload: Dict[str, Any], tool_call_id: str = "call-1") ->
 
 
 
-def test_cp_2_6_1_e2e_metrics_groups_and_main_channel_intact(monkeypatch, tmp_path):
-    """execution() 主路径 e2e：metrics_groups 落 ExecutionResult，且 <METRICS>
-    三档主通道语义零改动（metrics 仍来自 stdout 结构化标签，不混入分组数据）。"""
-    work_dir = tmp_path / "code"
-    grp = work_dir / "outputs" / "exp_a"
-    grp.mkdir(parents=True)
-    (grp / "summary.json").write_text(
-        json.dumps({"pass_rate": 0.5, "num_tasks": 4}), encoding="utf-8",
-    )
-    _patch_agent(monkeypatch, _agent_out(
-        _prep(), [_run(exit_code=0, stdout='<METRICS>{"accuracy": 0.91}</METRICS>')],
-    ))
-    out = execution(_base_state(code_output_dir=str(work_dir)))
-    er = out["execution_result"]
-
-    assert er["success"] is True
-    assert er["metrics"] == {"accuracy": 0.91}, "主通道 metrics 语义零改动"
-    assert er["metrics_groups"] == {"exp_a": {"pass_rate": 0.5, "num_tasks": 4}}
+# ⟦T-S8-2-12 删除留痕（2026-10-21）：本函数原在此处，已整体删除 ——
+# `test_cp_2_6_1_e2e_metrics_groups_and_main_channel_intact`。
+# **被测物消失 ≠ 弱化断言**：它断言「`metrics_groups` 落 ExecutionResult」与
+# 「`metrics` 仍来自 stdout 的 `<METRICS>`」两件事，而 **两个键先后被整体删除**
+# （`metrics`/`metrics_groups` 在 `T-S8-2-8`，`_collect_grouped_metrics` 扫盘在
+# `T-S8-2-10`）⇒ 无物可测、也无"改个键名继续测"的等价物（这是能力回退，
+# 如实登记在 `R-S8-20`，不是换发）。
+# ⚠ 结果承载的新落点是 `conclusion.result_blocks`（自报块），它由
+# `tests/test_sprint8_exec_contract.py` 的 e2/e3/f4 与 `T-S8-2-10b` 的用例守。
 
 
 # ===========================================================================
@@ -218,12 +211,16 @@ def test_cp_2_6_3_env_info_rebuilt_key_packages_nonempty():
     assert preps[0].env_info["python_version"] == "Python 3.11.9"
 
     # 回读 prep 经主构造点 → environment_info 随 exec_result 落盘非空（消费面闭环）。
+    # ⟦T-S8-2-12 换发（2026-10-21）⟧ 原第 4 个位置实参 `{"accuracy": 0.9}` 传给旧形参
+    # `metrics`（已随 `T-S8-2-8` 删除）⇒ 位置整体错位，第 5 个字符串被当成
+    # `step_reconciliation` 去做 `dict(...)`，实测 `ValueError: dictionary update
+    # sequence element #0 has length 1`。改为关键字传 `work_dir`。
     er = execution_module._build_execution_result(
         preps[0], [_run(exit_code=0)],
         execution_module.ExecutionFeedback(
             execution_module.ErrorCategory.NONE, False, "", "", "",
         ),
-        {"accuracy": 0.9}, "/tmp/nonexistent-t26",
+        work_dir="/tmp/nonexistent-t26",
     )
     assert er["environment_info"].get("key_packages") == "numpy==1.26.0, torch==2.3.0"
 
@@ -279,7 +276,13 @@ def test_cp_2_6_4_main_constructor_all_new_keys(monkeypatch, tmp_path):
     assert set(er.keys()) == _EXPECTED_RESULT_KEYS
     assert isinstance(er["step_reconciliation"], dict)
     assert isinstance(er["budget_truncated"], bool)
-    assert er["metrics_groups"] == {}  # 无 outputs 目录 → 空 dict 默认
+    # ⟦T-S8-2-12 换发⟧ 原 `er["metrics_groups"] == {}`：键已删 ⇒ 改查 `conclusion`。
+    # ⚠ 它**不是空 dict**：`_decide_conclusion` 每回合必产五键（无汇报时档位落
+    # 「仅代码跑通」）⇒ 精确断言它的键集合（比原来的 "== {}" 更强，不是放宽）。
+    assert set(er["conclusion"]) == {
+        "level", "goal_checks", "evidence_ledger",
+        "level_evidence_ids", "result_blocks",
+    }
     assert er["degraded_credentials"] == []
 
 
@@ -294,7 +297,7 @@ def test_cp_2_6_4_degraded_path_all_new_keys(monkeypatch):
     assert set(er.keys()) == _EXPECTED_RESULT_KEYS
     assert er["step_reconciliation"] == {}
     assert er["budget_truncated"] is False
-    assert er["metrics_groups"] == {}
+    assert er["conclusion"] == {}
     assert er["degraded_credentials"] == []
 
 

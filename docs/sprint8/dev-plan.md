@@ -2025,7 +2025,12 @@ graph TD
 > 以及 26 条 import error（`ExecAgentOutput(reported_metrics=...)` / 已删函数 import）。
 > **⇒ 本任务的「全量零失败」门目前未达成，见下方 CP 状态。**
 
-- [ ] **CP-2.12-1** ★**全量非 e2e 回归：零计划内红 + 平台红白名单**（~~原文：全量非 e2e 回归零失败~~，**2026-10-21 换发**，`P-S8-67`）
+- [x] **CP-2.12-1** ★**全量非 e2e 回归：零计划内红 + 平台红白名单**（~~原文：全量非 e2e 回归零失败~~，**2026-10-21 换发**，`P-S8-67`）
+  > ✅ **[2026-10-21 达成]** 全量 `-m "not e2e and not browser"`：**45 failed / 2605 passed / 29 skipped / 8 error**。
+  > 判据三条逐条实算：① **`失败集合 − 白名单 = ∅`**（差集 **0**）；② **白名单里转绿的 = 0**（53 条逐条核对）；③ **§3.3 五族全部复绿**。
+  > 163 条红 → 53 条：**计划内 106 条（88 failed + 18 error）全部清零**，剩下 **53 = 45 failed + 8 error** 与白名单**逐条相同**（差集与"多出来"两侧都是 0）。
+  > 🔴 **未采用任何"让红消失"的手段**：无一条 `skip` / `xfail` 新增（实测 `+.*pytest.skip|xfail` 命中 0），无一处断言放宽为 `>=`，白名单未新增一行。
+  > 📌 **本轮真实发生过一次"门抓住新红"**：删掉三条被 AC 覆盖矩阵点名的用例后，`test_sprint3_f1::test_cp_f1_4_ac_has_mock_test_coverage[AC-S3-04]` 与 `test_sprint4_g1::test_cp_g1_1_*[AC-S4-04]` 立刻变红（差集 3 条）——**这就是这道门该有的样子**，随后按"换发映射到活的用例"修掉（不是删映射了事）。
   > 🔴 **门本身改了，理由与依据见下方「`CP-2.12-1` 换发说明」。原文的「全量零失败」在本机不可达（实测：连批次 2 动工前都是 53 条红），照原文守只会得到一道永远打不开的门。**
   > **新判据（三条同时成立才算过）**：
   > ① **`失败集合 − 平台白名单 = ∅`** —— 白名单在 **`docs/sprint8/platform-red-whitelist.md`**，是 **53 条的精确集合**（**不是"不少于"**）；
@@ -2072,19 +2077,70 @@ graph TD
   > 白名单挡不住"**某条平台红在批次 2 之后被改成了计划内红**"——因为它已经是红的，
   > 集合差看不出来。⇒ 本轮的处置是**逐条核对断点与异常类型**（白名单 §3 每行都写了
   > `断点` 与 `成因`），而不是只看"它红没红"。**下一次有人动这批文件时，仍须照此核对。**
-- [x] **CP-2.12-2** ★**冻结表逐行对账**（AC-S8-21①）：~~10 行 → 6 行~~ ~~10 行 → 4 行~~ ⇒ **10 行 → `5` 行**（换发的那一行留在表内、不减行；**移出 5** + **换发 1** + **不变 4**）；**逐行写明原因**；表结构未被整表删除、断言未被改成「不少于」 ⇒ ✅ **[2026-10-21]** 表实测 **5 行**：`_completion_insufficient` / `_apply_incomplete_execution` / `_build_execution_result`（**换发** `67296a1efe8aa703` → `c19be60025adcd8a`）/ `_reconcile_steps` / `_audit_declared_steps`；移出的 5 个函数实测 `hasattr` 全为假。**逐行原因写进表内注释**（移出 5 行的理由 + 换发 1 行的理由 + 不变 4 行的现场复算）。`test_f1` 五个参数**全绿**。⚠ **`CP-2.12-2b`（e2e 哑弹）与 `-2c`（三档纯单测删除）未做**
+- [x] **CP-2.12-2** ★**冻结表逐行对账**（AC-S8-21①）：~~10 行 → 6 行~~ ~~10 行 → 4 行~~ ⇒ **10 行 → `5` 行**（换发的那一行留在表内、不减行；**移出 5** + **换发 1** + **不变 4**）；**逐行写明原因**；表结构未被整表删除、断言未被改成「不少于」 ⇒ ✅ **[2026-10-21]** 表实测 **5 行**：`_completion_insufficient` / `_apply_incomplete_execution` / `_build_execution_result`（**换发** `67296a1efe8aa703` → `c19be60025adcd8a`）/ `_reconcile_steps` / `_audit_declared_steps`；移出的 5 个函数实测 `hasattr` 全为假。**逐行原因写进表内注释**（移出 5 行的理由 + 换发 1 行的理由 + 不变 4 行的现场复算）。`test_f1` 五个参数**全绿**。✅ **`CP-2.12-2b`（e2e 哑弹）与 `-2c`（三档纯单测删除 + patch 行摘除）见下两条，均已达成**
 - [x] **CP-2.12-3** execution prompt **两处哈希基线一致**且均为字面量 ⇒ ✅ **[2026-10-21]** `test_sprint5_t14_execution_prompt.py` 与 `test_sprint7_s710_exec_locality.py` 两处字面量同步换发为 **`60549c438adb3714`**（dev 侧在 `T-S8-2-9` 已算出并留档 §15.1）；两处**均为硬编码字面量**（不是从被测对象现算）；两门实测**转绿**。旧值 `80862b25e3b926b0` 仅余 4 处**历史记录**（docstring 里的换发链），无一处是活断言
-- [ ] **CP-2.12-4** `ExecutionResult` 键集合断言逐处同步：**键数 = `10`**（~~原文写 12~~，**2026-10-21 口径订正**，`P-S8-67`）
+- [x] **CP-2.12-4** `ExecutionResult` 键集合断言逐处同步：**键数 = `10`**（~~原文写 12~~，**2026-10-21 口径订正**，`P-S8-67`）
+  > ✅ **[2026-10-21 达成]** 逐处同步共 **5 处**（全部保持 `==` 精确集合，一处没改成 `>=`）：
+  > `tests/test_sprint4_e3.py`（`test_cp_e3_5_...`，并**加** `len(er) == 10`）/
+  > `tests/test_sprint5_t26_grouped_metrics.py`（`_EXPECTED_RESULT_KEYS`，两处构造点共用）/
+  > `tests/test_sprint5_t12_state.py`（改查 `conclusion` + **负向断言两个已删键不得回流**）/
+  > `tests/test_sprint7_s711_completion.py`（`test_da_4_cp_7_5_4` 与 `test_da_9_zero_schema_growth` 两处）。
+  > 另**加一条反向守**：`metrics` / `metrics_groups` 在 `ExecutionResult` 类体内零命中（`inspect.getsource` 限定类体，避开 `ReproductionPlan.metrics` 这个同名字段的误伤）。
   > 🔴 **口径先订正**：实为 **10 键** = 11 − 删 2（`metrics` / `metrics_groups`）+ 加 1（`conclusion`）。
   > 原文的「11 → 12」是 **v1.2 的账** —— 那时还没裁"删两键"（`AR-S8-15` 之前的形态）。
   > ⇒ **照原文写用例会得到一条恒红的断言**，且它在批次 4 的 `CP-4.2-1` 上还会被当成"漏删了一个键"。
   > ⚠ **为什么必须单列这一条**：`tests/test_sandbox_real_e2e.py:236` 的 `from core.nodes.execution import _extract_metrics_block` 是**函数级 import** —— **模块收集期不失败**；而批次 2 / 批次 4 的收口门跑的是 `-m "not e2e"`，**这条 e2e 根本不会被执行** ⇒ 删除后它会带着哑弹**全绿通过**，直到某次真跑（批次 5 或日后）才炸。**「全量回归零失败」在这一条上零覆盖力，只能靠显式 grep。**
-- [ ] **CP-2.12-2c** 三档纯单测删除 + 9 处 patch 行摘除**逐处完成**；`git diff` 说明逐条写清「被测物消失 ≠ 弱化断言」
-- [ ] **CP-2.12-5** 禁弱化自查通过
-- [ ] **CP-2.12-6** **文件边界自查**：`git status --porcelain` 生产侧~~**只有** `core/nodes/execution.py` 一个文件；`state.py` /~~ ⇒ 🔴 **恰 3 个文件**：`core/nodes/execution.py`（主体）+ `core/nodes/coding.py`（仅 `T-S8-2-1b`）+ **`core/state.py`**（仅 `T-S8-2-8`：加 `conclusion` + 删 `metrics` / `metrics_groups`）；`planning.py` / `plan_checks.py` / `reporting.py` / `ui/` / `graph.py` / `config.py` / `react_base.py` / `code_fs_tools.py` **逐一零改动**
+- [x] **CP-2.12-2b** ★**e2e 哑弹已清**（~~原文只有 CP-2.12-2c 一条，本条单列~~）
+  > ✅ **[2026-10-21 达成]** `tests/test_sandbox_real_e2e.py` 里那颗**函数级 import**
+  > （`from core.nodes.execution import _extract_metrics_block`）已在提交 **`1a80a4f`** 摘掉，
+  > 原位留 `⟦T-S8-2-12 删除留痕⟧`（说明 `<METRICS>` 通道已退场、不再从 stdout 抽指标）。
+  > 🔴 **复核方式用 `NAME` token，不用子串**：`tokenize` 扫 `tests/**.py` 七个已删符号的
+  > `NAME` token = **0**、`import` = **0**；字符串层仍余 49 处**全是留痕注释**。
+  > （子串 grep 会被自己的留痕打红 —— `MEMORY` §六 / `AC-S8-18` 同款口径。）
+  > ⚠ **这一条为什么必须靠扫描、不能靠回归**：`-m "not e2e and not browser"` **根本不执行**这条 e2e
+  > ⇒ 全量回归对它的覆盖力是 **0**，删掉后它只会带着哑弹全绿。**「全量回归零失败」这句话在它面前是空的。**
+- [x] **CP-2.12-2c** 三档纯单测删除 + patch 行摘除**逐处完成**；`git diff` 说明逐条写清「被测物消失 ≠ 弱化断言」
+  > ✅ **[2026-10-21 达成，实测数比原文的"9 处"多]** ①**patch 行摘除 15 处**（原文写 9 处 = 计划落盘时的预清点）：
+  > `test_sprint3_c3` 3 / `test_sprint3_e2e` 1 / `test_sprint3_f1` 2 / `test_sprint4_e2e` 2 / `test_sprint4_e3` 2 /
+  > `test_sprint5_spk1_callbacks_spike` 1 / `test_sprint7_s7_01_budget_gate_sink` 1 / `test_sprint7_s7_02_persist_log` 2 /
+  > `test_sprint7_targeted` 1；②**删除 34 个用例**（三档纯单测 9 + `TestNoMetrics` 8 + `TestNoMetricsEarlyStop` 10 +
+  > `TestCP245NoMetricsFlip` 5 + `test_cp_e3_1_deduction_rounds_plus_metric_calls` + `test_cp_2_6_1_e2e_metrics_groups...`），
+  > **每处都留了 `⟦T-S8-2-12 删除留痕⟧` 并写明"必然物消失 ≠ 弱化断言"**；
+  > ③**换发落点新增 11 条用例**（`tests/test_sprint8_exec_contract.py` 的 `TestNoProgressStalled` 6 + `TestNoVerifiableOutputFlip` 5），
+  > 覆盖两个"接任者"谓词的真值表 —— 包括**旧表没有的一格**："上游已改判 ⇒ 下游不得再改判"。
+  > ④**用例总数守恒自证**：34 删 + 11 增 ⇒ 2681 − 34 + 11 = **2658** = 45 + 2605 + 8 ✅
+  > ⑤🔴 **零代码引用（token 层实测，不是子串）**：`tokenize` 扫 `tests/**.py`，七个已删符号的 **`NAME` token = 0、import = 0** ——
+  > 全仓剩余 49 处命中**全部是注释 / docstring 留痕**（`MEMORY` §六 那条"留痕会把自己打红"的口径）。
+- [x] **CP-2.12-5** 禁弱化自查通过
+  > ✅ **[2026-10-21 达成]** 四条逐条实测（`git diff` 全量 + 脚本统计）：
+  > ①**无 skip / xfail 规避**：新增行里 `pytest.skip` / `xfail` 命中 **0**（`AC-S8-26④`）；
+  > ②**无放宽**：没有一处断言被改成 `>=` / "不少于"；被换发的期望值一律**换成同一件事的新落点**（`metrics` → `conclusion.level` + 台账过验），
+  > 并在换发处**顺带加严**（`t12_state` 加两个已删键的**负向断言**、`e3` 加 `len(er) == 10`、`t26` 从 `== {}` 改精确键集合）；
+  > ③**每一条被删断言都能归到两档之一**：`被测物整体消失`（三档解析 / `_apply_no_metrics` / `_no_metrics_stalled` / `metrics`.`metrics_groups` / `_collect_grouped_metrics` 扫盘）
+  > 或 `换发到新落点`（成功判据、档位、台账、早停谓词、面板诊断文案）。**没有第三档**；
+  > ④**删测试不等于删防线**：两个接任者谓词（`_no_progress_stalled` / `_apply_no_verifiable_output`）在删旧真值表的**同一批**
+  > 补上了 11 条新真值表（`tests/test_sprint8_exec_contract.py`）—— 若只删不补，那两个谓词在仓库里将**零覆盖**。
+- [x] **CP-2.12-6** **文件边界自查**
+  > ✅ **[2026-10-21 达成]** `git status --porcelain`：本轮改动**全部在 `tests/`（25 个文件）与 `docs/sprint8/`（2 个文件）**，
+  > **生产侧零改动**（`core/` / `ui/` / `app.py` / `config.py` / `graph.py` 逐一 `git diff --quiet` 通过；批次 2 早前任务的
+  > `execution.py` / `coding.py` / `state.py` 三文件改动仍只在那三次提交里，本段未再碰）。
+  > 另：`requirements.txt` 的 `checkpoint-sqlite<3.1` 上界在**本段之前**单独提交（`630a6c9`），不在本段边界内。：`git status --porcelain` 生产侧~~**只有** `core/nodes/execution.py` 一个文件；`state.py` /~~ ⇒ 🔴 **恰 3 个文件**：`core/nodes/execution.py`（主体）+ `core/nodes/coding.py`（仅 `T-S8-2-1b`）+ **`core/state.py`**（仅 `T-S8-2-8`：加 `conclusion` + 删 `metrics` / `metrics_groups`）；`planning.py` / `plan_checks.py` / `reporting.py` / `ui/` / `graph.py` / `config.py` / `react_base.py` / `code_fs_tools.py` **逐一零改动**
   > ⟦🔴 **2026-08-08 主控收口（`P-S8-35`）**：原文把 `state.py` 与 `coding.py` 都列进了"零改动"面，是 `AR-S8-15` 之前 + v1.2 之前的账。**照原文对账会把本批必做的两处判成越界**。核实方式沿 `CP-1b.5-5` 的做法：对禁改面逐一 `git diff --quiet`，对 `state.py` 另核 diff 内**只有 `ExecutionResult` 三键变动、对 `ReproductionPlan` / `success_criteria` 零命中**（防反向抢改批次 1b 已落的键）⟧
-- [ ] **CP-2.12-7** `mypy` 清缓存后零错误
-- [ ] **CP-2.12-8** ★**批次 2 验红总账**：CP-2.3-6 / 2.3-10 / 2.4-9（五次）/ 2.5-13（五条）/ 2.6-9 / 2.7-9 / 2.8-11 / 2.9-10 / 2.10-8 **逐条实做、逐条见红**；**首轮无牙的如实登记**（sprint7 P-72 教训）
+- [x] **CP-2.12-7** `mypy` 清缓存后零错误
+  > ✅ **[2026-10-21 达成]** 先 `Remove-Item -Recurse -Force .mypy_cache` 再 `python -m mypy --config-file mypy.ini`：
+  > **`Success: no issues found in 27 source files`**。本轮只改 `tests/`（不在 mypy 射程内）⇒ 这个数应与此前一致，实测一致。
+- [x] **CP-2.12-8** ★**批次 2 验红总账**：CP-2.3-6 / 2.3-10 / 2.4-9（五次）/ 2.5-13（五条）/ 2.6-9 / 2.7-9 / 2.8-11 / 2.9-10 / 2.10-8 **逐条实做、逐条见红**；**首轮无牙的如实登记**（sprint7 P-72 教训）
+  > ✅ **[2026-10-21 结账]** 九族验红项**逐条在各自交付提交里实做并见红**，无一条只写在账面上：
+  > `2.3-6`/`2.3-10`（`d397e1a`）/ `2.4-9` 五次（`37e0f3a`）/ `2.5-13` 五条（`520f54b`）/ `2.6-9`（`b7c8da4`）/
+  > `2.7-9`（`64ce871`）/ `2.8-11`（`cf17ef7`）/ `2.9-10`（`df4e2d5`）/ `2.10-8`（`5353739`）。
+  > **首轮无牙的三条**已在 §15.0e 逐条登记并换发（`P-S8-60`「验红项在结构上打不红它所指的 CP」、
+  > `P-S8-52`「重放型断言恒真」、`P-S8-44`「字节稳定用例守不住」）—— **不洗白、不重记成"验过"**。
+  > 🔴 **本段自己的验红（收口门本身）**：把差集判定拿真实数据跑了两遍 ——
+  > ①**正向**：修完全部计划内红后，差集 = **0**、白名单转绿 = **0**（门判"通过"）；
+  > ②**该红的那一次会不会红**：中途删掉被 AC 覆盖矩阵点名的三条用例后，差集立刻报 **3 条**（门判"不通过"），
+  > 修完映射后回到 0。⇒ **这道门不是"恒绿"的空壳**：它在本次会话里**真实红过一次**。
+  > ⚠ **覆盖力上限如实登记**：门读的是"失败集合 − 白名单"，挡不住"某条平台红在批次 2 之后被改成计划内红"（它本来就在红）。
+  > 那一层的补丁是逐条核对断点与异常类型（白名单 §3 每行都写了断点与成因），**不是自动化**。
 
 > **批次 2 收口门**：CP-2.2-\* ~ CP-2.12-\* 全绿 + **全量非 e2e 回归「零计划内红 + 平台红白名单」**
 > （⟦2026-10-21 换发（`P-S8-67`）：原文写「**全量非 e2e 回归零失败**」，在本机不可达 ——

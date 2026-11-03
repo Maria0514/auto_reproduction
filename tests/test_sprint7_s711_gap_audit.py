@@ -104,10 +104,23 @@ def _run(command: List[str], exit_code: int = 0, stdout: str = "") -> SandboxRun
     )
 
 
-def _agent_out(runs, ledger=None, rounds: int = 2) -> ExecAgentOutput:
+# ⟦T-S8-2-12 换发（2026-10-21）⟧ 批次 2 起 `success` 由四档 `level` 派生，档位要站得住
+# 就必须有一条能过七重验钞的物证（封顶③）。这里用论文值侧那两重（`baseline_results`
+# 注入 + 报同一个数）⇒ 单元级不必往磁盘落文件。
+_OK_REPORT: Dict[str, Any] = {
+    "conclusion_level": "部分复现",
+    "goal_checks": [],
+    "evidence": [{"metric": "acc", "value": "0.9"}],
+    "result_blocks": [],
+}
+_OK_ANALYSIS: Dict[str, Any] = {"baseline_results": {"acc": 0.9}}
+
+
+def _agent_out(runs, ledger=None, rounds: int = 2, report=None) -> ExecAgentOutput:
     return ExecAgentOutput(
         prep=_prep(), run_results=list(runs), rounds_used=rounds, llm_calls=rounds,
         step_ledger=list(ledger or []),
+        report=dict(report or {}),
     )
 
 
@@ -173,9 +186,12 @@ _UNRUNNABLE_STEP_SHAPES = [
 def _obedient_run_of_one_real_step(monkeypatch, extra_step: Dict[str, Any]):
     """一个**完全照做**的 agent：把计划里所有可执行步骤跑完、全 exit 0、产出指标。"""
     steps: List[Any] = [{"step_name": "训练", "command": "python train.py"}, extra_step]
-    runs = [_run(["python", "train.py"], stdout=_METRICS_LINE)]
-    _patch_agent(monkeypatch, _agent_out(runs, [(0, ["python", "train.py"], 0)]))
-    return execution(_state(steps))
+    # ⟦T-S8-2-12 换发⟧ "完全照做的 agent"要连**汇报**一起照做：批次 2 起成功要一份
+    # 过验的档位物证（封顶③），只跑命令不给产出会被正当地判成"没交出可核验的东西"。
+    runs = [_run(["python", "train.py"], stdout="acc: 0.9")]
+    _patch_agent(monkeypatch, _agent_out(
+        runs, [(0, ["python", "train.py"], 0)], report=_OK_REPORT))
+    return execution(_state(steps, paper_analysis=_OK_ANALYSIS))
 
 
 @pytest.mark.parametrize("extra_step", _UNRUNNABLE_STEP_SHAPES)
@@ -191,8 +207,11 @@ def test_bug_s711_01_unrunnable_plan_step_forces_endless_fix_loop(monkeypatch, e
     out = _obedient_run_of_one_real_step(monkeypatch, extra_step)
     er = out["execution_result"]
 
-    # 前置条件成立：命令全 0、指标有、agent 把能跑的都跑了、还诚实声明了归属。
-    assert er["metrics"], "夹具前提：指标必须解析出来（否则这条测的就不是完成度了）"
+    # 前置条件成立：命令全 0、有可核验产出、agent 把能跑的都跑了、还诚实声明了归属。
+    # ⟦T-S8-2-12 换发⟧ 原前置断言是 `er["metrics"]`（"指标必须解析出来"）；`metrics`
+    # 已随 `T-S8-2-8` 删除 ⇒ 改成同义的现行前提"档位不是仅代码跑通"（= 有产出）:
+    assert er["conclusion"]["level"] != execution_module._LEVEL_CODE_ONLY, (
+        "夹具前提：必须有可核验产出（否则这条测的就不是完成度了）")
     assert er["step_reconciliation"]["completed"] == 1
     # `planned` 仍是**原始步数**（展示"计划共 N 步" + 自报 step_index 的合法区间）。
     assert er["step_reconciliation"]["planned"] == 2
@@ -232,12 +251,12 @@ def test_bug_s711_01_control_group_all_steps_runnable_still_succeeds(monkeypatch
         {"step_name": "汇总", "command": "python summarize.py"},
     ]
     runs = [
-        _run(["python", "train.py"], stdout=_METRICS_LINE),
+        _run(["python", "train.py"], stdout="acc: 0.9"),
         _run(["python", "summarize.py"]),
     ]
     ledger = [(0, ["python", "train.py"], 0), (1, ["python", "summarize.py"], 0)]
-    _patch_agent(monkeypatch, _agent_out(runs, ledger))
-    out = execution(_state(steps))
+    _patch_agent(monkeypatch, _agent_out(runs, ledger, report=_OK_REPORT))
+    out = execution(_state(steps, paper_analysis=_OK_ANALYSIS))
     assert out["execution_result"]["success"] is True
     assert out["_dev_loop_route"] is None
 
@@ -444,7 +463,7 @@ def test_gap_apply_chain_auto_fixable_agrees_with_the_auto_fixable_set():
     """改判链路产出的 feedback，其 `auto_fixable` 必须与 `AUTO_FIXABLE` 集合一致。
 
     为什么要有这条（dev-plan §56.3 **P-51** 只记了现象、没记根因）：
-    `_apply_incomplete_execution` / `_apply_no_metrics` 都是**硬编码**
+    `_apply_incomplete_execution` / `_apply_no_verifiable_output` 都是**硬编码**
     `auto_fixable=True`，而 guard 重入路径的 `_feedback_from_committed_result` 是
     `category in AUTO_FIXABLE` **推导**。两者是两个真值源：把新枚举从 `AUTO_FIXABLE`
     里摘掉之后，**首跑路径照样回 coding、guard 重入路径却变成不可修复** —— 同一份
@@ -453,7 +472,11 @@ def test_gap_apply_chain_auto_fixable_agrees_with_the_auto_fixable_set():
     none_fb = ExecutionFeedback(ErrorCategory.NONE, False, "执行成功", "", "")
     produced = [
         execution_module._apply_incomplete_execution(none_fb, _recon(9, 2), True),
-        execution_module._apply_no_metrics(none_fb, {}, {}, True),
+        # ⟦T-S8-2-12 换发⟧ 下游改判函数已由 `_apply_no_metrics` 换成
+        # `_apply_no_verifiable_output`（`T-S8-2-7`）。本用例守的是"构造出来的
+        # `auto_fixable` 与 `AUTO_FIXABLE` 集合口径不得漂移"，与具体是哪个函数无关。
+        execution_module._apply_no_verifiable_output(
+            none_fb, execution_module._LEVEL_CODE_ONLY, True),
     ]
     for fb in produced:
         assert fb.auto_fixable is (fb.category in execution_module.AUTO_FIXABLE), (
@@ -567,12 +590,12 @@ def test_gap_r_s7_59_obedient_full_rerun_converges_in_one_round(monkeypatch):
         {"step_name": f"第 {i} 步", "command": f"python s{i}.py"} for i in range(3)
     ]
     runs = [
-        _run(["python", f"s{i}.py"], stdout=_METRICS_LINE if i == 0 else "")
+        _run(["python", f"s{i}.py"], stdout="acc: 0.9" if i == 0 else "")
         for i in range(3)
     ]
     ledger = [(i, ["python", f"s{i}.py"], 0) for i in range(3)]
-    _patch_agent(monkeypatch, _agent_out(runs, ledger))
-    out = execution(_state(steps, fix_loop_count=3))
+    _patch_agent(monkeypatch, _agent_out(runs, ledger, report=_OK_REPORT))
+    out = execution(_state(steps, fix_loop_count=3, paper_analysis=_OK_ANALYSIS))
     assert out["execution_result"]["success"] is True
     assert out["_dev_loop_route"] is None
 

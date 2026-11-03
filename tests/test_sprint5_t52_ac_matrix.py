@@ -219,17 +219,25 @@ AC_COVERAGE_MAP: Dict[str, List[Tuple[str, List[str]]]] = {
         ]),
     ],
     "AC-S5-20": [  # 多组解析对齐 + 降维渲染 + key_packages（CP-2.6-1/3 / CP-3.4-4 + CP-5.2-1）
+        # ⟦T-S8-2-12 换发（2026-10-21）⟧ 本映射原有两条 `t26` 覆盖用例：
+        # `test_cp_2_6_1_fixture_three_groups_aligned` 的被测物
+        # `_collect_grouped_metrics` 已在 `T-S8-2-10` 整体删除（架构 v2.4 §16.6），
+        # 该用例随被测物一并退场 ⇒ **从覆盖表里摘掉**（摘掉 ≠ 放宽：矩阵仍然是
+        # "每条 AC 至少一条活的默认运行覆盖"，由下面三条守着）。
+        # `test_cp_5_2_1_ac20_fixture_parse_to_report_columns_chain` 同理（随
+        # 分组指标解析链路一并退场）。⚠ 能力回退如实登记在 `R-S8-20`。
         ("tests.test_sprint5_t26_grouped_metrics", [
-            "test_cp_2_6_1_fixture_three_groups_aligned",
             "test_cp_2_6_3_env_info_rebuilt_key_packages_nonempty",
         ]),
         ("tests.test_sprint5_t34_report_render", [
             "test_cp_3_4_4_no_expected_column_and_groups_expanded",
             "test_cp_3_4_4_nested_baseline_flattened_no_giant_dict",
         ]),
-        ("tests.test_sprint5_t52_regression_targets", [
-            "test_cp_5_2_1_ac20_fixture_parse_to_report_columns_chain",
-        ]),
+        # ⟦T-S8-2-12 换发⟧ 原此处指向
+        # `test_cp_5_2_1_ac20_fixture_parse_to_report_columns_chain`，该用例随
+        # 分组指标解析链路（`T-S8-2-10`）一并退场 ⇒ 本模块对该 AC 的覆盖由
+        # `tests.test_sprint5_t34_report_render` 的两条承担。
+
     ],
     "AC-S5-21": [  # 两页产物路径展示可复制（CP-3.6-1；UI 手动 happy path 见 GAP）
         ("tests.test_sprint5_t36_artifact_paths", [

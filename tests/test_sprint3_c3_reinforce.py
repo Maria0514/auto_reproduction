@@ -119,6 +119,7 @@ def _patch_sandbox(
     artifacts: Optional[List[str]] = None,
     prep_raises: Optional[Exception] = None,
     counter: Optional[Dict[str, int]] = None,
+    report: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, int]:
     # 【sp4 E4 mock 落点适配 2026-07-04】E3 把步骤 1+2 换成 _run_execution_agent
     # 内嵌子图，mock 落点上移（同 tests/test_sprint3_c3.py 适配注记）：
@@ -150,6 +151,9 @@ def _patch_sandbox(
             rr = runs[-1] if runs else FakeRunResult()
         return execution_module.ExecAgentOutput(
             prep=prep_obj, run_results=[rr], rounds_used=0, llm_calls=0,
+            # ⟦T-S8-2-12 换发（2026-10-21）⟧ report 透传：批次 2 起 `success` 由四档
+            # `level` 派生，档位要站得住就必须有一条能过验的物证（封顶③）。
+            report=dict(report or {}),
         )
 
     def fake_collect_artifacts(*args: Any, **kwargs: Any) -> List[str]:
@@ -216,21 +220,38 @@ def test_r1b_retry_round_reentry_reruns_sandbox(monkeypatch):
 
     反证 guard 不会把上一轮旧 execution_result 当本回合复用（跨回合误命中会导致漏跑修复后的代码）。
     """
+    # ⟦T-S8-2-12 换发（2026-10-21）⟧ 原来拿 `<METRICS>` 供数与 `metrics` 键断言成功；
+    # 通道已随 `T-S8-2-1` 退场、`metrics` 键随 `T-S8-2-8` 删除 ⇒ 改用四档判据：
+    # 给一份"档位 + 论文值侧过验物证"的汇报（第⑥⑦重），成功语义保持不变。
     cnt = _patch_sandbox(
         monkeypatch,
-        run_results=[FakeRunResult(exit_code=0, stdout='<METRICS>{"accuracy": 0.95}</METRICS>')],
+        run_results=[FakeRunResult(exit_code=0, stdout="acc: 0.95")],
+        report={
+            "conclusion_level": "部分复现",
+            "goal_checks": [],
+            "evidence": [{"metric": "accuracy", "value": "0.95"}],
+            "result_blocks": [],
+        },
     )
     # 模拟修复回合 2 重入：上一轮失败 result 还在 state，但 route 已被 D1 清成 None。
     stale = {
         "success": False, "metrics": {}, "logs": "", "errors": ["[error_category=runtime] old"],
         "artifacts": [], "runtime_seconds": 0.0, "environment_info": {},
     }
-    state = _base_state(fix_loop_count=1, _dev_loop_route=None, execution_result=stale)
+    state = _base_state(
+        fix_loop_count=1, _dev_loop_route=None, execution_result=stale,
+        paper_analysis={"baseline_results": {"accuracy": 0.95}},
+    )
     out = execution(state)
     # guard 未命中 → 重跑 sandbox → 拿到修复后的新成功结果。
     assert cnt["prepare"] == 1
     assert out["execution_result"]["success"] is True
-    assert out["execution_result"]["metrics"]["accuracy"] == 0.95
+    # 指标口径的新落点：档位 + 已过验的台账（`metrics` 键已删，无从断言）。
+    assert out["execution_result"]["conclusion"]["level"] == "部分复现"
+    assert [(e["value"], e["ok"]) for e in
+            out["execution_result"]["conclusion"]["evidence_ledger"]] == [("0.95", True)]
+    # 旧（stale）失败结果不得被当成本回合结果复用。
+    assert out["execution_result"] is not stale
 
 
 # ===========================================================================
@@ -379,16 +400,11 @@ def test_r5_step_to_command_edges():
 # ===========================================================================
 
 
-def test_r6_regex_scan_special_metric_names():
-    assert _regex_scan_metrics("top-1 acc: 0.85", ["top-1 acc"]) == {"top-1 acc": 0.85}
-    assert _regex_scan_metrics("F1@5 = 0.7", ["F1@5"]) == {"F1@5": 0.7}
-    # 百分号归一化 + 括号元字符。
-    m = _regex_scan_metrics("mAP(0.5): 88.2%", ["mAP(0.5)"])
-    assert abs(m["mAP(0.5)"] - 0.882) < 1e-9
-    # 非字符串 / 空指标名跳过不炸。
-    assert _regex_scan_metrics("acc: 0.9", [None, 123, ""]) == {}
-    # 无匹配 → 空 dict。
-    assert _regex_scan_metrics("no numbers here", ["accuracy"]) == {}
+# ⟦T-S8-2-12 删除留痕（2026-10-21）：本函数原在此处，已整体删除 ——
+# `test_r6_regex_scan_special_metric_names`（档 2 正则扫盘的特殊指标名匹配）。
+# **被测物消失 ≠ 弱化断言**：`_regex_scan_metrics` 已随 `<METRICS>` 通道在
+# `T-S8-2-1` **整体删除**（v1.2 裁定 1，架构师裁定 + Maria 2026-08-04 已认），
+# 无物可测、也无等价物可换发（通道退场后不再从 stdout 解析任何指标）。
 
 
 # ===========================================================================
@@ -396,17 +412,10 @@ def test_r6_regex_scan_special_metric_names():
 # ===========================================================================
 
 
-def test_r7_metrics_tier1_filters_nested():
-    # 嵌套 dict 被过滤，扁平值保留。
-    assert _extract_metrics_block('<METRICS>{"acc": 0.9, "detail": {"a": 1}}</METRICS>') == {"acc": 0.9}
-    # 纯嵌套（无扁平值）→ 空 → 视为未命中（让档2/3 接手）。
-    assert _extract_metrics_block('<METRICS>{"detail": {"a": 1}}</METRICS>') == {}
-    # 非法 JSON → 空。
-    assert _extract_metrics_block("<METRICS>not json</METRICS>") == {}
-    # 列表值被过滤。
-    assert _extract_metrics_block('<METRICS>{"acc": 0.5, "arr": [1,2]}</METRICS>') == {"acc": 0.5}
-    # bool 值保留（isinstance int/float/str/bool 允许）。
-    assert _extract_metrics_block('<METRICS>{"passed": true}</METRICS>') == {"passed": True}
+# ⟦T-S8-2-12 删除留痕（2026-10-21）：本函数原在此处，已整体删除 ——
+# `test_r7_metrics_tier1_filters_nested`（档 1 只收标量、过滤嵌套对象）。
+# 同上：`_extract_metrics_block` 已在 `T-S8-2-1` 整体删除（v1.2 裁定 1），
+# **被测物消失 ≠ 弱化断言**。
 
 
 # ===========================================================================

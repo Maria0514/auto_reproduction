@@ -127,10 +127,36 @@ def _agent_out(
     prep: Optional[SandboxPrepareResult],
     runs: List[SandboxRunResult],
     rounds: int,
+    report: Optional[Dict[str, Any]] = None,
 ) -> ExecAgentOutput:
+    """⟦T-S8-2-12 换发（2026-10-21）⟧ 增加 `report` 形参。
+
+    批次 2 起 `success` 由四档 `level` 派生，而档位要站得住就必须有一条**能过七重
+    验钞的档位物证**（封顶③）；原来那份物证由 `<METRICS>` 通道供数，通道已随
+    `T-S8-2-1` 整体退场 ⇒ 需要成功档位的用例改用 `_evidence_report()` 造一份真物证。
+    **默认 `None` ⇒ report 为空 ⇒ 档位落「仅代码跑通」⇒ success 假**，与改前
+    `metrics` 恒空时的行为同向（不成功那些用例一字未改）。
+    """
     return ExecAgentOutput(
         prep=prep, run_results=runs, rounds_used=rounds, llm_calls=rounds,
+        report=dict(report or {}),
     )
+
+
+def _evidence_report(work_dir: str, value: str = "0.9") -> Dict[str, Any]:
+    """造一份**真物证**：在本次代码目录里落 `summary.json`，再报它的相对路径与值。
+
+    七重验钞第①②③④重由此成立（位置在本次代码目录之下 / 文件存在可读 / 值在里面）。
+    """
+    root = Path(work_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "summary.json").write_text('{"acc": %s}' % value, encoding="utf-8")
+    return {
+        "conclusion_level": "部分复现",
+        "goal_checks": [],
+        "evidence": [{"path": "summary.json", "value": value}],
+        "result_blocks": [],
+    }
 
 
 def _base_state(**overrides: Any) -> Dict[str, Any]:
@@ -202,36 +228,27 @@ def _get_interrupt_payload(graph, cfg) -> Dict[str, Any]:
 # ===========================================================================
 
 
-def test_cp_e3_1_deduction_rounds_plus_metric_calls(monkeypatch, caplog):
-    """递减恰 = 子图 rounds + metric_llm_calls；_dev_loop_llm_calls 累加同额 + INFO 日志。"""
-    _patch_agent(monkeypatch, _agent_out(
-        _prep(), [_run(exit_code=0, stdout="final result printed but unstructured")],
-        rounds=4,
-    ))
-    # 档 1/2 均不命中 → 档 3 LLM 抽取触发（mock 返回 1 指标 + 1 次消耗）。
-    monkeypatch.setattr(
-        execution_module, "_llm_extract_metrics", lambda *a, **k: ({"accuracy": 0.8}, 1)
-    )
-    state = _base_state(
-        retry_budget_remaining=40, _dev_loop_llm_calls=0,
-        paper_analysis={"metrics": ["nonexistent"]},
-    )
-    with caplog.at_level(logging.INFO):
-        out = execution(state)
-
-    assert out["retry_budget_remaining"] == 40 - (4 + 1)  # rounds=4 + metric=1
-    assert out["_dev_loop_llm_calls"] == 0 + (4 + 1)
-    assert out["execution_result"]["success"] is True  # exit 0 + ≥1 指标
+# ⟦T-S8-2-12 删除留痕（2026-10-21）：本函数原在此处，已整体删除 ——
+# `test_cp_e3_1_deduction_rounds_plus_metric_calls`（AC-S4-04 的"轮次 + 指标抽取"合并扣减）。
+# **被测物消失 ≠ 弱化断言**：它测的是「递减恰 = 子图 rounds + `metric_llm_calls`」，
+# 而 `metric_llm_calls` 的唯一来源 `_llm_extract_metrics` 已随 `<METRICS>` 通道在
+# `T-S8-2-1` 整体删除（v1.2 裁定 1）⇒ 该项**恒为 0**，"合并扣减"这个被测物不存在。
+# ⚠ **扣减单点本身没有失守**：递减 = 子图 rounds 这一半由紧随其后的
+# `test_cp_e3_1_deduction_rounds_only_no_metric_call` 逐字守着（30−4=26 / 2+4=6）。
     assert any("LLM 预算单点扣减" in r.message for r in caplog.records), \
         "扣减必须有 INFO 日志留痕"
 
 
-def test_cp_e3_1_deduction_rounds_only_no_metric_call(monkeypatch):
-    """档 1 结构化命中（metric_llm_calls=0）→ 递减恰 = 子图 rounds。"""
+def test_cp_e3_1_deduction_rounds_only_no_metric_call(monkeypatch, tmp_path):
+    """递减恰 = 子图 rounds（指标抽取那条来源已随通道退场，故只剩 rounds）。"""
     _patch_agent(monkeypatch, _agent_out(
-        _prep(), [_run(exit_code=0, stdout='<METRICS>{"acc": 0.9}</METRICS>')], rounds=4,
+        _prep(), [_run(exit_code=0, stdout="acc: 0.9")], rounds=4,
+        report=_evidence_report(str(tmp_path)),
     ))
-    state = _base_state(retry_budget_remaining=30, _dev_loop_llm_calls=2)
+    state = _base_state(
+        retry_budget_remaining=30, _dev_loop_llm_calls=2,
+        code_output_dir=str(tmp_path),
+    )
     out = execution(state)
     assert out["retry_budget_remaining"] == 26  # 30 - 4
     assert out["_dev_loop_llm_calls"] == 6  # 2 + 4
@@ -412,17 +429,24 @@ def test_cp_e3_2_no_fix_loop_consumption_interrupt_fallback(monkeypatch):
 # ===========================================================================
 
 
-def test_cp_e3_3_success_from_real_exit_codes_and_metrics(monkeypatch):
+def test_cp_e3_3_success_from_real_exit_codes_and_metrics(monkeypatch, tmp_path):
+    """⟦T-S8-2-12 换发⟧ 原判据是「exit 全 0 + ≥1 指标 → success」，现在 `success` 由
+    四档 `level` 派生（`T-S8-2-8`）⇒ 改判「exit 全 0 + agent 报的档位 + 一条过验物证」。
+    `metrics` 键已删（`T-S8-2-8`），指标口径的新落点是 `conclusion`。
+    **断言强度不降**：原来查"指标数组等于什么"，现在查"档位 + 台账里那条数被验过"。
+    """
     _patch_agent(monkeypatch, _agent_out(
         _prep(),
         [_run(exit_code=0, stdout="train ok"),
-         _run(exit_code=0, stdout='<METRICS>{"acc": 0.91}</METRICS>')],
+         _run(exit_code=0, stdout="acc: 0.91")],
         rounds=4,
+        report=_evidence_report(str(tmp_path), value="0.91"),
     ))
-    out = execution(_base_state())
+    out = execution(_base_state(code_output_dir=str(tmp_path)))
     er = out["execution_result"]
     assert er["success"] is True
-    assert er["metrics"] == {"acc": 0.91}
+    assert er["conclusion"]["level"] == "部分复现"
+    assert [(e["value"], e["ok"]) for e in er["conclusion"]["evidence_ledger"]] == [("0.91", True)]
     assert out.get("_dev_loop_route") is None
 
 
@@ -430,9 +454,14 @@ def test_cp_e3_3_exit_zero_but_no_metrics_not_success(monkeypatch):
     _patch_agent(monkeypatch, _agent_out(
         _prep(), [_run(exit_code=0, stdout="done, nothing structured")], rounds=2,
     ))
-    monkeypatch.setattr(execution_module, "_llm_extract_metrics", lambda *a, **k: ({}, 1))
+    # ⟦T-S8-2-12 删除留痕⟧ 原此处 `setattr(execution_module, "_llm_extract_metrics", ...)`
+    # 已删除：**被测物消失 ≠ 弱化断言** —— 该函数随 `<METRICS>` 通道在 `T-S8-2-1` 整体删除。
+    # 本用例要守的东西一字未变（exit 全 0 但拿不出可核验产出 ⇒ 判不成功），而且现在
+    # **结构性成立**：report 为空 ⇒ `conclusion_level` 取不到 ⇒ 封顶③ 必命中 ⇒
+    # 档位「仅代码跑通」⇒ `success = level ∈ {复现成功, 部分复现}` 为假。
     out = execution(_base_state())
     assert out["execution_result"]["success"] is False
+    assert out["execution_result"]["conclusion"]["level"] == "仅代码跑通"
 
 
 class _LiarLLM(BaseChatModel):
@@ -565,15 +594,18 @@ def test_cp_e3_5_coding_digest_consumes_failure_contract(monkeypatch):
     out = execution(_base_state())
     er = out["execution_result"]
 
-    # ExecutionResult schema：sp3 7 键 + sp5 4 新键恰为 11 键精确集合。
+    # ExecutionResult schema：sp3 7 键 + sp5 4 新键 = 11，批次 2 删 metrics /
+    # metrics_groups 两键、加 conclusion 一键 ⇒ **恰 10 键**精确集合
+    # （⟦T-S8-2-12 换发：原写 11 键，是 `T-S8-2-8` 之前的账⟧）。
     # [sp5 T-S5-2-6 适配] 主控授权的唯一既有测试适配：T-S5-2-4/2-5/2-6 起两处构造
     # 点均补齐 step_reconciliation / budget_truncated / metrics_groups /
     # degraded_credentials，键集合"恰为"精确语义不弱化（防意外增删键）。
     assert set(er.keys()) == {
-        "success", "metrics", "logs", "errors", "artifacts",
+        "success", "logs", "errors", "artifacts",
         "runtime_seconds", "environment_info", "step_reconciliation",
-        "budget_truncated", "metrics_groups", "degraded_credentials",
+        "budget_truncated", "degraded_credentials", "conclusion",
     }
+    assert len(er) == 10, f"ExecutionResult 应为恰 10 键，实际 {len(er)}"
     assert er["errors"][0].startswith("[error_category=import]")
 
     # fix_loop_history 逐字同 FixLoopRecord 字段（S7-05 契约扩展后 7 字段：

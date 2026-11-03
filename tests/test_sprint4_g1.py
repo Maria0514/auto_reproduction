@@ -91,9 +91,14 @@ AC_COVERAGE_MAP: Dict[str, List[Tuple[str, List[str]]]] = {
             "test_cp_d1_4_await_dev_loop_interrupt_self_loop",
         ]),
     ],
-    "AC-S4-04": [  # 预算扣减 = rounds + metrics，不双扣；guard 重入零扣；触顶 interrupt（CP-E3-1）
+    "AC-S4-04": [  # 预算扣减 = rounds（指标抽取那条来源已随通道退场）；guard 重入零扣；触顶 interrupt
         ("tests.test_sprint4_e3", [
-            "test_cp_e3_1_deduction_rounds_plus_metric_calls",
+            # ⟦T-S8-2-12 换发（2026-10-21）⟧ 原第一条是
+            # `test_cp_e3_1_deduction_rounds_plus_metric_calls`（"轮次 + 指标抽取"合并扣减），
+            # 它随 `_llm_extract_metrics`（`T-S8-2-1` 整体删除）一并退场 ⇒ 换发到活的
+            # `test_cp_e3_1_deduction_rounds_only_no_metric_call`：扣减单点仍在，
+            # 只是"指标抽取"那一项恒为 0，故递减恰 = 子图 rounds。
+            "test_cp_e3_1_deduction_rounds_only_no_metric_call",
             "test_cp_e3_1_guard_reentry_zero_deduction_and_agent_not_called",
             "test_cp_e3_1_dev_loop_ceiling_to_interrupt",
         ]),

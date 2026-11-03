@@ -93,6 +93,9 @@ def _make_workdir_with_venv(tmp_path: Path, name: str = "wd") -> str:
     wd = tmp_path / name
     (wd / ".venv" / "bin").mkdir(parents=True)
     (wd / ".venv" / "pyvenv.cfg").write_text("home = /usr\n")
+    # ⟦T-S8-2-12 换发（2026-10-21）⟧ 预置物证文件：批次 2 起档位要有一条能过七重验钞的
+    # 产物（封顶③），而 `<METRICS>` 供数通道已随 `T-S8-2-1` 退场 ⇒ 由磁盘上的真文件承担。
+    (wd / "summary.json").write_text('{"acc": 0.9}', encoding="utf-8")
     return str(wd)
 
 
@@ -168,6 +171,18 @@ class CountingRunner:
         )
 
 
+# ⟦T-S8-2-12 换发（2026-10-21）⟧ 批次 2 的四档判定字段（`T-S8-2-9` 输出契约）：
+# 批次 2 起 `success` 由四档 `level` 派生，档位要站得住就必须有一条能过七重验钞的
+# 物证（封顶③）。物证指向 `_make_workdir_with_venv` 真写出的 `summary.json`。
+# **不是放宽断言**：这是新的必填输入，不给就与改前拿不到同样的 success。
+_BATCH2_EXEC_REPORT: Dict[str, Any] = {
+    "conclusion_level": "部分复现",
+    "goal_checks": [],
+    "evidence": [{"path": "summary.json", "value": "0.9"}],
+    "result_blocks": [],
+}
+
+
 class GateScriptLLM(BaseChatModel):
     """CP-E4-2 剧本（B2 范式：路由基于 ToolMessage 名称计数，replay 安全）。
 
@@ -209,6 +224,7 @@ class GateScriptLLM(BaseChatModel):
             body = json.dumps({
                 "steps_attempted": steps, "all_exit_zero": all_zero,
                 "summary": "用户补充信息后重试完成", "notes": None,
+                **_BATCH2_EXEC_REPORT,
             }, ensure_ascii=False, sort_keys=True)
             return AIMessage(content=(
                 f"{config.REACT_RESULT_TAG_OPEN}{body}{config.REACT_RESULT_TAG_CLOSE}"
@@ -261,6 +277,7 @@ class GateScriptLLM(BaseChatModel):
             body = json.dumps({
                 "steps_attempted": 2, "all_exit_zero": self.mode == "param",
                 "summary": "用户补充信息后重试完成", "notes": None,
+                **_BATCH2_EXEC_REPORT,
             }, ensure_ascii=False, sort_keys=True)
             ai = AIMessage(content=(
                 f"{config.REACT_RESULT_TAG_OPEN}{body}{config.REACT_RESULT_TAG_CLOSE}"
@@ -300,6 +317,11 @@ def _interrupt_values(graph, cfg) -> List[Dict[str, Any]]:
 # ===========================================================================
 # CP-E4-2 主证：真实 execution 节点上 interrupt#3 resume 副作用恰为 1 + 合并完整
 # ===========================================================================
+
+
+def _write_evidence_artifact(wd: str) -> None:
+    """在本次代码目录里落一份物证（`_BATCH2_EXEC_REPORT` 报的就是它的相对路径）。"""
+    Path(wd, "summary.json").write_text('{"acc": 0.9}', encoding="utf-8")
 
 
 def _run_gate_scenario(monkeypatch, tmp_path, caplog, name: str):
@@ -359,9 +381,12 @@ def test_cp_e4_2_interrupt3_resume_sandbox_side_effect_exactly_once(
     assert any("收集器缺失前段" in r.message for r in caplog.records), \
         "R-S4-10 合并必须 WARNING 留痕"
 
-    # —— E3 编排收尾：merged 全 exit 0 + 档 1 指标 → B 档成功（收尾链完整走通）。
+    # —— E3 编排收尾：merged 全 exit 0 + 过验的档位物证 → 成功（收尾链完整走通）。
     assert er["success"] is True
-    assert er["metrics"] == {"acc": 0.9}
+    # ⟦T-S8-2-12 换发⟧ 原 `er["metrics"] == {"acc": 0.9}`：`metrics` 键已随
+    # `T-S8-2-8` 删除 ⇒ 改判档位与已过验的台账（同一件事的新落点）。
+    assert er["conclusion"]["level"] == "部分复现"
+    assert [(e["value"], e["ok"]) for e in er["conclusion"]["evidence_ledger"]] == [("0.9", True)]
     assert values.get("_dev_loop_route") in (None, ""), "成功路径不进修复循环"
     # 预算扣减发生（子图真实 rounds > 0，落点 B 单点扣减生效——精确额由 CP-E3-1 覆盖）。
     assert values["retry_budget_remaining"] < 40
@@ -491,8 +516,10 @@ def test_le401_fix_credential_inline_retry_success_single_round(
 
     values = graph.get_state(cfg).values
     er = values["execution_result"]
-    assert er["success"] is True, "effective runs（fetch 末次 + train）全 0 + 指标 → success"
-    assert er["metrics"] == {"acc": 0.9}
+    assert er["success"] is True, "effective runs（fetch 末次 + train）全 0 + 过验物证 → success"
+    # ⟦T-S8-2-12 换发⟧ 同款：`metrics` 键已删，改判档位 + 台账。
+    assert er["conclusion"]["level"] == "部分复现"
+    assert [(e["value"], e["ok"]) for e in er["conclusion"]["evidence_ledger"]] == [("0.9", True)]
     assert values.get("_dev_loop_route") in (None, ""), "成功路径不进修复循环"
     assert values.get("fix_loop_count", 0) == 0
 
@@ -535,7 +562,9 @@ def test_le401_fix_inline_retry_without_interrupt_success(monkeypatch, tmp_path)
     er = graph.get_state(cfg).values["execution_result"]
     assert er["success"] is True, \
         "子图内同 argv 重试成功（无 interrupt）→ effective 全 0 → success"
-    assert er["metrics"] == {"acc": 0.9}
+    # ⟦T-S8-2-12 换发⟧ 同款：`metrics` 键已删，改判档位 + 台账。
+    assert er["conclusion"]["level"] == "部分复现"
+    assert [(e["value"], e["ok"]) for e in er["conclusion"]["evidence_ledger"]] == [("0.9", True)]
     assert "exit=1" in er["logs"], "首败证据仍留在 logs（全量聚合）"
 
 

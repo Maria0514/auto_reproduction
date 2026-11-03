@@ -116,6 +116,7 @@ def _patch_sandbox(
     run_results: Optional[List[FakeRunResult]] = None,
     artifacts: Optional[List[str]] = None,
     counter: Optional[Dict[str, int]] = None,
+    report: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, int]:
     """patch execution 的 sandbox 执行入口，返回调用计数 dict。
 
@@ -143,8 +144,13 @@ def _patch_sandbox(
             rr = next(run_iter)
         except StopIteration:
             rr = runs[-1] if runs else FakeRunResult()
+        # ⟦T-S8-2-12 换发（2026-10-21）⟧ 增加 `report` 透传：批次 2 起 `success` 由
+        # 四档 `level` 派生，档位要站得住就必须有一条能过七重验钞的物证（封顶③）。
+        # 默认 `None` ⇒ report 空 ⇒ 档位落「仅代码跑通」⇒ success 假（与改前
+        # `metrics` 恒空的那些用例同向，故它们一字未改）。
         return execution_module.ExecAgentOutput(
             prep=prep_obj, run_results=[rr], rounds_used=0, llm_calls=0,
+            report=dict(report or {}),
         )
 
     def fake_collect_artifacts(*args: Any, **kwargs: Any) -> List[str]:
@@ -197,17 +203,30 @@ def test_cp_c3_1_importable_and_local_objects():
 
 
 def test_cp_c3_2_b_grade_success(monkeypatch):
+    # ⟦T-S8-2-12 换发（2026-10-21）⟧ 原来成功判据是「exit0 + ≥1 指标」，指标由
+    # `<METRICS>` 通道供数；该通道已在 `T-S8-2-1` 整体退场、`metrics` 键在
+    # `T-S8-2-8` 删除 ⇒ 现在 `success` 由四档 `level` 派生，档位要有一条能过验的物证。
+    # 这里用**论文值侧**物证（第⑥⑦重）：`baseline_results` 注入 + 报同一个数，
+    # 不需要往磁盘落文件，单元级更干净。
     cnt = _patch_sandbox(
         monkeypatch,
-        run_results=[FakeRunResult(exit_code=0, stdout="<METRICS>{\"accuracy\": 0.91, \"f1\": 0.88}</METRICS>")],
+        run_results=[FakeRunResult(exit_code=0, stdout="acc: 0.91")],
+        report={
+            "conclusion_level": "部分复现",
+            "goal_checks": [],
+            "evidence": [{"metric": "accuracy", "value": "0.91"}],
+            "result_blocks": [],
+        },
     )
-    state = _base_state()
+    state = _base_state(paper_analysis={"baseline_results": {"accuracy": 0.91}})
     out = execution(state)
 
     er = out["execution_result"]
     assert er["success"] is True
-    assert len(er["metrics"]) >= 1
-    assert er["metrics"]["accuracy"] == 0.91
+    # 指标口径的新落点：档位 + 已过验的台账（`metrics` 键已删，无从断言）。
+    assert er["conclusion"]["level"] == "部分复现"
+    assert [(e["value"], e["ok"]) for e in er["conclusion"]["evidence_ledger"]] == [
+        ("0.91", True)]
     assert out["current_step"] == NODE_NAME
     # 成功 → 不回 coding、不 interrupt：无 retry_coding 路由、无 fix_loop_count 自增。
     assert out.get("_dev_loop_route") is None
@@ -225,7 +244,10 @@ def test_cp_c3_2b_exit0_no_metrics_not_success(monkeypatch):
         run_results=[FakeRunResult(exit_code=0, stdout="done, nothing to report")],
         # 避免 LLM 抽取兜底真发请求：mock 它返回空。
     )
-    monkeypatch.setattr(execution_module, "_llm_extract_metrics", lambda *a, **k: ({}, 1))
+    # ⟦T-S8-2-12 删除留痕⟧ 原此处 `setattr(execution_module, "_llm_extract_metrics", ...)`
+    # 已删除：**被测物消失 ≠ 弱化断言** —— 该函数随 `<METRICS>` 通道在 `T-S8-2-1`
+    # 整体删除。本用例守的"exit 全 0 但拿不出可核验产出 ⇒ 不成功"一字未动，且现在
+    # **结构性成立**：report 为空 ⇒ 档位取不到 ⇒ 封顶③ ⇒ 落「仅代码跑通」⇒ success 假。
     state = _base_state(paper_analysis={"metrics": []})
     out = execution(state)
     assert out["execution_result"]["success"] is False
@@ -481,22 +503,14 @@ def test_cp_c3_7b_illegal_resume_defaults_terminate(monkeypatch):
 # ===========================================================================
 
 
-def test_cp_c3_8_budget_writeback_on_llm_extract(monkeypatch):
-    # exit 0 + stdout 非空 + 无结构化标签 + 无正则命中 → 触发 LLM 抽取兜底。
-    _patch_sandbox(
-        monkeypatch,
-        run_results=[FakeRunResult(exit_code=0, stdout="final result printed but unstructured")],
-    )
-    # mock LLM 抽取返回 1 个指标 + 消耗 1 次。
-    monkeypatch.setattr(
-        execution_module, "_llm_extract_metrics", lambda *a, **k: ({"accuracy": 0.8}, 1)
-    )
-    state = _base_state(retry_budget_remaining=30, _dev_loop_llm_calls=2, paper_analysis={"metrics": ["nonexistent"]})
-    out = execution(state)
-    assert out["retry_budget_remaining"] == 29  # 30 - 1
-    assert out["_dev_loop_llm_calls"] == 3  # 2 + 1
-    # 抽到指标 + exit 0 → 成功。
-    assert out["execution_result"]["success"] is True
+# ⟦T-S8-2-12 删除留痕（2026-10-21）：本函数原在此处，已整体删除 ——
+# `test_cp_c3_8_budget_writeback_on_llm_extract`（"档 3 LLM 抽取触发 ⇒ 预算回写"）。
+# **被测物消失 ≠ 弱化断言**：它测的三个断言全部依赖 `_llm_extract_metrics` 与三档
+# 解析，而两者已随 `<METRICS>` 通道在 `T-S8-2-1` 整体删除（v1.2 裁定 1，架构师裁定 +
+# Maria 2026-08-04 已认）⇒ 扣减来源与"抽到指标即成功"的判据**同时不存在**。
+# ⚠ **零扣减那一半仍然被守**：紧随其后的
+# `test_cp_c3_8b_no_llm_no_budget_change` 逐字断言"不写预算键 = 零扣减"；
+# 子图 rounds 扣减由 `tests/test_sprint4_e3.py` 与 `tests/test_sprint5_t25_budget_link.py` 守。
 
 
 def test_cp_c3_8b_no_llm_no_budget_change(monkeypatch):
@@ -681,36 +695,17 @@ def test_cp_c3_14_warning_on_failure_and_degrade(monkeypatch, caplog):
 # ===========================================================================
 
 
-def test_metrics_tier1_structured_block():
-    m = _extract_metrics_block("noise\n<METRICS>{\"accuracy\": 0.91, \"f1\": 0.8}</METRICS>\ntail")
-    assert m == {"accuracy": 0.91, "f1": 0.8}
-
-
-def test_metrics_tier1_takes_last_block():
-    m = _extract_metrics_block("<METRICS>{\"a\": 1}</METRICS> x <METRICS>{\"b\": 2}</METRICS>")
-    assert m == {"b": 2}
-
-
-def test_metrics_tier2_regex_scan():
-    m = _regex_scan_metrics("Final accuracy: 0.873\nF1 = 81.2%", ["accuracy", "F1"])
-    assert m["accuracy"] == 0.873
-    assert abs(m["F1"] - 0.812) < 1e-9  # 81.2% -> 0.812
-
-
-def test_metrics_tier_priority(monkeypatch):
-    """档 1 命中则不走档 2/3（不调 LLM）。"""
-    calls = {"llm": 0}
-
-    def fake_llm(*a, **k):
-        calls["llm"] += 1
-        return ({}, 1)
-
-    monkeypatch.setattr(execution_module, "_llm_extract_metrics", fake_llm)
-    rr = [FakeRunResult(exit_code=0, stdout="<METRICS>{\"acc\": 0.5}</METRICS>")]
-    metrics, used = _parse_metrics(rr, {}, {"paper_analysis": {"metrics": ["acc"]}})
-    assert metrics == {"acc": 0.5}
-    assert used == 0
-    assert calls["llm"] == 0
+# ⟦T-S8-2-12 删除留痕（2026-10-21）：本段原在此处，四条"三档解析"单测已整体删除 ——
+#   `test_metrics_tier1_structured_block` / `test_metrics_tier1_takes_last_block` /
+#   `test_metrics_tier2_regex_scan` / `test_metrics_tier_priority`。
+# **被测物消失 ≠ 弱化断言**：`_extract_metrics_block` / `_regex_scan_metrics` /
+# `_llm_extract_metrics` / `_parse_metrics` 四个函数已随 `<METRICS>` 通道在
+# `T-S8-2-1` **整体删除**（v1.2 裁定 1，架构师裁定 + Maria 2026-08-04 已认），
+# 冻结表对应三行也已移出（`CP-2.12-2`，`10 行 → 5 行`）。
+# ⚠ 它们守的是"三条解析通道各自的解析正确性"。**没有等价物可换发** —— 通道退场
+# 后指标不再从 stdout 解析，而是由 agent 在汇报里自报并逐条验钞（七重），
+# 那条链路由 `tests/test_sprint8_exec_contract.py`（e1/e2/e3/f4）与
+# `tests/test_sprint7_s711_*` 的判定链用例守。
 
 
 def test_build_execution_result_b_grade(monkeypatch):
@@ -718,11 +713,14 @@ def test_build_execution_result_b_grade(monkeypatch):
     prep = FakePrepareResult(success=True)
     runs = [FakeRunResult(exit_code=0)]
     fb = ExecutionFeedback(ErrorCategory.NONE, False, "ok", "", "")
-    # 有指标 → 成功。
-    er = _build_execution_result(prep, runs, fb, {"acc": 0.9}, _work_dir())
+    # ⟦T-S8-2-12 换发（2026-10-21）⟧ 原第 4 个位置实参 `{"acc": 0.9}` / `{}` 传给旧形参
+    # `metrics`（已随 `T-S8-2-8` 删除）⇒ 位置整体错位（第 5 个串被当成
+    # `step_reconciliation`）。改判为**四档派生**这条新判据本身：
+    #   有合法档位 → success 真；档位取不到 → success 假。
+    er = _build_execution_result(
+        prep, runs, fb, work_dir=_work_dir(), conclusion={"level": "部分复现"})
     assert er["success"] is True
-    # 无指标 → 失败（B 档要求 ≥1）。
-    er2 = _build_execution_result(prep, runs, fb, {}, _work_dir())
+    er2 = _build_execution_result(prep, runs, fb, work_dir=_work_dir())
     assert er2["success"] is False
 
 

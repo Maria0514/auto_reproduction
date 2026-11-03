@@ -338,3 +338,117 @@ def test_e3_injection_reaches_the_human_message_the_agent_actually_reads(monkeyp
 def test_f4_completion_predicate_truth_table_unchanged(recon, expected):
     """S7-11 交付的完成度谓词真值表——本批零改动，逐格钉死。"""
     assert execution_module._completion_insufficient(recon) is expected
+
+
+# ===========================================================================
+# ⟦T-S8-2-12 换发（2026-10-21）⟧ 两个"接任者"的真值表
+#
+# 背景：`T-S8-2-7` 删掉了 `_apply_no_metrics` / 改名了 `_no_metrics_stalled`，
+# 它们原来的 18 条真值表在 `tests/test_sprint6_b2.py` 里**整段删除**（被测物消失）。
+# 删掉的东西里有两块**活的语义**，不能就这么没了 —— 本段就是它们的换发落点：
+#   · `_no_progress_stalled`（早停谓词）—— `_no_metrics_stalled` 的接任者，只换了类别；
+#   · `_apply_no_verifiable_output` —— `_apply_no_metrics` 的接任者（判据从"零指标"
+#     换成"档位只有仅代码跑通"）。
+# ⚠ 换发不是放宽：新真值表**同时覆盖命中与不命中的每一格**，并且把"守卫让位"
+#   （上游已改判 ⇒ 本函数不得再改判）也钉住 —— 那一格旧表里没有。
+# ===========================================================================
+
+
+def _fb(category: Any) -> Any:
+    return execution_module.ExecutionFeedback(
+        category=category, auto_fixable=False,
+        summary="", fix_hint="", representative_stderr="",
+    )
+
+
+class TestNoProgressStalled:
+    """`_no_progress_stalled` 真值表（`_no_metrics_stalled` 的换发落点）。"""
+
+    def test_stalled_when_tail_n_same_category(self):
+        """本轮 NO_VERIFIABLE_OUTPUT + 历史尾部连续 N 条同类 ⇒ 早停成立。"""
+        rounds = execution_module.NO_METRICS_EARLY_STOP_ROUNDS
+        history = [
+            {"error_category": "no_verifiable_output"} for _ in range(rounds)
+        ]
+        st = _state(_ONE_STEP, fix_loop_history=history)
+        fb = _fb(execution_module.ErrorCategory.NO_VERIFIABLE_OUTPUT)
+        assert execution_module._no_progress_stalled(st, fb) is True
+
+    def test_not_stalled_when_history_shorter_than_n(self):
+        rounds = execution_module.NO_METRICS_EARLY_STOP_ROUNDS
+        history = [
+            {"error_category": "no_verifiable_output"} for _ in range(rounds - 1)
+        ]
+        st = _state(_ONE_STEP, fix_loop_history=history)
+        fb = _fb(execution_module.ErrorCategory.NO_VERIFIABLE_OUTPUT)
+        assert execution_module._no_progress_stalled(st, fb) is False
+
+    def test_not_stalled_when_tail_mixed_with_other_category(self):
+        """尾部只要混进一条别的类别就不算"连续复现"。"""
+        rounds = execution_module.NO_METRICS_EARLY_STOP_ROUNDS
+        history = [{"error_category": "no_verifiable_output"} for _ in range(rounds)]
+        history[-1] = {"error_category": "import"}
+        st = _state(_ONE_STEP, fix_loop_history=history)
+        fb = _fb(execution_module.ErrorCategory.NO_VERIFIABLE_OUTPUT)
+        assert execution_module._no_progress_stalled(st, fb) is False
+
+    def test_not_stalled_when_this_round_category_differs(self):
+        """本轮类别不是 NO_VERIFIABLE_OUTPUT ⇒ 直接 False（前置守卫）。"""
+        rounds = execution_module.NO_METRICS_EARLY_STOP_ROUNDS
+        history = [{"error_category": "no_verifiable_output"} for _ in range(rounds)]
+        st = _state(_ONE_STEP, fix_loop_history=history)
+        fb = _fb(execution_module.ErrorCategory.IMPORT)
+        assert execution_module._no_progress_stalled(st, fb) is False
+
+    def test_not_stalled_on_empty_history(self):
+        st = _state(_ONE_STEP, fix_loop_history=[])
+        fb = _fb(execution_module.ErrorCategory.NO_VERIFIABLE_OUTPUT)
+        assert execution_module._no_progress_stalled(st, fb) is False
+
+    def test_old_category_no_longer_stalls(self):
+        """🔴 换类别的要害：历史全是旧 `no_metrics` ⇒ **不得**触发早停。
+
+        这一格是"改名 + 换类别"必须同批完成的证据 —— 只改名不换类别，
+        早停会**永远判 False**（旧类别已无生产者），这条用例就是那时的红灯。
+        """
+        rounds = execution_module.NO_METRICS_EARLY_STOP_ROUNDS
+        history = [{"error_category": "no_metrics"} for _ in range(rounds)]
+        st = _state(_ONE_STEP, fix_loop_history=history)
+        fb = _fb(execution_module.ErrorCategory.NO_VERIFIABLE_OUTPUT)
+        assert execution_module._no_progress_stalled(st, fb) is False
+
+
+class TestNoVerifiableOutputFlip:
+    """`_apply_no_verifiable_output` 真值表（`_apply_no_metrics` 的换发落点）。"""
+
+    def test_flips_when_exit_ok_and_code_only_level(self):
+        fb = _fb(execution_module.ErrorCategory.NONE)
+        out = execution_module._apply_no_verifiable_output(
+            fb, execution_module._LEVEL_CODE_ONLY, True)
+        assert out.category == execution_module.ErrorCategory.NO_VERIFIABLE_OUTPUT
+        assert out.auto_fixable is True
+        assert out.summary  # 用户可见文案非空
+
+    def test_no_flip_when_exit_failed(self):
+        fb = _fb(execution_module.ErrorCategory.NONE)
+        out = execution_module._apply_no_verifiable_output(
+            fb, execution_module._LEVEL_CODE_ONLY, False)
+        assert out is fb
+
+    def test_no_flip_when_level_is_higher(self):
+        fb = _fb(execution_module.ErrorCategory.NONE)
+        out = execution_module._apply_no_verifiable_output(
+            fb, execution_module._LEVEL_PARTIAL, True)
+        assert out is fb
+
+    def test_no_flip_when_upstream_already_reclassified(self):
+        """守卫让位：上游（完整度改判）已把类别改掉 ⇒ 本函数不得再改判。"""
+        fb = _fb(execution_module.ErrorCategory.IMPORT)
+        out = execution_module._apply_no_verifiable_output(
+            fb, execution_module._LEVEL_CODE_ONLY, True)
+        assert out is fb
+
+    def test_no_flip_when_level_missing_or_unknown(self):
+        fb = _fb(execution_module.ErrorCategory.NONE)
+        for level in (None, "", "code_only", "仅代码跑通 ", 123):
+            assert execution_module._apply_no_verifiable_output(fb, level, True) is fb, level

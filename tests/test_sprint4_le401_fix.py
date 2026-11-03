@@ -90,6 +90,15 @@ def test_effective_runs_distinct_commands_all_kept():
 # ---------------------------------------------------------------------------
 
 
+# ⟦T-S8-2-12 换发（2026-10-21）⟧ 本文件三处 `_build_execution_result(...)` 直调
+# 原来把 `{"acc": 0.9}` 作为**第 4 个位置实参**传给旧形参 `metrics`；
+# `metrics` / `metrics_groups` 已随 `T-S8-2-8` 整体删除（改用关键字传参）⇒
+# 位置整体错位，实测 `got multiple values for argument 'work_dir'`。
+# **不是弱化断言**：两条"仍然判失败"的方向一字未动，且现在**结构性成立** ——
+# 不给 `conclusion` ⇒ 档位取不到 ⇒ `success` 恒假；成功那条显式直喂成功档位，
+# 因为它测的是「判定方向」（同命令重试成功 ⇒ 不判失败），不是档位推导。
+
+
 def test_same_command_retry_still_failing_uses_last_attempt_stderr():
     runs = [
         _rr(["python", "fetch.py"], exit_code=1, stderr="ValueError: boom-first"),
@@ -103,7 +112,7 @@ def test_same_command_retry_still_failing_uses_last_attempt_stderr():
     assert "boom-second" in feedback.representative_stderr
     assert "boom-first" not in feedback.representative_stderr
 
-    er = _build_execution_result(None, runs, feedback, {"acc": 0.9}, work_dir=".")
+    er = _build_execution_result(None, runs, feedback, work_dir=".")
     assert er["success"] is False, "effective 视图仍含失败 run → failure"
     # logs 全量：两次失败尝试的证据都在。
     assert "boom-first" in er["logs"] and "boom-second" in er["logs"]
@@ -129,7 +138,7 @@ def test_command_variant_retry_success_still_failure():
     feedback = _classify_execution(None, runs)
     assert feedback.category is not ErrorCategory.NONE
 
-    er = _build_execution_result(None, runs, feedback, {"acc": 0.9}, work_dir=".")
+    er = _build_execution_result(None, runs, feedback, work_dir=".")
     assert er["success"] is False, \
         "命令变体（argv 不同）重试成功不闭环——锚定 argv 精确匹配，防口径漂移"
 
@@ -147,7 +156,9 @@ def test_same_command_retry_success_classified_none():
     feedback = _classify_execution(None, runs)
     assert feedback.category is ErrorCategory.NONE, "同 argv 末次成功 → NONE"
 
-    er = _build_execution_result(None, runs, feedback, {"acc": 0.9}, work_dir=".")
+    er = _build_execution_result(
+        None, runs, feedback, work_dir=".", conclusion={"level": "部分复现"},
+    )
     assert er["success"] is True
     assert "ConnectionResetError" in er["logs"], "失败证据仍留全量 logs"
 

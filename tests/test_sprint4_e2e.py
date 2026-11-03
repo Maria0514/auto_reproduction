@@ -297,6 +297,19 @@ def _install_counting_write_tool(monkeypatch, disk_log: Path) -> None:
 # DispatchScriptLLM：节点感知脚本 LLM（planning / coding / execution 分发）
 # ---------------------------------------------------------------------------
 
+# ⟦T-S8-2-12 换发（2026-10-21）⟧ 批次 2 的四档判定字段（`T-S8-2-9` 的输出契约）。
+# 批次 2 起 `success` 由四档 `level` 派生（`_build_execution_result`），而档位要站得住
+# 就必须有**至少一条能过七重验钞的档位物证**（封顶③）。原来这份物证由 `<METRICS>`
+# 通道供数，该通道已在 `T-S8-2-1` 整体退场 ⇒ 现在由 `_prepare_code_dir` 落盘的真文件
+# `summary.json` 承担，这里只报它的相对路径与文件里真实存在的那个数。
+# **这不是放宽断言**：档位/物证是**新的必填输入**，不给就拿不到与改前相同的 success。
+_BATCH2_EXEC_REPORT: Dict[str, Any] = {
+    "conclusion_level": "部分复现",
+    "goal_checks": [],
+    "evidence": [{"path": "summary.json", "value": "0.91"}],
+    "result_blocks": [],
+}
+
 
 class DispatchScriptLLM(BaseChatModel):
     """按 SystemMessage 身份短语分发到对应节点脚本（B2/E4 范式合体）。
@@ -430,6 +443,7 @@ class DispatchScriptLLM(BaseChatModel):
             return self._final({
                 "steps_attempted": 3, "all_exit_zero": False,
                 "summary": "凭证到手重试成功，train 仍失败", "notes": None,
+                **_BATCH2_EXEC_REPORT,
             })
 
         # sentinel 修复回合：**按计划全量重跑**（fetch → train）后收尾。
@@ -446,6 +460,7 @@ class DispatchScriptLLM(BaseChatModel):
             return self._final({
                 "steps_attempted": 2, "all_exit_zero": bool(repair),
                 "summary": "按计划重跑 fetch 与 train 完成", "notes": None,
+                **_BATCH2_EXEC_REPORT,
             })
 
         # chain / spy 修复回合：计划只有 train 一步 → 单命令 train → 收尾。
@@ -454,6 +469,7 @@ class DispatchScriptLLM(BaseChatModel):
         return self._final({
             "steps_attempted": 1, "all_exit_zero": bool(repair),
             "summary": "执行 train 完成", "notes": None,
+            **_BATCH2_EXEC_REPORT,
         })
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
@@ -476,7 +492,10 @@ def _wire_llms(monkeypatch, llm: DispatchScriptLLM, runner: CountingRunner) -> N
     monkeypatch.setattr(execution_module, "create_llm", lambda cfg: llm)
     monkeypatch.setattr(execution_module, "run_in_venv", runner)
     monkeypatch.setattr(execution_module, "collect_artifacts", lambda *a, **k: [])
-    monkeypatch.setattr(execution_module, "_llm_extract_metrics", lambda *a, **k: ({}, 0))
+    # ⟦T-S8-2-12 删除留痕⟧ 原 `setattr(execution_module, "_llm_extract_metrics", ...)`
+    # 已删除：**被测物消失 ≠ 弱化断言** —— 该函数随 `<METRICS>` 通道在 `T-S8-2-1`
+    # 整体删除，桩打在已不存在的属性上必 AttributeError；它原本隔离的"档 3 LLM 抽取"
+    # 扣减已不存在（执行主体在 ReAct 子图之外零 LLM 调用）。
 
 
 # ---------------------------------------------------------------------------
@@ -528,10 +547,18 @@ def _initial_graph_state(ws: Path) -> Dict[str, Any]:
 
 def _prepare_code_dir(ws: Path) -> Path:
     """预置 code_output_dir + .venv 痕迹（run_in_sandbox python_exe 确定性推导路径，
-    E4 范式；剧本无需 prepare_environment，resume 重建收集器后仍可解析解释器）。"""
+    E4 范式；剧本无需 prepare_environment，resume 重建收集器后仍可解析解释器）。
+
+    ⟦T-S8-2-12 换发（2026-10-21）⟧ 额外预置一份**可当物证的产物** `summary.json`：
+    批次 2 起 `success` 由四档 `level` 派生，而档位要站得住就必须有至少一条能过
+    七重验钞的档位物证（封顶③）。原来这份物证由 `<METRICS>` 通道供数，该通道已在
+    `T-S8-2-1` 整体退场 ⇒ 现在由磁盘上的真文件承担。**断言期望值一字未动。**
+    """
     code_dir = ws / PAPER_ARXIV_ID / "code"
     (code_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
     (code_dir / ".venv" / "pyvenv.cfg").write_text("home = /usr\n")
+    (code_dir / "summary.json").write_text(
+        '{"accuracy": 0.91, "f1": 0.9}', encoding="utf-8")
     return code_dir
 
 
@@ -833,7 +860,14 @@ def test_cp_g2_2_sentinel_zero_plaintext_in_code_report_caplog(
         "interrupt payload 不得含哨兵（值只在 resume 中出现）"
     assert obs["final_next"] == (), "哨兵链应成功闭环到 END"
     er = obs["final_values"]["execution_result"]
-    assert er["success"] is True and er["metrics"] == {"accuracy": 0.91}
+    # ⟦T-S8-2-12 换发⟧ 原 `er["success"] is True and er["metrics"] == {"accuracy": 0.91}`
+    # 已换发：`metrics` 键随 `<METRICS>` 通道退场（`T-S8-2-1` / `T-S8-2-8`），
+    # **被测物消失 ≠ 弱化断言**。`success` 那一半照旧断言；"指标值是多少"改由新的
+    # 落点 `conclusion`（档位 + 已过验的台账）承担 —— 台账里那条 0.91 就是被验过的数：
+    assert er["success"] is True, "档位「部分复现」+ 可过验物证 → 成功"
+    assert er["conclusion"]["level"] == "部分复现"
+    assert [e["value"] for e in er["conclusion"]["evidence_ledger"]] == ["0.91"], (
+        "台账里应是那个被验过的 0.91")
 
     # 落点 ①：工作目录生成代码零明文 + 复读器阳性对照（观察到脱敏后的错误上下文）。
     files = _read_dir_files(obs["code_dir"])
@@ -1091,7 +1125,10 @@ def _run_credential_env_spy_scenario(monkeypatch, tmp_path: Path) -> Dict[str, A
     llm = DispatchScriptLLM(scenario="chain")  # exec 剧本：run train → 收尾
     monkeypatch.setattr(execution_module, "create_llm", lambda cfg: llm)
     monkeypatch.setattr(execution_module, "collect_artifacts", lambda *a, **k: [])
-    monkeypatch.setattr(execution_module, "_llm_extract_metrics", lambda *a, **k: ({}, 0))
+    # ⟦T-S8-2-12 删除留痕⟧ 原 `setattr(execution_module, "_llm_extract_metrics", ...)`
+    # 已删除：**被测物消失 ≠ 弱化断言** —— 该函数随 `<METRICS>` 通道在 `T-S8-2-1`
+    # 整体删除，桩打在已不存在的属性上必 AttributeError；它原本隔离的"档 3 LLM 抽取"
+    # 扣减已不存在（执行主体在 ReAct 子图之外零 LLM 调用）。
     # 注意：execution_module.run_in_venv / lv._run_subprocess 均保持真实（全链路透传）。
 
     code_dir = _prepare_code_dir(ws)

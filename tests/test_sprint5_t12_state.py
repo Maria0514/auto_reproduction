@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import inspect
 import subprocess
 import typing
 from pathlib import Path
@@ -91,12 +92,18 @@ def test_cp_1_2_1_reproduction_plan_new_fields_and_breaking_shape() -> None:
 
 
 def test_cp_1_2_1_execution_result_has_four_new_keys_with_correct_types() -> None:
-    """CP-1.2-1: ExecutionResult 含 4 新键且类型正确（仅键声明；构造点补齐属 T-S5-2-6）。"""
+    """CP-1.2-1: ExecutionResult 的新键与其类型（仅键声明；构造点补齐属 T-S5-2-6）。
+
+    ⟦T-S8-2-12 换发（2026-10-21）⟧ 原第 3 个新键是 `metrics_groups`，它在批次 2 被
+    **整体删除**（`T-S8-2-8`，`AR-S8-15`：`metrics` / `metrics_groups` 两键一并退场），
+    同批新增 `conclusion` ⇒ 本用例改为查 `conclusion`，并**加一条负向断言**守住两键
+    确实不在（**换发不是放宽**：键数仍是"4 新键"，且多了一条反向证据）。
+    """
     ann = ExecutionResult.__annotations__
 
     assert "step_reconciliation" in ann
     assert "budget_truncated" in ann
-    assert "metrics_groups" in ann
+    assert "conclusion" in ann
     assert "degraded_credentials" in ann
 
     assert ann["step_reconciliation"] == typing.Dict[str, typing.Any], (
@@ -105,12 +112,15 @@ def test_cp_1_2_1_execution_result_has_four_new_keys_with_correct_types() -> Non
     assert ann["budget_truncated"] is bool, (
         f"budget_truncated 应为 bool，实测：{ann['budget_truncated']}"
     )
-    assert ann["metrics_groups"] == typing.Dict[str, typing.Dict[str, typing.Any]], (
-        f"metrics_groups 应为 Dict[str, Dict[str, Any]]，实测：{ann['metrics_groups']}"
+    assert ann["conclusion"] == typing.Dict[str, typing.Any], (
+        f"conclusion 应为 Dict[str, Any]，实测：{ann['conclusion']}"
     )
     assert ann["degraded_credentials"] == typing.List[str], (
         f"degraded_credentials 应为 List[str]，实测：{ann['degraded_credentials']}"
     )
+    # 🔴 负向：两个已删键不得回流（`T-S8-2-8` / `AR-S8-15`）。
+    assert "metrics" not in ann, "`metrics` 键已在 T-S8-2-8 删除，不得回流"
+    assert "metrics_groups" not in ann, "`metrics_groups` 键已在 T-S8-2-8 删除，不得回流"
 
 
 def test_cp_1_2_1_create_initial_state_defaults() -> None:
@@ -218,7 +228,7 @@ def test_cp_1_2_2_no_reducer_grep_evidence() -> None:
             "expected_results",
             "step_reconciliation",
             "budget_truncated",
-            "metrics_groups",
+            "conclusion",
             "degraded_credentials",
         )
         for line in matched_lines:
@@ -239,8 +249,18 @@ def test_cp_1_2_2_no_reducer_grep_evidence() -> None:
     assert "expected_results: List[Dict[str, Any]]" in src
     assert "step_reconciliation: Dict[str, Any]" in src
     assert "budget_truncated: bool" in src
-    assert "metrics_groups: Dict[str, Dict[str, Any]]" in src
+    assert "conclusion: Dict[str, Any]" in src
     assert "degraded_credentials: List[str]" in src
+    # ⟦T-S8-2-12 换发⟧ 原第 11 行查的是 `metrics_groups: Dict[str, Dict[str, Any]]`，
+    # 该键已随 `T-S8-2-8` 删除 ⇒ 改为**负向**断言：声明行不得回流（同口径：
+    # `tokenize` 层零 `NAME` 引用由 `CP-2.8-20` 守，本处只兜"声明行还在不在"）。
+    # ⚠ 负向断言必须**限定在 ExecutionResult 类体内**：``metrics: List[str]`` 是
+    # `ReproductionPlan` 的合法字段（论文分析的指标名清单），全文件扫会误伤。
+    exec_src = inspect.getsource(ExecutionResult)
+    assert "metrics_groups:" not in exec_src, (
+        "`metrics_groups` 声明不得回流（T-S8-2-8 已删）")
+    assert "    metrics:" not in exec_src, (
+        "`metrics` 声明不得回流（T-S8-2-8 已删；注意 `ReproductionPlan.metrics` 是另一个字段）")
 
 
 def test_cp_1_2_2_aux_annotations_have_no_annotated_origin() -> None:
@@ -266,5 +286,5 @@ def test_cp_1_2_2_aux_annotations_have_no_annotated_origin() -> None:
     # sp5 ExecutionResult 新键
     assert typing.get_origin(exec_ann["step_reconciliation"]) is dict
     assert exec_ann["budget_truncated"] is bool  # 裸 bool 无 origin
-    assert typing.get_origin(exec_ann["metrics_groups"]) is dict
+    assert typing.get_origin(exec_ann["conclusion"]) is dict  # ⟦T-S8-2-12 换发：原 metrics_groups⟧
     assert typing.get_origin(exec_ann["degraded_credentials"]) is list

@@ -99,10 +99,14 @@ def _agent_out(
     rounds: int,
     ledger: Optional[List[Tuple[int, List[str], int]]] = None,
     budget_truncated: bool = False,
+    report: Optional[Dict[str, Any]] = None,
 ) -> ExecAgentOutput:
+    # ⟦T-S8-2-12 换发（2026-10-21）⟧ `report` 形参：批次 2 起 `success` 由四档 `level`
+    # 派生，档位要站得住就必须有一条能过七重验钞的物证（封顶③）。
     return ExecAgentOutput(
         prep=prep, run_results=runs, rounds_used=rounds, llm_calls=rounds,
         step_ledger=list(ledger or []), budget_truncated=budget_truncated,
+        report=dict(report or {}),
     )
 
 
@@ -335,11 +339,22 @@ def test_cp_2_5_3_rounds_deduction_beyond_old_constant(monkeypatch):
     """扣减语义零回归：rounds=12（> 旧常量 10，联动后合法轮数）→ 递减恰 = 12；
     _dev_loop_llm_calls 累加同额（落点 B 单点扣减）。"""
     cmd = ["/w/.venv/bin/python", "step0.py"]
+    # ⟦T-S8-2-12 换发（2026-10-21）⟧ 补一份"档位 + 论文值侧过验物证"的汇报：
+    # 批次 2 起 `success` 由四档 `level` 派生，没有物证就没有 success（封顶③）。
     _patch_agent(monkeypatch, _agent_out(
-        _prep(), [_run(cmd, stdout='<METRICS>{"acc": 0.9}</METRICS>')],
+        _prep(), [_run(cmd, stdout="acc: 0.9")],
         rounds=12, ledger=[(0, cmd, 0)],
+        report={
+            "conclusion_level": "部分复现",
+            "goal_checks": [],
+            "evidence": [{"metric": "acc", "value": "0.9"}],
+            "result_blocks": [],
+        },
     ))
-    state = _base_state(retry_budget_remaining=40, _dev_loop_llm_calls=2)
+    state = _base_state(
+        retry_budget_remaining=40, _dev_loop_llm_calls=2,
+        paper_analysis={"baseline_results": {"acc": 0.9}},
+    )
     out = execution(state)
     assert out["retry_budget_remaining"] == 40 - 12
     assert out["_dev_loop_llm_calls"] == 2 + 12
