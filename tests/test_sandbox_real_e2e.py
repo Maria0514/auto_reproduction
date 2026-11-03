@@ -232,11 +232,10 @@ def test_real_4_end_to_end_mini_reproduction_chain(sandbox_workspace):
     assert run.exit_code == 0, f"复现脚本执行失败: {run.stderr}"
     assert run.timed_out is False
 
-    # 3) 从真实 stdout 抽出真指标（复用 execution 节点的解析路径同口径）。
-    from core.nodes.execution import _extract_metrics_block
-
-    metrics = _extract_metrics_block(run.stdout)
-    assert metrics == {"accuracy": 0.8}, f"应从真实执行抽出真指标: {metrics}"
+    # ⟦T-S8-2-12 删除留痕⟧ 原第 3 步「用 `_extract_metrics_block` 从真实 stdout 抽指标」已删除：
+    # 该函数随 `<METRICS>` 通道在 T-S8-2-1 整体退场 ⇒ 被测物消失，**不是弱化断言**。
+    # ⚠ 这一条曾是**哑弹**：它是函数级 import，收口门跑 `-m "not e2e"` 时根本不执行，删函数后
+    # 会带着 `ImportError` 全绿通过，直到某次真跑才炸（CP-2.12-2b 点名的那一颗）。
 
     # 4) 真收产物 + 校验产物内容（指标确实落盘）。
     artifacts = collect_artifacts(str(work))
@@ -246,8 +245,6 @@ def test_real_4_end_to_end_mini_reproduction_chain(sandbox_workspace):
     assert loaded["accuracy"] == 0.8
     assert loaded["n"] == 10
 
-    # 全链路自洽：stdout 抽的指标 == 产物落盘的指标。
-    assert metrics["accuracy"] == loaded["accuracy"]
 
 
 # ===========================================================================
