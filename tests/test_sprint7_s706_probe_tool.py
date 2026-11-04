@@ -220,19 +220,48 @@ def test_ac_s7_16_side_effect_probe_file_intact(probe_dir: Path):
         assert parsed["exit_code"] == -1 and "error" in parsed, command
 
 
-def test_ac_s7_16_must_pass_readonly_commands(probe_dir: Path):
-    """必过集：清单中不依赖本机可选组件的三条真跑成功且有输出。
+def _run_probe(tool, command: str):
+    return json.loads(_invoke(tool, command))
 
-    只有必拒集会让"把工具做成永远拒绝"也变绿——必过集是它的对照组。
+
+def _first_runnable_probe(tool) -> str:
+    """挑一条**本机真能跑通**的允许清单命令（真跑一次 exit 0 + 有输出才算）。
+
+    ⟦T-S8-2-12 / A 类复测（2026-10-21）⟧ 为什么不能写死命令名：允许清单是按"典型
+    开发机"给的，含 POSIX-only 项（`df` / `uname` / `free` / `lscpu`，Windows 上根本
+    没有），而 `python3` 在 Windows 上常是应用商店的占位符——`shutil.which` 找得到、
+    一跑就 `9009`。⇒ **按"真跑通"挑，而不是按命令名/`which` 挑**。
+    """
+    for cmd in ept._PROBE_COMMANDS:
+        parsed = _run_probe(tool, cmd)
+        body = (parsed["stdout_tail"] or "") + (parsed["stderr_tail"] or "")
+        if parsed["exit_code"] == 0 and body.strip():
+            return cmd
+    pytest.skip("本机没有任何一条允许清单命令能跑通（这条防线在本机不可观测）")
+
+
+def test_ac_s7_16_must_pass_readonly_commands(probe_dir: Path):
+    """必过集：**至少一条**清单命令真跑成功且有输出（"不是永远拒绝"的对照组）。
+
+    ⚠ 断言口径按平台事实收窄（2026-10-21）：原来写死 `python3 --version` /
+    `df -h .` / `uname -srm` 三条必过，而这三条在 Windows 上都不存在 ⇒ 该用例在
+    Windows 上**永远红**，且它红的原因跟"工具是不是永远拒绝"无关。
+    收窄后仍守住原极性，且**多了一条**：不论本机能不能跑，**允许清单里的命令一律
+    被受理（不是被拒）**——那半边以前没人守。
     """
     tool = make_probe_environment_tool(base_dir=str(probe_dir))
-    for command in ("python3 --version", "df -h .", "uname -srm"):
-        parsed = json.loads(_invoke(tool, command))
-        assert parsed["exit_code"] == 0, f"{command} 应可正常执行: {parsed}"
-        assert parsed["timed_out"] is False, command
-        body = (parsed["stdout_tail"] or "") + (parsed["stderr_tail"] or "")
-        assert body.strip(), f"{command} 应有输出: {parsed}"
-        assert parsed["command"] == command
+    runnable = _first_runnable_probe(tool)
+
+    parsed = _run_probe(tool, runnable)
+    assert parsed["exit_code"] == 0, f"{runnable} 应可正常执行: {parsed}"
+    assert parsed["timed_out"] is False, runnable
+    assert parsed["command"] == runnable
+
+    # 受理面：允许清单内的命令**不得**落到"拒绝"分支（exit_code == -1 且带 error）。
+    for command in ("python3 --version", "df -h .", "uname -srm", runnable):
+        got = _run_probe(tool, command)
+        assert got.get("error") is None, f"{command} 在允许清单内，不该被拒: {got}"
+        assert got["command"] == command
 
 
 def test_ac_s7_16_reject_does_not_raise_on_malformed_command(probe_dir: Path, monkeypatch):
@@ -576,7 +605,11 @@ def test_cp_4_2_8_serialization_form(probe_dir: Path):
     """返回走 json.dumps(ensure_ascii=False, sort_keys=True)；command 为规范化回显。"""
     tool = make_probe_environment_tool(base_dir=str(probe_dir))
 
-    out = _invoke(tool, "uname -srm")
+    # ⟦T-S8-2-12 / A 类复测（2026-10-21）⟧ 原来写死 `uname -srm`（POSIX-only），
+    # Windows 上必红。改成"本机真能跑通的一条允许清单命令"，用例守的是**序列化形态**
+    # 与 sort_keys，不是某条具体命令。
+    runnable = _first_runnable_probe(tool)
+    out = _invoke(tool, runnable)
     # BUG-S1-02 规避自查：str(dict) 的 Python repr 以 "{'" 开头且 json.loads 必失败
     assert out.startswith('{"'), f"返回必须是合法 JSON 而非 str(dict) repr: {out[:40]!r}"
     assert json.loads(out)["exit_code"] == 0
@@ -585,9 +618,12 @@ def test_cp_4_2_8_serialization_form(probe_dir: Path):
     assert positions == sorted(positions), "返回 JSON 必须 sort_keys=True"
 
     # 多空白书写变体 → 同一 argv → 同一 command 回显（digest 对书写变体免疫）
-    a = json.loads(_invoke(tool, "df -h ."))
-    b = json.loads(_invoke(tool, "df  -h   ."))
-    assert a["command"] == b["command"] == "df -h ."
+    parts = runnable.split(" ")
+    spaced = "  ".join(parts)
+    a = json.loads(_invoke(tool, runnable))
+    b = json.loads(_invoke(tool, spaced))
+    assert a["command"] == b["command"] == runnable, (
+        f"多空白变体应归一到同一 command 回显：{runnable!r} vs {spaced!r}")
 
 
 def test_cp_4_2_8_reject_json_is_ensure_ascii_false():

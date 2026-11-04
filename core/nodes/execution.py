@@ -88,6 +88,7 @@ from core.plan_checks import (
 from core.nodes.coding import _FIX_NOTE_MAX_CHARS
 from core.react_base import _repair_truncated_json_prefix, create_react_subgraph
 from core.secrets_store import build_credential_env, load_all_secrets, mask_value
+from core import shell_tokens
 from core.state import (
     ExecutionResult,
     FixLoopRecord,
@@ -540,29 +541,13 @@ def _split_top_level(cmd_str: str) -> List[Tuple[List[str], str]]:
     shlex.split 已剥离引号，故引号内的 `&&` / `;` 不会被当作连接符（它们成为单个 token）。
 
     解析失败（未闭合引号等）退化为整条 whitespace split 单子命令，交由下游自然报错。
+
+    ⟦A 类修复（2026-10-21）⟧ 实现已抽到零依赖单点 :mod:`core.shell_tokens`（**反斜杠不
+    转义**）。本函数保留为薄包装：原来的 ``shlex.split`` 是 POSIX 语义，会把 Windows
+    路径 ``D:\\x\\train.py`` 吃成 ``D:xtrain.py`` ⇒ plan 步骤里写绝对路径必然
+    "文件不存在"，而报错与病因看不出关系。**返回契约一字未改**（connector 语义同前）。
     """
-    import shlex
-
-    try:
-        tokens = shlex.split(cmd_str)
-    except ValueError:
-        toks = cmd_str.split()
-        return [(toks, "")] if toks else []
-
-    subcommands: List[Tuple[List[str], str]] = []
-    current: List[str] = []
-    connector = ""  # 当前累积子命令前的连接符
-    for tok in tokens:
-        if tok == "&&" or tok == ";":
-            if current:
-                subcommands.append((current, connector))
-                current = []
-            connector = tok
-            continue
-        current.append(tok)
-    if current:
-        subcommands.append((current, connector))
-    return subcommands
+    return shell_tokens.split_top_level(cmd_str)
 
 
 def _step_to_command(step: Any, python_exe: str) -> Optional[List[Tuple[List[str], str]]]:

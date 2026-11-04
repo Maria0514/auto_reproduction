@@ -87,6 +87,24 @@ def test_build_sandbox_env_drops_credentials(monkeypatch):
     assert _SENTINEL_VALUE not in json.dumps(env)
 
 
+def _env_get(env, key):
+    """按**平台无关**方式取白名单变量。
+
+    ⟦T-S8-2-12 / A 类复测（2026-10-21）⟧ Windows 的 `os.environ` **大小写不敏感**，
+    Python 会把键统一成大写 ⇒ 本文件里 `monkeypatch.setenv("https_proxy", ...)` 实际
+    存成 `HTTPS_PROXY`，产品照原样透传出来也是 `HTTPS_PROXY`。
+    而用例按 POSIX 语义写的是小写键 ⇒ `env.get("https_proxy")` 恒 None、**假红**
+    （在 `ac60379` 之前就这么红，属测试自身的平台假设，不是产品缺陷）。
+    """
+    if key in env:
+        return env[key]
+    if os.name == "nt":
+        for k, v in env.items():
+            if k.lower() == key.lower():
+                return v
+    return None
+
+
 def test_build_sandbox_env_keeps_allowlist(monkeypatch):
     """白名单变量保留：PATH/HOME/LANG/LC_*/TMPDIR/PYTHONUNBUFFERED/代理/PIP_*。"""
     monkeypatch.setenv("LANG", "en_US.UTF-8")
@@ -108,8 +126,8 @@ def test_build_sandbox_env_keeps_allowlist(monkeypatch):
     assert env.get("TMPDIR") == "/tmp"
     assert env.get("PYTHONUNBUFFERED") == "1"
     # 网络代理类保留（非凭证，pip 装依赖需要）。
-    assert env.get("https_proxy") == "http://proxy.example:3128"
-    assert env.get("no_proxy") == "localhost"
+    assert _env_get(env, "https_proxy") == "http://proxy.example:3128"
+    assert _env_get(env, "no_proxy") == "localhost"
     # pip 源类保留（PIP_ 前缀）。
     assert env.get("PIP_INDEX_URL") == "https://pypi.example/simple"
     # Sprint 6 MF-1：PIP_CACHE_DIR 无条件覆盖为 SANDBOX_PIP_CACHE_DIR（/data 卷），
@@ -181,8 +199,8 @@ def test_build_sandbox_env_credential_filter_applies_allowlist_wide(monkeypatch)
     monkeypatch.setenv("PIP_INDEX_URL", "https://pypi.example/simple")  # 非凭证，保留
     monkeypatch.setenv("PIP_CACHE_DIR", "/tmp/pipcache")  # 非 URL，保留
     env = _build_sandbox_env()
-    assert "https_proxy" not in env, "认证代理（userinfo 形态）必须剔除"
-    assert env.get("http_proxy") == "http://proxy.example:3128"
+    assert _env_get(env, "https_proxy") is None, "认证代理（userinfo 形态）必须剔除"
+    assert _env_get(env, "http_proxy") == "http://proxy.example:3128"
     assert env.get("PIP_INDEX_URL") == "https://pypi.example/simple"
     # Sprint 6 MF-1：PIP_CACHE_DIR 无条件覆盖为 SANDBOX_PIP_CACHE_DIR（/data 卷）
     from config import SANDBOX_PIP_CACHE_DIR

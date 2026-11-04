@@ -122,6 +122,9 @@ _SANDBOX_ENV_ALLOWLIST = frozenset({
 
 # 前缀白名单：LC_*（locale 全家）+ PIP_*（pip 源/缓存配置，prepare_venv 装依赖需要）。
 # 注意不含 PYTHON*（PYTHONPATH 继承会把父进程模块路径漏进沙箱，破坏隔离）。
+# ⚠ **唯一的两个例外在 `_build_sandbox_env` 里强制赋值、不从宿主继承**：
+# `PYTHONIOENCODING=utf-8` / `PYTHONUTF8=1`。理由：父侧按 UTF-8 解码子进程输出，
+# 必须让子侧按 UTF-8 编码，否则中文输出变 U+FFFD（A2，2026-10-21）。
 _SANDBOX_ENV_ALLOWLIST_PREFIXES = ("LC_", "PIP_")
 
 # PIP_CACHE_DIR 注入点说明（Sprint 6 MF-1）：
@@ -166,6 +169,14 @@ def _build_sandbox_env(extra_env: Optional[Dict[str, str]] = None) -> Dict[str, 
     # 中指向 home 的旧值，防止沙箱 pip install 打爆 home 配额）。
     # 使用赋值而非 setdefault，保证在 extra_env 合并之后强制生效。
     env["PIP_CACHE_DIR"] = str(SANDBOX_PIP_CACHE_DIR)
+    # 〔A2，2026-10-21〕**编码约定必须成对**：本模块把子进程输出按 UTF-8 解码
+    # （`_run_subprocess` 里 `raw.decode("utf-8", errors="replace")`），所以子进程
+    # 也必须按 UTF-8 编码。否则 Windows（控制台代码页 cp936）下中文输出被当 UTF-8
+    # 解码 ⇒ 一串 U+FFFD，**而且不报错**：乱码会原样进 logs / errors / 报告。
+    # 🔴 白名单**刻意不继承**任何 `PYTHON*`（`PYTHONPATH` 会破坏隔离），故这两个
+    # 在这里**强制赋值、不从宿主继承**——它们只影响编码，不涉及模块搜索路径。
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
     return env
 
 

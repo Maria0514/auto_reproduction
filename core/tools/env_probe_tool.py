@@ -50,9 +50,9 @@ from __future__ import annotations
 
 import json
 import logging
-import shlex
 from typing import FrozenSet, Tuple
 
+from core import shell_tokens
 from core.secrets_store import mask_value
 from sandbox.local_venv import _require_within_workspace, _run_subprocess
 
@@ -83,7 +83,9 @@ _PROBE_COMMANDS: Tuple[str, ...] = (
 
 #: 模块级预解析一次；判定即 ``tuple(argv) in _ALLOWED_ARGV``（唯一判定规则）。
 _ALLOWED_ARGV: FrozenSet[Tuple[str, ...]] = frozenset(
-    tuple(shlex.split(_cmd)) for _cmd in _PROBE_COMMANDS
+    # 与执行侧共用同一套分词（`core.shell_tokens`，反斜杠不转义）——清单与判定
+    # 不允许用两套语义，否则"清单里有、用户命令却被拆成别的 argv"这类漂移无从解释。
+    tuple(shell_tokens.split_argv(_cmd)) for _cmd in _PROBE_COMMANDS
 )
 
 #: 探测专用超时（秒）。**不沿用** ``config.RUN_COMMAND_TIMEOUT``（120，为
@@ -192,9 +194,9 @@ def make_probe_environment_tool(base_dir: str):
         送进模型的 schema 描述取 ``_PROBE_TOOL_DESCRIPTION``（``description=``
         优先于本 docstring），二者同源于 ``_PROBE_COMMANDS``。
         """
-        # 1) shlex 解析：失败 → 结构化拒绝（不抛异常炸子图）。
+        # 1) 分词（单点 core.shell_tokens）：失败 → 结构化拒绝（不抛异常炸子图）。
         try:
-            argv = shlex.split(command)
+            argv = shell_tokens.split_argv(command)
         except ValueError as exc:
             return _reject(f"命令解析失败: {exc}")
 

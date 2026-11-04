@@ -37,7 +37,7 @@ S7-10 补一条：W4/W5 同样**只产警示、不阻断审批**——人在回�
 """
 from __future__ import annotations
 
-import shlex
+from core import shell_tokens
 from pathlib import PurePosixPath
 from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
@@ -204,24 +204,13 @@ def _split_top_level_argv(command: str) -> List[List[str]]:
     它**——那会造成 ``execution → plan_checks → execution`` 循环依赖，且本模块的定位
     就是 ``core/`` 顶层零依赖纯函数。解析失败（未闭合引号等）退化为整条 whitespace
     split 单条 argv，交由调用方自然处理（宁可漏判也不抛异常）。
-    """
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        tokens = command.split()
 
-    subcommands: List[List[str]] = []
-    current: List[str] = []
-    for tok in tokens:
-        if tok in ("&&", ";"):
-            if current:
-                subcommands.append(current)
-                current = []
-            continue
-        current.append(tok)
-    if current:
-        subcommands.append(current)
-    return subcommands
+    ⟦A 类修复（2026-10-21）⟧ 实现已抽到零依赖单点 :mod:`core.shell_tokens`（**反斜杠
+    不转义**）⇒ 本函数是薄包装，**仍不 import ``core.nodes.execution``**（那条循环依赖
+    的禁令继续成立，见上）。行为契约一字未改：``&&`` / ``;`` 作为分隔符被消费掉，
+    不进任何 argv。
+    """
+    return [argv for argv, _connector in shell_tokens.split_top_level(command)]
 
 
 def is_inline_code_write(command: str) -> bool:

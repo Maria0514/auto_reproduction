@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import json
 import logging
-import shlex
 from typing import Dict, Optional
 
 import config
@@ -42,6 +41,7 @@ from core.plan_checks import (
     UNSUPPORTED_SHELL_SYNTAX_MESSAGE,
     has_unsupported_shell_syntax,
 )
+from core import shell_tokens
 from core.secrets_store import mask_value
 from sandbox.local_venv import _require_within_workspace, _run_subprocess
 
@@ -89,9 +89,11 @@ def make_run_command_tool(base_dir: str, extra_env: Optional[Dict[str, str]] = N
         Returns:
             JSON 字符串 {exit_code, stdout_tail, stderr_tail, timed_out, truncated}。
         """
-        # 1) shlex 解析：失败 → 结构化错误 JSON（不抛异常炸子图）。
+        # 1) 分词（单点 core.shell_tokens，**反斜杠不转义** ⇒ Windows 路径原样保留；
+        #    `shlex.split` 的 POSIX 语义会把 `D:\x\train.py` 吃成 `D:xtrain.py`）。
+        #    失败 → 结构化错误 JSON（不抛异常炸子图）。
         try:
-            argv = shlex.split(command)
+            argv = shell_tokens.split_argv(command)
         except ValueError as exc:
             return _error_json(f"命令解析失败: {exc}")
         if not argv:
