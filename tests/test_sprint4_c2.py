@@ -441,8 +441,9 @@ def test_cp_c2_4_credential_env_injected_into_run_command_factory(
         {k: v for k, v in env.items()}, default=str), \
         "token 不得进 env 值（只进 0700 脚本文件）"
     # base_dir 与 write 工具同基准（code_output_dir）
+    # ⟦C 类复核（2026-10-21）⟧ 原第二条支路断 POSIX 后缀；改成路径结构。
     assert captured["base_dir"] == state["code_output_dir"] or \
-        captured["base_dir"].endswith("/2409.05591/code")
+        Path(captured["base_dir"]).parts[-2:] == ("2409.05591", "code")
 
 
 def test_cp_c2_4_no_secrets_minimal_env(workspace: Path, monkeypatch):

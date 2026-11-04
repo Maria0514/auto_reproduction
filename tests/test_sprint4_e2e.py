@@ -88,6 +88,10 @@ from core import react_base, secrets_store  # noqa: E402
 from core.graph import build_graph  # noqa: E402
 from core.state import GlobalState  # noqa: E402
 from core.tools.interaction_tools import INTERRUPT_KIND_USER_INPUT  # noqa: E402
+from sandbox.local_venv import (  # noqa: E402
+    _venv_bin_dir,
+    _venv_python_exe,
+)
 from sandbox.local_venv import SandboxPrepareResult, SandboxRunResult  # noqa: E402
 
 execution_module = importlib.import_module("core.nodes.execution")
@@ -555,8 +559,13 @@ def _prepare_code_dir(ws: Path) -> Path:
     `T-S8-2-1` 整体退场 ⇒ 现在由磁盘上的真文件承担。**断言期望值一字未动。**
     """
     code_dir = ws / PAPER_ARXIV_ID / "code"
-    (code_dir / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+    # ⟦C 类复核（2026-10-21）⟧ `.venv` 的**可执行目录与解释器文件名要按平台造**：
+    # Windows 是 `Scripts/python.exe`、POSIX 是 `bin/python`（产品单点
+    # `sandbox.local_venv._venv_bin_dir` / `_venv_python_exe`）。原来只造 `bin/`
+    # ⇒ Windows 上"解释器缺失"分支被走到，spy 用例因此红在与它无关的地方。
+    _venv_bin_dir(code_dir / ".venv").mkdir(parents=True, exist_ok=True)
     (code_dir / ".venv" / "pyvenv.cfg").write_text("home = /usr\n")
+    _venv_python_exe(code_dir / ".venv").write_text("")  # 仅路径校验用（真跑走 spy/runner）
     (code_dir / "summary.json").write_text(
         '{"accuracy": 0.91, "f1": 0.9}', encoding="utf-8")
     return code_dir
@@ -1159,7 +1168,11 @@ def test_cp_g2_3_credential_env_reaches_subprocess_via_spy(monkeypatch, tmp_path
     cmd, env = calls[0]["cmd"], calls[0]["env"]
 
     # 命令改写到 venv 解释器（确定性推导链路旁证）。
-    assert cmd[0].endswith(".venv/bin/python") and cmd[1] == "train.py"
+    # ⟦C 类复核（2026-10-21）⟧ 原来断 `".venv/bin/python"` 后缀（POSIX 形态）；
+    # 改成断**路径结构**：可执行目录名 + 解释器文件名按平台二选一
+    # （Windows `Scripts/python.exe`、POSIX `bin/python`）。
+    assert Path(cmd[0]).parent.name in ("Scripts", "bin") and \
+        Path(cmd[0]).name in ("python", "python.exe") and cmd[1] == "train.py"
 
     # 凭证注入四断言（architecture §9.3 映射表）。
     assert env.get("GIT_TERMINAL_PROMPT") == "0", "R-S4-08：无条件注入未生效"
@@ -1280,7 +1293,7 @@ class TestSprint4RealChainE2E:
             venv = Path(work_dir) / ".venv"
             return SandboxPrepareResult(
                 success=True, venv_dir=str(venv),
-                python_exe=str(venv / "bin" / "python"),
+                python_exe=str(_venv_python_exe(venv)),
                 pip_exe=str(venv / "bin" / "pip"),
                 env_info={"python_version": "3.11 (mock)"},
             )
@@ -1375,12 +1388,12 @@ class TestSprint4RealChainE2E:
         work_dir = Path(config.WORKSPACE_DIR) / f"g2_real2_{uuid.uuid4().hex[:8]}"
         (work_dir / ".venv" / "bin").mkdir(parents=True)
         (work_dir / ".venv" / "pyvenv.cfg").write_text("home = /usr\n")
-        (work_dir / ".venv" / "bin" / "python").write_text("")  # 仅路径校验用
+        _venv_python_exe(work_dir / ".venv").write_text("")  # 仅路径校验用
         try:
             remember_secret("git_credential:github.com", token, True)
             env = build_credential_env()
             result = lv.run_in_venv(
-                str(work_dir / ".venv" / "bin" / "python"),
+                str(_venv_python_exe(work_dir / ".venv")),
                 ["git", "clone", "--depth", "1", url, "cloned_repo"],
                 str(work_dir),
                 extra_env=env,

@@ -94,9 +94,13 @@ def sandbox_workspace(tmp_path, monkeypatch):
 def _preseed_venv(work) -> None:
     """预置 venv 结构走 reuse_existing 复用路径（Popen 全 mock，不跑真实子进程）。"""
     venv_dir = work / ".venv"
-    (venv_dir / "bin").mkdir(parents=True)
+# ⟦C 类复核（2026-10-21）⟧ 按**产品的单点**造解释器：Windows 是 `.venv/Scripts/python.exe`、
+        # POSIX 是 `.venv/bin/python`。原来写死 `bin/python` ⇒ Windows 上 `prepare_venv`
+        # 的存在性检查必失败（`venv python 解释器缺失`）—— 那不是产品缺陷，是夹具的
+        # 平台假设。
+    local_venv._venv_bin_dir(venv_dir).mkdir(parents=True)
     (venv_dir / "pyvenv.cfg").write_text("home = /usr\n", encoding="utf-8")
-    (venv_dir / "bin" / "python").write_text("#!/bin/sh\n", encoding="utf-8")
+    local_venv._venv_python_exe(venv_dir).write_text("#!/bin/sh\n", encoding="utf-8")
 
 
 class _FakeProc:

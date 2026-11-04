@@ -337,4 +337,6 @@ def test_serialize_default_str_handles_path(workspace):
     out = code_fs_tools._serialize_tool_result({"p": Path("/x/y"), "n": 1})
     payload = json.loads(out)
     assert payload["n"] == 1
-    assert payload["p"] == "/x/y" or payload["p"].endswith("x/y")
+    # ⟦C 类复核（2026-10-21）⟧ 原 `or payload["p"].endswith("x/y")` 支路在 Windows
+    # 上不成立（实为反斜杠形态）⇒ 用例假红。改断路径结构。
+    assert Path(payload["p"]).parts[-2:] == ("x", "y")

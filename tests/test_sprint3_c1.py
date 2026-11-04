@@ -507,7 +507,9 @@ def test_reinforce_resolve_dir_fallback_workspace_and_thread(
     # arxiv_id 缺失 → thread="task"
     state = _make_state(tmp_path, paper_meta={})
     out = _resolve_code_output_dir(state)
-    assert out.endswith("/task/code"), f"thread 应回退 task，实为 {out}"
+    # ⟦C 类复核（2026-10-21）⟧ 原断 `"/task/code"` 后缀（POSIX 分隔符）；改成断
+    # 路径结构，两种分隔符下同一件事，且比后缀更严。
+    assert Path(out).parts[-2:] == ("task", "code"), f"thread 应回退 task，实为 {out}"
 
 
 # ---- 补强3：_has_written_any_file 判定矩阵 ----

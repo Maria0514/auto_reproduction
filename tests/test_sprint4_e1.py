@@ -31,9 +31,11 @@ execution_module = importlib.import_module("core.nodes.execution")
 from config import WORKSPACE_DIR  # noqa: E402
 from core import secrets_store  # noqa: E402
 from core.errors import SandboxCreationError  # noqa: E402
+from sandbox.local_venv import _venv_bin_dir, _venv_python_exe  # noqa: E402
 from sandbox.local_venv import SandboxPrepareResult, SandboxRunResult  # noqa: E402
 
-PY = str(WORKSPACE_DIR / ".venv" / "bin" / "python")
+# ⟦C 类复核（2026-10-21）⟧ 按平台取解释器路径（产品单点 `_venv_python_exe`）。
+PY = str(_venv_python_exe(WORKSPACE_DIR / ".venv"))
 
 
 # ---------------------------------------------------------------------------
@@ -305,7 +307,7 @@ def test_python_exe_fallback_to_existing_venv_after_resume(monkeypatch):
     已在 pre-interrupt 建好 → pyvenv.cfg 探测确定性推导。"""
     base = _ws_dir("resume-venv")
     venv = Path(base) / ".venv"
-    (venv / "bin").mkdir(parents=True, exist_ok=True)
+    _venv_bin_dir(venv).mkdir(parents=True, exist_ok=True)
     (venv / "pyvenv.cfg").write_text("home = /usr\n")
     runner = RecordingRunner(exit_codes=[0])
     monkeypatch.setattr(execution_module, "run_in_venv", runner)
@@ -314,7 +316,7 @@ def test_python_exe_fallback_to_existing_venv_after_resume(monkeypatch):
 
     parsed = _assert_sorted_json(t.invoke({"command": "python x.py"}))
     assert parsed["exit_code"] == 0
-    assert runner.calls[0][0][0] == str(venv / "bin" / "python")
+    assert runner.calls[0][0][0] == str(_venv_python_exe(venv))
 
 
 def test_python_exe_missing_returns_structured_error(monkeypatch, caplog):

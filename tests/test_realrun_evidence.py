@@ -235,7 +235,10 @@ def test_ev_23_non_json_objects_are_coerced_not_crashed():
         secrets=[],
     )
     json.dumps(bundle)  # 不抛即证明可序列化
-    assert bundle["state"]["execution_result"]["p"] == "/a/b"
+    # ⟦C 类复核（2026-10-21）⟧ 原来拿 `str(Path("/a/b"))` 与字面量 `"/a/b"` 比，
+    # 在 Windows 上必然是反斜杠形态 ⇒ 用例把平台差异当成了产品缺陷。
+    # 改断**同一个路径对象**（`Path` 比较跨平台成立）。
+    assert Path(bundle["state"]["execution_result"]["p"]) == Path("/a/b")
     assert "Weird" in bundle["state"]["execution_result"]["o"]
 
 

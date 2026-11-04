@@ -96,7 +96,9 @@ def test_cp_1_3_1_log_file_path_subkey_and_error_category(tmp_path):
     digest = payload["last_error_summary"]
     assert "log_file_path" in digest, "S7-02 应新增 log_file_path 子键"
     # 编号对齐：fix_count=1 → 读上一轮 round_0.log（off-by-one 锁死）。
-    assert digest["log_file_path"].endswith(f"{_EXEC_LOGS_SUBDIR}/round_0.log"), (
+    # ⟦C 类复核（2026-10-21）⟧ 原断 `f"{subdir}/round_0.log"` 后缀（POSIX 分隔符）；
+    # 改成断路径结构（同一件事，两种分隔符下都成立）。
+    assert Path(digest["log_file_path"]).parts[-2:] == (_EXEC_LOGS_SUBDIR, "round_0.log"), (
         f"fix_count=1 应指向 round_0.log（读上一轮 execution 落盘），实际 {digest['log_file_path']}"
     )
     # error_category 快速提示保留。

@@ -277,7 +277,9 @@ def test_cp_b1_5b_popen_oserror_returns_exit_minus_one(sandbox_workspace):
         local_venv.subprocess, "Popen", side_effect=OSError("No such file")
     ):
         # 用 workspace 下合法的 python_exe 占位（路径校验通过），但 Popen 被 mock 成抛错。
-        fake_python = str(work / ".venv" / "bin" / "python")
+        # ⟦C 类复核（2026-10-21）⟧ 用产品单点 `_venv_python_exe`：Windows 是
+        # `.venv/Scripts/python.exe`、POSIX 是 `.venv/bin/python`。
+        fake_python = str(local_venv._venv_python_exe(work / ".venv"))
         result = run_in_venv(fake_python, ["nonexistent_binary"], str(work), timeout=30)
     assert isinstance(result, SandboxRunResult)
     assert result.exit_code == -1
@@ -287,7 +289,9 @@ def test_cp_b1_5b_popen_oserror_returns_exit_minus_one(sandbox_workspace):
 def test_cp_b1_5c_real_missing_binary_returns_exit_minus_one(sandbox_workspace):
     """CP-B1-5: 真实执行不存在的二进制，FileNotFoundError(OSError 子类)兜底为 -1。"""
     ws, work = sandbox_workspace
-    fake_python = str(work / ".venv" / "bin" / "python")
+    # ⟦C 类复核（2026-10-21）⟧ 用产品单点 `_venv_python_exe`：Windows 是
+    # `.venv/Scripts/python.exe`、POSIX 是 `.venv/bin/python`。
+    fake_python = str(local_venv._venv_python_exe(work / ".venv"))
     result = run_in_venv(
         fake_python,
         [str(work / "definitely_not_a_real_binary_xyz")],
@@ -744,11 +748,11 @@ def test_reinforce_reuse_no_venv_create_subprocess(sandbox_workspace):
     """
     ws, work = sandbox_workspace
     venv_dir = work / ".venv"
-    bin_dir = venv_dir / "bin"
+    bin_dir = local_venv._venv_bin_dir(venv_dir)
     bin_dir.mkdir(parents=True)
     (venv_dir / "pyvenv.cfg").write_text("home = /usr\n")
     # 造一个假的 python 可执行占位，使 python_exe.exists() 为真（跳过缺失分支）。
-    (bin_dir / "python").write_text("#!/bin/sh\n")
+    local_venv._venv_python_exe(venv_dir).write_text("#!/bin/sh\n")
 
     venv_create_calls = []
     real_popen = local_venv.subprocess.Popen
@@ -779,7 +783,7 @@ def test_reinforce_sandbox_creation_error_is_permanent():
 def test_reinforce_run_in_venv_rejects_empty_command(sandbox_workspace):
     """补强: run_in_venv 对空 command / 非列表抛 SandboxCreationError（禁字符串命令）。"""
     ws, work = sandbox_workspace
-    venv_python_path = str(work / ".venv" / "bin" / "python")
+    venv_python_path = str(local_venv._venv_python_exe(work / ".venv"))
     for bad in ([], "echo hi", None):
         with pytest.raises(SandboxCreationError):
             run_in_venv(venv_python_path, bad, str(work))

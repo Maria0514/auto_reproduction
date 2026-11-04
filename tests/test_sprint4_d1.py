@@ -106,9 +106,13 @@ def _make_fake_run_subprocess(
         recorder.append((list(cmd), extra_env))
         if "-m" in cmd and "venv" in cmd:
             venv_dir = Path(cmd[-1])
-            (venv_dir / "bin").mkdir(parents=True, exist_ok=True)
+# ⟦C 类复核（2026-10-21）⟧ 按**产品的单点**造解释器：Windows 是 `.venv/Scripts/python.exe`、
+            # POSIX 是 `.venv/bin/python`。原来写死 `bin/python` ⇒ Windows 上 `prepare_venv`
+            # 的存在性检查必失败（`venv python 解释器缺失`）—— 那不是产品缺陷，是夹具的
+            # 平台假设。
+            local_venv._venv_bin_dir(venv_dir).mkdir(parents=True, exist_ok=True)
             (venv_dir / "pyvenv.cfg").write_text("home = /usr\n", encoding="utf-8")
-            (venv_dir / "bin" / "python").write_text("#!/bin/sh\n", encoding="utf-8")
+            local_venv._venv_python_exe(venv_dir).write_text("#!/bin/sh\n", encoding="utf-8")
             return _ok(cmd)
         if "install" in cmd:
             target = cmd[-1]
@@ -247,9 +251,9 @@ def test_cp_d1_2_build_sandbox_env_merge_not_bypassed(sandbox_workspace, monkeyp
 
     # 复用路径：预置 venv 结构，跳过真实 venv 创建（Popen 全程 mock，不跑子进程）。
     venv_dir = work / ".venv"
-    (venv_dir / "bin").mkdir(parents=True)
+    local_venv._venv_bin_dir(venv_dir).mkdir(parents=True)
     (venv_dir / "pyvenv.cfg").write_text("home = /usr\n", encoding="utf-8")
-    (venv_dir / "bin" / "python").write_text("#!/bin/sh\n", encoding="utf-8")
+    local_venv._venv_python_exe(venv_dir).write_text("#!/bin/sh\n", encoding="utf-8")
 
     extra_env = {**_EXTRA_ENV, "LANG": "zh_CN.UTF-8"}
     recorded: List = []
@@ -356,9 +360,9 @@ def test_boundary_pip_permanent_failure_single_attempt_extra_env_intact(sandbox_
         recorder.append((list(cmd), extra_env))
         if "-m" in cmd and "venv" in cmd:
             venv_dir = Path(cmd[-1])
-            (venv_dir / "bin").mkdir(parents=True, exist_ok=True)
+            local_venv._venv_bin_dir(venv_dir).mkdir(parents=True, exist_ok=True)
             (venv_dir / "pyvenv.cfg").write_text("home = /usr\n", encoding="utf-8")
-            (venv_dir / "bin" / "python").write_text("#!/bin/sh\n", encoding="utf-8")
+            local_venv._venv_python_exe(venv_dir).write_text("#!/bin/sh\n", encoding="utf-8")
             return _ok(cmd)
         if "install" in cmd:
             # 非瞬态失败：不含网络瞬态关键字 → _is_pip_transient=False → 不重试
