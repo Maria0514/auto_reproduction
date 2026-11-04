@@ -453,6 +453,7 @@ def _tool_rejects(harness: Dict[str, Any], command: str) -> bool:
     )
 
 
+@pytest.mark.platform_limit  # 平台门控：夹具先 symlink 一份 venv 解释器（WinError 1314）
 def test_ac_s7_47_harness_can_really_write_files(sandbox_workspace: Dict[str, Any]) -> None:
     """★ 阳性对照（防"文件没被创建"这条断言空转）：**短**写文件命令确实会落盘。
 
@@ -472,6 +473,7 @@ def test_ac_s7_47_harness_can_really_write_files(sandbox_workspace: Dict[str, An
     assert (work / "probe_marker.txt").exists(), "夹具跑不动子进程 —— CP-6.6-1 会空转"
 
 
+@pytest.mark.platform_limit  # 平台门控：夹具先 symlink 一份 venv 解释器（WinError 1314）
 def test_cp_6_6_1_original_placeholder_write_is_rejected_and_never_lands(
     sandbox_workspace: Dict[str, Any],
 ) -> None:
@@ -499,6 +501,7 @@ def test_cp_6_6_1_original_placeholder_write_is_rejected_and_never_lands(
     )
 
 
+@pytest.mark.platform_limit  # 平台门控：夹具先 symlink 一份 venv 解释器（WinError 1314）
 def test_cp_6_6_3_rejected_command_pollutes_no_ledger(
     sandbox_workspace: Dict[str, Any],
 ) -> None:
@@ -609,6 +612,7 @@ def test_cp_6_6_4_compound_command_is_rejected_whole(
     assert collector.run_results == [] and collector.step_ledger == []
 
 
+@pytest.mark.platform_limit  # 平台门控：夹具先 symlink 一份 venv 解释器（WinError 1314）
 def test_cp_6_6_6_rejection_logs_warning_with_masked_command(
     sandbox_workspace: Dict[str, Any], caplog: pytest.LogCaptureFixture,
 ) -> None:

@@ -134,6 +134,7 @@ def test_bug_s1_02_truncated_read_not_misparsed():
 # ===========================================================================
 
 
+@pytest.mark.platform_limit  # 平台门控：本机受限令牌建不了符号链接（WinError 1314）
 def test_symlink_escape_write_rejected(workspace, tmp_path):
     """workspace 内符号链接指向外部目录，写经该链接被 resolve() 拆穿拒绝。"""
     ws, code_dir = workspace
@@ -149,6 +150,7 @@ def test_symlink_escape_write_rejected(workspace, tmp_path):
     assert not (outside / "leak.py").exists()
 
 
+@pytest.mark.platform_limit  # 平台门控：本机受限令牌建不了符号链接（WinError 1314）
 def test_symlink_escape_read_rejected(workspace, tmp_path):
     """workspace 内符号链接指向外部文件，读经该链接被 resolve() 拆穿拒绝。"""
     ws, code_dir = workspace
@@ -164,6 +166,7 @@ def test_symlink_escape_read_rejected(workspace, tmp_path):
     assert "TOP SECRET" not in out
 
 
+@pytest.mark.platform_limit  # 平台门控：本机受限令牌建不了符号链接（WinError 1314）
 def test_symlink_escape_list_rejected(workspace, tmp_path):
     """workspace 内符号链接指向外部目录，list 经该链接被 resolve() 拆穿拒绝。"""
     ws, code_dir = workspace

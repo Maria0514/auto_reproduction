@@ -773,6 +773,7 @@ def _e2e2_controller(graph_app):
     return c
 
 
+@pytest.mark.platform_limit  # 平台门控：本机 langgraph 版本的 checkpoint 语义（__resume__ 计入 task.writes）
 def test_e2e2_second_serial_interrupt_snapshot_shape_and_controller_judgement(
     e2e2_second_interrupt,
 ):

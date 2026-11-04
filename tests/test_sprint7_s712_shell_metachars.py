@@ -385,6 +385,7 @@ def test_cp_8_1_3_ledger_count_is_unchanged_across_a_rejection(
     assert not any("train.log" in c for c in recorded), f"被拒命令留在了台账里：{recorded}"
 
 
+@pytest.mark.platform_limit  # 平台门控：夹具先 symlink 一份 venv 解释器（WinError 1314）
 def test_cp_8_1_3_rejected_redirect_creates_no_file(
     real_subprocess_sandbox: Dict[str, Any],
 ) -> None:
@@ -404,6 +405,7 @@ def test_cp_8_1_3_rejected_redirect_creates_no_file(
     assert real_subprocess_sandbox["collector"].step_ledger == []
 
 
+@pytest.mark.platform_limit  # 平台门控：夹具先 symlink 一份 venv 解释器（WinError 1314）
 def test_cp_8_1_3_harness_can_really_create_files(
     real_subprocess_sandbox: Dict[str, Any],
 ) -> None:
@@ -425,6 +427,7 @@ def test_cp_8_1_3_harness_can_really_create_files(
     assert (work / "probe_marker.txt").exists(), "夹具跑不动子进程 —— 上一条会空转"
 
 
+@pytest.mark.platform_limit  # 平台门控：夹具先 symlink 一份 venv 解释器（WinError 1314）
 def test_cp_8_1_5_sandbox_does_not_block_the_inline_comparison_probe(
     real_subprocess_sandbox: Dict[str, Any],
 ) -> None:
@@ -442,6 +445,7 @@ def test_cp_8_1_5_sandbox_does_not_block_the_inline_comparison_probe(
     assert "False" in parsed["results"][0]["stdout_tail"], parsed
 
 
+@pytest.mark.platform_limit  # 平台门控：夹具先 symlink 一份 venv 解释器（WinError 1314）
 def test_cp_8_1_5_sandbox_still_supports_compound_commands(
     real_subprocess_sandbox: Dict[str, Any],
 ) -> None:

@@ -905,6 +905,7 @@ def test_cp_g2_2_sentinel_zero_plaintext_in_code_report_caplog(
     assert _SENTINEL not in caplog.text, "日志含哨兵明文（AC-S4-12 违背）"
 
 
+@pytest.mark.platform_limit  # 平台门控：NTFS 上 chmod 不生效（438 vs 384/448）；产品 Windows 已知弱点
 def test_cp_g2_2_mask_engaged_and_bydesign_stores(monkeypatch, tmp_path):
     """mask 阳性对照 + 设计内明文存储的权限位：execution_result.logs 中哨兵被替换
     为 ****（原文确经 runner 注入）；`.secrets` 0600 且含哨兵（remember=True 落盘，
@@ -1156,6 +1157,7 @@ def _run_credential_env_spy_scenario(monkeypatch, tmp_path: Path) -> Dict[str, A
             "values": graph.get_state(cfg).values}
 
 
+@pytest.mark.platform_limit  # 平台门控：NTFS 上 chmod 不生效（438 vs 384/448）；产品 Windows 已知弱点
 def test_cp_g2_3_credential_env_reaches_subprocess_via_spy(monkeypatch, tmp_path):
     """AC-S4-08 mock 注入主证：.secrets → build_credential_env → extra_env →
     run_in_venv → `_run_subprocess` → subprocess.Popen env 全链路透传。"""

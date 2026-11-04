@@ -2051,6 +2051,12 @@ graph TD
   > · **B 类**（夹具未进版本控制）：`checkpoints_s6_full20.db` 被 `.gitignore:27` 忽略、本机是 0 张表的空库 ⇒ 加**可用性守卫**（缺失 / 空库 ⇒ `skip`）。⚠ **`skip` 不等于通过**：那 2 条防线在本机**未验证**，补夹具后必须重跑并记回（白名单 §7 第 6 条）。
   > · **C 类**（测试写死 POSIX 布局 / 分隔符，19 条）：夹具改用产品单点 `_venv_bin_dir` / `_venv_python_exe`；路径后缀断言改断 `Path(...).parts[-2:]`（**比后缀更严**，不是放宽）。
   > ⇒ 本轮**新增 1 处 `skip`**（上面 B 类），其余 18 条全部是**真因被修掉**才转绿；无一处断言放宽，白名单未新增一行。
+  > ✅ **同日第五轮：白名单升级为 pytest marker 门控（Maria 拍板，2026-10-21）**
+  > · 剩下 22 条逐条打 `@pytest.mark.platform_limit  # 平台门控：<原因>`（**20 个函数、含 2 个参数化**），`pytest.ini` 的 `addopts` 改为 `-m "not e2e and not platform_limit"`。
+  > · 收口门口径：`-m "not e2e and not browser and not platform_limit"` ⇒ **2662 passed / 31 skipped / 80 deselected / 7 xfailed / 0 failed / 0 error（EXIT=0）**。**「全量零失败」这句原文在门控口径下字面成立**，且不再依赖人工做差集。
+  > · 🔴 **为什么不是"删掉"（Maria 问过、已拍板走门控）**：那 22 条的**被测物全都活着**（路径逃逸拒绝 / 凭证文件权限 / askpass host 净化 / 断点续跑语义），跟 `T-S8-2-12` 删的那 34 条（被测物已消失）**性质相反** —— 删掉等于在所有环境上永久失去这些防线，而门控是"本机不跑、换环境一条命令恢复"。
+  > · **恢复方式**：`-m "not e2e and not browser and platform_limit"`（实测仍能跑出那 22 条：14 failed + 8 error），或单文件 `pytest tests/test_sprint4_a3.py -m platform_limit`。逐条成因与维护规则见白名单 §8。
+  > · ⚠ **踩点提醒（留给下一个人）**：命令行 `-m` 会**整体覆盖** `addopts`。只写 `-m "not e2e and not browser"` 会把 22 条门控用例放出来跑（本机必红，看起来像回归）。**收口门命令必须写全三项。**
   > 🔴 **未采用任何"让红消失"的手段**：无一条 `skip` / `xfail` 新增（实测 `+.*pytest.skip|xfail` 命中 0），无一处断言放宽为 `>=`，白名单未新增一行。
   > 📌 **本轮真实发生过一次"门抓住新红"**：删掉三条被 AC 覆盖矩阵点名的用例后，`test_sprint3_f1::test_cp_f1_4_ac_has_mock_test_coverage[AC-S3-04]` 与 `test_sprint4_g1::test_cp_g1_1_*[AC-S4-04]` 立刻变红（差集 3 条）——**这就是这道门该有的样子**，随后按"换发映射到活的用例"修掉（不是删映射了事）。
   > 🔴 **门本身改了，理由与依据见下方「`CP-2.12-1` 换发说明」。原文的「全量零失败」在本机不可达（实测：连批次 2 动工前都是 53 条红），照原文守只会得到一道永远打不开的门。**

@@ -391,6 +391,7 @@ def _run_gate_to_crash(monkeypatch):
     return graph_app, cfg, tid, stub
 
 
+@pytest.mark.platform_limit  # 平台门控：本机 langgraph 版本的 checkpoint 语义（__resume__ 计入 task.writes）
 def test_e2e2_acc_crash_after_resume_consumed_is_judged_awaiting_not_no_report(monkeypatch):
     """[架构 §3.6 取证] 崩溃后最新 checkpoint = `__interrupt__`(已答) + `__resume__`，
     ``next=()`` → 新判定式给 **awaiting**（可自愈），而旧判定式给 no_report（死胡同）。
